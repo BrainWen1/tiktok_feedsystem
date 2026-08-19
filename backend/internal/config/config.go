@@ -27,18 +27,20 @@ type Config struct {
 var AppConfig Config // 全局配置对象
 
 func LoadConfig() error {
-	// 候选路径列表，按顺序尝试，兼容不同执行位置
-	candidates := []string{
-		"configs/.env.dev",         // 终端在backend/执行
-		"backend/configs/.env.dev", // 终端在仓库根目录执行
+	// 尝试读取环境变量
+	configPath := os.Getenv("CONFIG_PATH")
+	if configPath == "" {
+		configPath = "configs/.env.dev" // 默认路径
 	}
+	log.Printf("Loading config from %s", configPath)
+
 	var err error
-	for _, path := range candidates {
-		err = godotenv.Load(path)
-		if err != nil {
-			log.Fatal("Error loading .env file:", path, err)
-			return err
-		}
+	err = godotenv.Load(configPath)
+	if err != nil {
+		log.Fatal("Error loading config file:", configPath, err)
+		return err
+	} else {
+		log.Println("Successfully Loaded config file:", configPath)
 	}
 
 	// string字段

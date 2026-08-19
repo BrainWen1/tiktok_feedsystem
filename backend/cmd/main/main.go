@@ -9,7 +9,6 @@ import (
 	"feedsystem/internal/model"
 	"feedsystem/internal/router"
 	"log"
-	"os"
 	"time"
 
 	"github.com/joho/godotenv"
@@ -22,13 +21,7 @@ func main() {
 	}
 
 	// 加载配置
-	configPath := os.Getenv("CONFIG_PATH") // 从环境变量中获取配置文件路径
-	if configPath == "" {
-		configPath = "configs/.env.dev" // 如果未设置环境变量，则使用默认路径
-	}
-	log.Printf("Loading config from %s", configPath)
-
-	err := config.LoadConfig() // 加载配置
+	err := config.LoadConfig()
 	if err != nil {
 		log.Fatalf("Failed to load config: %v", err)
 	}

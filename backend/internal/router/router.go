@@ -3,6 +3,7 @@ package router
 import (
 	"feedsystem/internal/handler/middleware"
 	"feedsystem/internal/infra/cache"
+	"feedsystem/internal/utils/response"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -18,6 +19,10 @@ func SetupRouter(sqlDB *gorm.DB, cache *cache.RedisCache) *gin.Engine {
 	// 初始化各层组件
 
 	// 设置路由
+	// 健康检查路由
+	r.GET("/healthz", func(c *gin.Context) {
+		response.SuccessResponse(c, "health check ok")
+	})
 
 	return r
 }
