@@ -1,7 +1,7 @@
 package dto
 
-// 创建账户请求
-type CreateAccountRequest struct {
+// 注册用户请求
+type RegisterRequest struct {
 	Username string `json:"username"`
 	Password string `json:"password"`
 }

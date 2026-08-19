@@ -1,8 +1,11 @@
 package router
 
 import (
+	"feedsystem/internal/handler"
 	"feedsystem/internal/handler/middleware"
 	"feedsystem/internal/infra/cache"
+	"feedsystem/internal/repo"
+	"feedsystem/internal/service"
 	"feedsystem/internal/utils/response"
 
 	"github.com/gin-gonic/gin"
@@ -17,12 +20,22 @@ func SetupRouter(sqlDB *gorm.DB, cache *cache.RedisCache) *gin.Engine {
 	r.Use(middleware.Cors()) // 跨域中间件
 
 	// 初始化各层组件
+	// User
+	userRepo := repo.NewUserRepo(sqlDB)
+	userService := service.NewUserService(userRepo)
+	userHandler := handler.NewUserHandler(userService)
 
 	// 设置路由
 	// 健康检查路由
 	r.GET("/healthz", func(c *gin.Context) {
 		response.SuccessResponse(c, "health check ok")
 	})
+
+	// 用户相关路由
+	userGroup := r.Group("/user")
+	{
+		userGroup.POST("/register", userHandler.Register)
+	}
 
 	return r
 }
