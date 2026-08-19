@@ -20,6 +20,16 @@ func NewRedisCache(addr, password string, db int) *RedisCache {
 	return &RedisCache{client: client}
 }
 
+func (r *RedisCache) Close() error {
+	return r.client.Close()
+}
+
+// Ping检查Redis连接是否正常
+func (r *RedisCache) Ping(ctx context.Context) error {
+	_, err := r.client.Ping(ctx).Result()
+	return err
+}
+
 // Get获取缓存值
 func (r *RedisCache) Get(ctx context.Context, key string) (string, error) {
 	val, err := r.client.Get(ctx, key).Result()
