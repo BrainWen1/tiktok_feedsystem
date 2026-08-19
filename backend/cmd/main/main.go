@@ -5,6 +5,7 @@ import (
 	"feedsystem/internal/config"
 	"feedsystem/internal/infra/cache"
 	"feedsystem/internal/infra/database"
+	"feedsystem/internal/infra/mq"
 	"feedsystem/internal/model"
 	"feedsystem/internal/router"
 	"log"
@@ -57,7 +58,15 @@ func main() {
 		log.Printf("Redis connected (cache enabled)")
 	}
 
-	// RabbitMQ -- 预留
+	// RabbitMQ
+	rmq, err := mq.NewRabbitMQ()
+	if err != nil {
+		log.Printf("RabbitMQ config error (disabled): %v", err)
+		rmq = nil
+	} else {
+		defer rmq.Close()
+		log.Printf("RabbitMQ connected")
+	}
 
 	// 设置路由
 	r := router.SetupRouter(db, cache)

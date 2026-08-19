@@ -15,6 +15,11 @@ type Config struct {
 	Redis_password string
 	Redis_db       int
 
+	MQ_Host     string
+	MQ_Port     int
+	MQ_Username string
+	MQ_Password string
+
 	JWT_secret      string
 	JWT_expire_hour int
 }
@@ -42,6 +47,9 @@ func LoadConfig() error {
 		Redis_addr:     os.Getenv("REDIS_ADDR"),
 		Redis_password: os.Getenv("REDIS_PASSWORD"),
 		JWT_secret:     os.Getenv("JWT_SECRET"),
+		MQ_Host:        os.Getenv("MQ_HOST"),
+		MQ_Username:    os.Getenv("MQ_USERNAME"),
+		MQ_Password:    os.Getenv("MQ_PASSWORD"),
 	}
 
 	// int字段
@@ -64,6 +72,16 @@ func LoadConfig() error {
 		}
 	}
 	AppConfig.JWT_expire_hour = jwtExpHour
+
+	mqPortStr := os.Getenv("MQ_PORT")
+	mqPort := 5672 // 默认5672
+	if mqPortStr != "" {
+		val, e := strconv.Atoi(mqPortStr)
+		if e == nil {
+			mqPort = val
+		}
+	}
+	AppConfig.MQ_Port = mqPort
 
 	return nil
 }
