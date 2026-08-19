@@ -40,7 +40,34 @@ func (h *UserHandler) Register(ctx *gin.Context) {
 
 	// 返回成功响应
 	response.SuccessResponse(ctx, gin.H{
+		"status":   "Register successfully",
 		"user_id":  user.ID,
 		"username": user.Username,
+	})
+}
+
+// Login 用户登录
+func (h *UserHandler) Login(ctx *gin.Context) {
+	// 解析请求参数
+	var req dto.LoginRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		response.FailResponse(ctx, "Invalid request parameters")
+		return
+	}
+
+	// 调用服务层进行登录
+	accessToken, refreshToken, err := h.UserService.Login(req.Username, req.Password)
+	if err != nil {
+		response.FailResponse(ctx, err.Error())
+		log.Printf("Error logging in user in UserHandler: %v", err)
+		return
+	}
+
+	// 返回成功响应，将 accessToken 和 refreshToken 打包发回前端
+	response.SuccessResponse(ctx, gin.H{
+		"status":        "Login successfully",
+		"username":      req.Username,
+		"access_token":  accessToken,
+		"refresh_token": refreshToken,
 	})
 }

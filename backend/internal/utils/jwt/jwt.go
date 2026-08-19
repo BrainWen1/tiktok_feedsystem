@@ -1,6 +1,8 @@
 package jwt
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"feedsystem/internal/config"
 	"log"
@@ -64,4 +66,15 @@ func ParseToken(tokenString string) (*Claims, error) {
 		return claims, nil
 	}
 	return nil, errors.New("invalid token")
+}
+
+// GenerateRefreshToken 生成刷新令牌
+func GenerateRefreshToken(user_id uint) (string, error) {
+	// 生成一个随机的刷新令牌
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	// 将32位随机字节转换为十六进制字符串
+	return hex.EncodeToString(b), nil
 }

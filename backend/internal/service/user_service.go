@@ -3,8 +3,10 @@ package service
 import (
 	"feedsystem/internal/model"
 	"feedsystem/internal/repo"
+	"feedsystem/internal/utils/jwt"
 	"fmt"
 	"log"
+	"time"
 
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
@@ -50,4 +52,44 @@ func (s *UserService) Register(username, password string) (*model.User, error) {
 		return nil, err
 	}
 	return user, nil
+}
+
+// Login 用户登录
+func (s *UserService) Login(username, password string) (accessToken string, refreshToken string, err error) {
+	// 查找用户
+	user, err := s.UserRepo.FindByUsername(username)
+	if err != nil {
+		return "", "", err
+	}
+
+	// 验证密码
+	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(password)); err != nil {
+		return "", "", fmt.Errorf("invalid password")
+	}
+
+	// 生成访问令牌和刷新令牌
+	accessToken, err = jwt.GenerateToken(fmt.Sprintf("%d", user.ID), user.Username)
+	if err != nil {
+		return "", "", err
+	}
+
+	refreshToken, err = jwt.GenerateRefreshToken(user.ID)
+	if err != nil {
+		return "", "", err
+	}
+
+	// 组装刷新令牌模型
+	refreshTokenModel := &model.UserRefreshToken{
+		UserID:    user.ID,
+		TokenHash: refreshToken,
+		ExpiresAt: time.Now().Add(7 * 24 * time.Hour), // refresh token 有效期为7天
+	}
+
+	// 保存刷新令牌到数据库
+	err = s.UserRepo.CreateRefreshToken(refreshTokenModel)
+	if err != nil {
+		return "", "", err
+	}
+
+	return accessToken, refreshToken, nil
 }

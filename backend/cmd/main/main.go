@@ -32,7 +32,7 @@ func main() {
 		log.Fatalf("Failed to connect to database: %v", err)
 	}
 
-	database.AutoMigrate(db, &model.User{}, &model.Video{}) // 自动迁移数据库表结构
+	database.AutoMigrate(db, &model.User{}, &model.Video{}, &model.UserRefreshToken{}) // 自动迁移数据库表结构
 
 	defer database.CloseDB() // 注册关闭数据库连接的延迟调用
 
