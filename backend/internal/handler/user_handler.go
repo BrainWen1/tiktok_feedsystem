@@ -31,7 +31,7 @@ func (h *UserHandler) Register(ctx *gin.Context) {
 	}
 
 	// 调用服务层注册用户
-	user, err := h.UserService.Register(req.Username, req.Password)
+	user, err := h.UserService.Register(ctx.Request.Context(), req.Username, req.Password)
 	if err != nil {
 		response.FailResponse(ctx, err.Error())
 		log.Printf("Error registering user in UserHandler: %v", err)
@@ -42,7 +42,7 @@ func (h *UserHandler) Register(ctx *gin.Context) {
 	response.SuccessResponse(ctx, gin.H{
 		"status":   "Register successfully",
 		"user_id":  user.ID,
-		"username": user.Username,
+		"username": user.UserName,
 	})
 }
 
@@ -56,7 +56,7 @@ func (h *UserHandler) Login(ctx *gin.Context) {
 	}
 
 	// 调用服务层进行登录
-	accessToken, refreshToken, err := h.UserService.Login(req.Username, req.Password)
+	accessToken, refreshToken, err := h.UserService.Login(ctx.Request.Context(), req.Username, req.Password)
 	if err != nil {
 		response.FailResponse(ctx, err.Error())
 		log.Printf("Error logging in user in UserHandler: %v", err)
@@ -81,7 +81,7 @@ func (h *UserHandler) RefreshToken(ctx *gin.Context) {
 	}
 
 	// 调用服务层刷新令牌
-	newAccessToken, newRefreshToken, uid, uname, err := h.UserService.RefreshToken(req.RefreshToken)
+	newAccessToken, newRefreshToken, uid, uname, err := h.UserService.RefreshToken(ctx.Request.Context(), req.RefreshToken)
 	if err != nil {
 		response.FailResponse(ctx, err.Error())
 		log.Printf("Error refreshing token in UserHandler: %v", err)

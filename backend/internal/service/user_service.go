@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"feedsystem/internal/model"
 	"feedsystem/internal/repo"
 	"feedsystem/internal/utils/jwt"
@@ -25,9 +26,9 @@ func NewUserService(userRepo *repo.UserRepo) *UserService {
 }
 
 // Register 注册用户
-func (s *UserService) Register(username, password string) (*model.User, error) {
+func (s *UserService) Register(ctx context.Context, username, password string) (*model.User, error) {
 	// 查找用户是否存在
-	existingUser, err := s.UserRepo.FindByUsername(username)
+	existingUser, err := s.UserRepo.FindByUsername(ctx, username)
 	if err != nil && err != gorm.ErrRecordNotFound {
 		return nil, err
 	}
@@ -43,10 +44,10 @@ func (s *UserService) Register(username, password string) (*model.User, error) {
 
 	// 创建用户
 	user := &model.User{
-		Username: username,
+		UserName: username,
 		Password: string(hashedPassword),
 	}
-	err = s.UserRepo.Register(user)
+	err = s.UserRepo.Register(ctx, user)
 	if err != nil {
 		log.Printf("Error registering user in UserService: %v", err)
 		return nil, err
@@ -55,9 +56,9 @@ func (s *UserService) Register(username, password string) (*model.User, error) {
 }
 
 // Login 用户登录
-func (s *UserService) Login(username, password string) (accessToken string, refreshToken string, err error) {
+func (s *UserService) Login(ctx context.Context, username, password string) (accessToken string, refreshToken string, err error) {
 	// 查找用户
-	user, err := s.UserRepo.FindByUsername(username)
+	user, err := s.UserRepo.FindByUsername(ctx, username)
 	if err != nil {
 		return "", "", err
 	}
@@ -68,7 +69,7 @@ func (s *UserService) Login(username, password string) (accessToken string, refr
 	}
 
 	// 生成访问令牌和刷新令牌
-	accessToken, err = jwt.GenerateToken(fmt.Sprintf("%d", user.ID), user.Username)
+	accessToken, err = jwt.GenerateToken(fmt.Sprintf("%d", user.ID), user.UserName)
 	if err != nil {
 		return "", "", err
 	}
@@ -86,7 +87,7 @@ func (s *UserService) Login(username, password string) (accessToken string, refr
 	}
 
 	// 保存刷新令牌到数据库
-	err = s.UserRepo.CreateRefreshToken(refreshTokenModel)
+	err = s.UserRepo.CreateRefreshToken(ctx, refreshTokenModel)
 	if err != nil {
 		return "", "", err
 	}
@@ -95,25 +96,25 @@ func (s *UserService) Login(username, password string) (accessToken string, refr
 }
 
 // RefreshToken 刷新令牌
-func (s *UserService) RefreshToken(refreshToken string) (newAccessToken string, newRefreshToken string, uid uint, uname string, err error) {
+func (s *UserService) RefreshToken(ctx context.Context, refreshToken string) (newAccessToken string, newRefreshToken string, uid uint, uname string, err error) {
 	if refreshToken == "" {
 		return "", "", 0, "", fmt.Errorf("refresh token is empty")
 	}
 
 	// 查找刷新令牌
-	rt, err := s.UserRepo.GetRefreshToken(refreshToken)
+	rt, err := s.UserRepo.GetRefreshToken(ctx, refreshToken)
 	if err != nil {
 		return "", "", 0, "", fmt.Errorf("invalid or expired refresh token")
 	}
 
 	// 查找用户
-	user, err := s.UserRepo.FindByID(rt.UserID)
+	user, err := s.UserRepo.FindByID(ctx, rt.UserID)
 	if err != nil {
 		return "", "", 0, "", fmt.Errorf("user not found")
 	}
 
 	// 生成新的访问令牌和刷新令牌
-	newAccessToken, err = jwt.GenerateToken(fmt.Sprintf("%d", user.ID), user.Username)
+	newAccessToken, err = jwt.GenerateToken(fmt.Sprintf("%d", user.ID), user.UserName)
 	if err != nil {
 		return "", "", 0, "", err
 	}
@@ -124,7 +125,7 @@ func (s *UserService) RefreshToken(refreshToken string) (newAccessToken string, 
 	}
 
 	// 删除旧的刷新令牌
-	err = s.UserRepo.DeleteRefreshToken(refreshToken)
+	err = s.UserRepo.DeleteRefreshToken(ctx, refreshToken)
 	if err != nil {
 		return "", "", 0, "", err
 	}
@@ -135,10 +136,10 @@ func (s *UserService) RefreshToken(refreshToken string) (newAccessToken string, 
 		TokenHash: newRefreshToken,
 		ExpiresAt: time.Now().Add(7 * 24 * time.Hour), // refresh token 有效期为7天
 	}
-	err = s.UserRepo.CreateRefreshToken(newRefreshTokenSession)
+	err = s.UserRepo.CreateRefreshToken(ctx, newRefreshTokenSession)
 	if err != nil {
 		return "", "", 0, "", err
 	}
 
-	return newAccessToken, newRefreshToken, user.ID, user.Username, nil
+	return newAccessToken, newRefreshToken, user.ID, user.UserName, nil
 }
