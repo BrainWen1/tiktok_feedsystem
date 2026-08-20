@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"errors"
 	"feedsystem/internal/dto"
 	"feedsystem/internal/service"
 	"feedsystem/internal/utils/response"
@@ -94,5 +95,57 @@ func (h *UserHandler) RefreshToken(ctx *gin.Context) {
 		"refresh_token": newRefreshToken,
 		"user_id":       uid,
 		"username":      uname,
+	})
+}
+
+// 工具函数：getUserFromCtx 从context中获取 userID 和 username
+func getUserFromCtx(c *gin.Context) (uint, string, error) {
+	// 获取 userID
+	userID, exists := c.Get("userID")
+	if !exists { // 如果不存在 userID，返回错误
+		return 0, "", errors.New("userID not found in context")
+	}
+
+	uid, ok := userID.(uint) // 如果类型断言失败，返回错误
+	if !ok {
+		return 0, "", errors.New("userID in context is not of type uint")
+	}
+
+	// 获取 username
+	username, exists := c.Get("username")
+	if !exists {
+		return 0, "", errors.New("username not found in context")
+	}
+
+	uname, ok := username.(string)
+	if !ok {
+		return 0, "", errors.New("username in context is not of type string")
+	}
+
+	return uid, uname, nil
+}
+
+// Logout 用户登出
+func (h *UserHandler) Logout(ctx *gin.Context) {
+	// 从上下文中获取用户ID
+	userID, username, err := getUserFromCtx(ctx)
+	if err != nil {
+		response.FailResponse(ctx, "Failed to get user ID from context")
+		return
+	}
+
+	// 调用服务层进行登出
+	err = h.UserService.Logout(ctx.Request.Context(), userID)
+	if err != nil {
+		response.FailResponse(ctx, "Failed to logout user")
+		log.Printf("Error logging out user in UserHandler: %v", err)
+		return
+	}
+
+	// 返回成功响应
+	response.SuccessResponse(ctx, gin.H{
+		"status":    "Logout successfully",
+		"user_id":   userID,
+		"user_name": username,
 	})
 }

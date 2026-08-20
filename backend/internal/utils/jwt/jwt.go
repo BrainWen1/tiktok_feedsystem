@@ -26,13 +26,13 @@ func jwtSecret() ([]byte, int) {
 
 // Claims 结构体用于存储 JWT 的自定义声明
 type Claims struct {
-	UserID   string `json:"user_id"`
+	UserID   uint   `json:"user_id"`
 	UserName string `json:"user_name"`
 	jwt.RegisteredClaims
 }
 
 // GenerateToken 生成 JWT token
-func GenerateToken(userID, userName string) (string, error) {
+func GenerateToken(userID uint, userName string) (string, error) {
 	jwtSecretKey, expiration := jwtSecret() // 获取JWT密钥和过期时间
 	// 创建自定义声明
 	claims := Claims{

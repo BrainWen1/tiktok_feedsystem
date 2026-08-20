@@ -69,7 +69,7 @@ func (s *UserService) Login(ctx context.Context, username, password string) (acc
 	}
 
 	// 生成访问令牌和刷新令牌
-	accessToken, err = jwt.GenerateToken(fmt.Sprintf("%d", user.ID), user.UserName)
+	accessToken, err = jwt.GenerateToken(user.ID, user.UserName)
 	if err != nil {
 		return "", "", err
 	}
@@ -114,7 +114,7 @@ func (s *UserService) RefreshToken(ctx context.Context, refreshToken string) (ne
 	}
 
 	// 生成新的访问令牌和刷新令牌
-	newAccessToken, err = jwt.GenerateToken(fmt.Sprintf("%d", user.ID), user.UserName)
+	newAccessToken, err = jwt.GenerateToken(user.ID, user.UserName)
 	if err != nil {
 		return "", "", 0, "", err
 	}
@@ -142,4 +142,15 @@ func (s *UserService) RefreshToken(ctx context.Context, refreshToken string) (ne
 	}
 
 	return newAccessToken, newRefreshToken, user.ID, user.UserName, nil
+}
+
+// Logout 用户登出
+func (s *UserService) Logout(ctx context.Context, userID uint) error {
+	// 删除该用户的所有刷新令牌
+	err := s.UserRepo.DeleteRefreshTokenByUserID(ctx, userID)
+	if err != nil {
+		log.Printf("Error logging out user in UserService: %v", err)
+		return err
+	}
+	return nil
 }

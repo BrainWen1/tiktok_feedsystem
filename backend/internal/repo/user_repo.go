@@ -86,3 +86,15 @@ func (r *UserRepo) CleanExpiredRefreshToken(ctx context.Context, userId uint) er
 	}
 	return nil
 }
+
+// DeleteRefreshTokenByUserID 根据用户ID，删除该用户全部刷新令牌（登出全部设备）
+func (r *UserRepo) DeleteRefreshTokenByUserID(ctx context.Context, userID uint) error {
+	err := r.db.WithContext(ctx).
+		Where(&model.UserRefreshToken{UserID: userID}).
+		Delete(&model.UserRefreshToken{}).Error
+	if err != nil {
+		log.Printf("Delete Refresh-Token By UserID err: %v", err)
+		return err
+	}
+	return nil
+}

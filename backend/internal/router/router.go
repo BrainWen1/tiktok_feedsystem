@@ -32,12 +32,19 @@ func SetupRouter(sqlDB *gorm.DB, cache *cache.RedisCache) *gin.Engine {
 	})
 
 	// 用户相关路由
+	// 公共路由组
 	userGroup := r.Group("/user")
 	{
 		userGroup.POST("/register", userHandler.Register)    // 用户注册
 		userGroup.POST("/login", userHandler.Login)          // 用户登录
 		userGroup.POST("/refresh", userHandler.RefreshToken) // 刷新Token
 	}
+	// 受保护的路由组
+	protectedUserGroup := userGroup.Group("/").Use(middleware.Auth()) // 使用Auth中间件鉴权
+	{
+		protectedUserGroup.POST("/logout", userHandler.Logout) // 用户登出
+	}
 
+	// 返回配置好的路由引擎
 	return r
 }
