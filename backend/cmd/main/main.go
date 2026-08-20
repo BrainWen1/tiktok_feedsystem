@@ -32,7 +32,7 @@ func main() {
 		log.Fatalf("Failed to connect to database: %v", err)
 	}
 
-	database.AutoMigrate(db, &model.User{}, &model.Video{}, &model.UserRefreshToken{}) // 自动迁移数据库表结构
+	database.AutoMigrate(db, &model.User{}, &model.Video{}) // 自动迁移数据库表结构
 
 	defer database.CloseDB() // 注册关闭数据库连接的延迟调用
 
@@ -46,6 +46,7 @@ func main() {
 		log.Printf("Redis not available (cache disabled): %v", err)
 		_ = cache.Close()
 		cache = nil
+		return
 	} else {
 		defer cache.Close() // 注册关闭Redis连接的延迟调用
 		log.Printf("Redis connected (cache enabled)")

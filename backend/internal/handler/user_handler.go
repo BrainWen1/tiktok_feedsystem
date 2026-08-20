@@ -127,15 +127,24 @@ func getUserFromCtx(c *gin.Context) (uint, string, error) {
 
 // Logout 用户登出
 func (h *UserHandler) Logout(ctx *gin.Context) {
+	// 解析请求参数
+	var req dto.LogoutRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		log.Printf("Error parsing logout request in UserHandler: %v", err)
+		response.FailResponse(ctx, "Invalid request parameters")
+		return
+	}
+
 	// 从上下文中获取用户ID
 	userID, username, err := getUserFromCtx(ctx)
 	if err != nil {
+		log.Printf("Error getting user from context in UserHandler: %v", err)
 		response.FailResponse(ctx, "Failed to get user ID from context")
 		return
 	}
 
 	// 调用服务层进行登出
-	err = h.UserService.Logout(ctx.Request.Context(), userID)
+	err = h.UserService.Logout(ctx.Request.Context(), userID, req.RefreshToken)
 	if err != nil {
 		response.FailResponse(ctx, "Failed to logout user")
 		log.Printf("Error logging out user in UserHandler: %v", err)

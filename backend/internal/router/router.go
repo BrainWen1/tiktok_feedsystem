@@ -22,7 +22,7 @@ func SetupRouter(sqlDB *gorm.DB, cache *cache.RedisCache) *gin.Engine {
 	// 初始化各层组件
 	// User
 	userRepo := repo.NewUserRepo(sqlDB)
-	userService := service.NewUserService(userRepo)
+	userService := service.NewUserService(userRepo, cache)
 	userHandler := handler.NewUserHandler(userService)
 
 	// 设置路由

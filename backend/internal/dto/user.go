@@ -45,6 +45,12 @@ type LoginResponse struct {
 	Username     string `json:"user_name"`
 }
 
+// 登出请求
+type LogoutRequest struct {
+	RefreshToken string `json:"refresh_token"` // 为了适应前期的简单设计，登出时也需要传入refreshToken，方便在Redis中删除对应的refreshToken
+	// 后期在redis中改为双向索引，登出时只需要传入accessToken即可找到对应的refreshToken并删除
+}
+
 // 更新用户资料请求
 type UpdateProfileRequest struct {
 	AvatarURL string `json:"avatar_url"`

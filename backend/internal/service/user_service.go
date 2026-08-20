@@ -2,11 +2,13 @@ package service
 
 import (
 	"context"
+	"feedsystem/internal/infra/cache"
 	"feedsystem/internal/model"
 	"feedsystem/internal/repo"
 	"feedsystem/internal/utils/jwt"
 	"fmt"
 	"log"
+	"strconv"
 	"time"
 
 	"golang.org/x/crypto/bcrypt"
@@ -16,12 +18,14 @@ import (
 // UserService 用户服务
 type UserService struct {
 	UserRepo *repo.UserRepo
+	cache    *cache.RedisCache
 }
 
 // NewUserService 创建用户服务
-func NewUserService(userRepo *repo.UserRepo) *UserService {
+func NewUserService(userRepo *repo.UserRepo, cache *cache.RedisCache) *UserService {
 	return &UserService{
 		UserRepo: userRepo,
+		cache:    cache,
 	}
 }
 
@@ -79,17 +83,26 @@ func (s *UserService) Login(ctx context.Context, username, password string) (acc
 		return "", "", err
 	}
 
-	// 组装刷新令牌模型
-	refreshTokenModel := &model.UserRefreshToken{
-		UserID:    user.ID,
-		TokenHash: refreshToken,
-		ExpiresAt: time.Now().Add(7 * 24 * time.Hour), // refresh token 有效期为7天
-	}
+	// // 组装刷新令牌模型
+	// refreshTokenModel := &model.UserRefreshToken{
+	// 	UserID:    user.ID,
+	// 	TokenHash: refreshToken,
+	// 	ExpiresAt: time.Now().Add(7 * 24 * time.Hour), // refresh token 有效期为7天
+	// }
+	// // 保存刷新令牌到数据库
+	// err = s.UserRepo.CreateRefreshToken(ctx, refreshTokenModel)
+	// if err != nil {
+	// 	return "", "", err
+	// }
 
-	// 保存刷新令牌到数据库
-	err = s.UserRepo.CreateRefreshToken(ctx, refreshTokenModel)
+	// 改用Redis缓存保存刷新令牌
+	// key 格式 refresh_token:{refreshToken字符串}，value存userID，TTL7天
+	redisKey := fmt.Sprintf("refresh_token:%s", refreshToken)
+	ttl := 7 * 24 * time.Hour
+	err = s.cache.Set(ctx, redisKey, user.ID, ttl)
 	if err != nil {
-		return "", "", err
+		log.Printf("Error saving refresh token to Redis in UserService: %v", err)
+		return "", "", fmt.Errorf("save refresh token to redis failed: %w", err)
 	}
 
 	return accessToken, refreshToken, nil
@@ -101,14 +114,23 @@ func (s *UserService) RefreshToken(ctx context.Context, refreshToken string) (ne
 		return "", "", 0, "", fmt.Errorf("refresh token is empty")
 	}
 
-	// 查找刷新令牌
-	rt, err := s.UserRepo.GetRefreshToken(ctx, refreshToken)
+	redisKey := fmt.Sprintf("refresh_token:%s", refreshToken)
+
+	// 从Redis读取用户ID
+	valStr, err := s.cache.Get(ctx, redisKey)
 	if err != nil {
+		log.Printf("Error getting refresh token from Redis in UserService: %v", err)
 		return "", "", 0, "", fmt.Errorf("invalid or expired refresh token")
 	}
+	userIDuint64, err := strconv.ParseUint(valStr, 10, 64) // 将字符串转换为uint64
+	if err != nil {
+		log.Printf("Error parsing userID from Redis value in UserService: %v", err)
+		return "", "", 0, "", fmt.Errorf("invalid refresh token data")
+	}
+	uid = uint(userIDuint64)
 
 	// 查找用户
-	user, err := s.UserRepo.FindByID(ctx, rt.UserID)
+	user, err := s.UserRepo.FindByID(ctx, uid)
 	if err != nil {
 		return "", "", 0, "", fmt.Errorf("user not found")
 	}
@@ -124,33 +146,53 @@ func (s *UserService) RefreshToken(ctx context.Context, refreshToken string) (ne
 		return "", "", 0, "", err
 	}
 
-	// 删除旧的刷新令牌
-	err = s.UserRepo.DeleteRefreshToken(ctx, refreshToken)
-	if err != nil {
-		return "", "", 0, "", err
-	}
+	// // 删除旧的刷新令牌
+	// err = s.UserRepo.DeleteRefreshToken(ctx, refreshToken)
+	// if err != nil {
+	// 	return "", "", 0, "", err
+	// }
+	// // 保存新的刷新令牌到数据库
+	// newRefreshTokenSession := &model.UserRefreshToken{
+	// 	UserID:    user.ID,
+	// 	TokenHash: newRefreshToken,
+	// 	ExpiresAt: time.Now().Add(7 * 24 * time.Hour), // refresh token 有效期为7天
+	// }
+	// err = s.UserRepo.CreateRefreshToken(ctx, newRefreshTokenSession)
+	// if err != nil {
+	// 	return "", "", 0, "", err
+	// }
 
-	// 保存新的刷新令牌到数据库
-	newRefreshTokenSession := &model.UserRefreshToken{
-		UserID:    user.ID,
-		TokenHash: newRefreshToken,
-		ExpiresAt: time.Now().Add(7 * 24 * time.Hour), // refresh token 有效期为7天
-	}
-	err = s.UserRepo.CreateRefreshToken(ctx, newRefreshTokenSession)
+	// 改用Redis缓存保存新的刷新令牌，并删除旧的刷新令牌
+	// 删除旧的refresh token
+	err = s.cache.Delete(ctx, redisKey)
 	if err != nil {
-		return "", "", 0, "", err
+		return "", "", 0, "", fmt.Errorf("failed revoke old refresh token: %w", err)
+	}
+	// 将新refreshToken写入Redis，7天TTL
+	newRedisKey := fmt.Sprintf("refresh_token:%s", newRefreshToken)
+	ttl := 7 * 24 * time.Hour
+	err = s.cache.Set(ctx, newRedisKey, user.ID, ttl)
+	if err != nil {
+		return "", "", 0, "", fmt.Errorf("failed store new refresh token: %w", err)
 	}
 
 	return newAccessToken, newRefreshToken, user.ID, user.UserName, nil
 }
 
 // Logout 用户登出
-func (s *UserService) Logout(ctx context.Context, userID uint) error {
-	// 删除该用户的所有刷新令牌
-	err := s.UserRepo.DeleteRefreshTokenByUserID(ctx, userID)
-	if err != nil {
-		log.Printf("Error logging out user in UserService: %v", err)
-		return err
-	}
-	return nil
+func (s *UserService) Logout(ctx context.Context, userID uint, refreshToken string) error {
+	// // 删除该用户的所有刷新令牌
+	// err := s.UserRepo.DeleteRefreshTokenByUserID(ctx, userID)
+	// if err != nil {
+	// 	log.Printf("Error logging out user in UserService: %v", err)
+	// 	return err
+	// }
+	// return nil
+
+	// 改用Redis缓存删除该用户的所有刷新令牌
+	// 由于我们在Redis中使用的key是 refresh_token:{refreshToken字符串}，而没有直接存储userID到key中
+	// 所以我们无法直接通过userID删除所有相关的refresh token
+	// 因此，我们需要在用户登出时，前端传递当前的refresh token，服务端根据这个token删除对应的缓存
+	redisKey := fmt.Sprintf("refresh_token:%s", refreshToken)
+	return s.cache.Delete(ctx, redisKey)
 }
