@@ -93,3 +93,52 @@ func (s *UserService) Login(username, password string) (accessToken string, refr
 
 	return accessToken, refreshToken, nil
 }
+
+// RefreshToken 刷新令牌
+func (s *UserService) RefreshToken(refreshToken string) (newAccessToken string, newRefreshToken string, uid uint, uname string, err error) {
+	if refreshToken == "" {
+		return "", "", 0, "", fmt.Errorf("refresh token is empty")
+	}
+
+	// 查找刷新令牌
+	rt, err := s.UserRepo.GetRefreshToken(refreshToken)
+	if err != nil {
+		return "", "", 0, "", fmt.Errorf("invalid or expired refresh token")
+	}
+
+	// 查找用户
+	user, err := s.UserRepo.FindByID(rt.UserID)
+	if err != nil {
+		return "", "", 0, "", fmt.Errorf("user not found")
+	}
+
+	// 生成新的访问令牌和刷新令牌
+	newAccessToken, err = jwt.GenerateToken(fmt.Sprintf("%d", user.ID), user.Username)
+	if err != nil {
+		return "", "", 0, "", err
+	}
+
+	newRefreshToken, err = jwt.GenerateRefreshToken(user.ID)
+	if err != nil {
+		return "", "", 0, "", err
+	}
+
+	// 删除旧的刷新令牌
+	err = s.UserRepo.DeleteRefreshToken(refreshToken)
+	if err != nil {
+		return "", "", 0, "", err
+	}
+
+	// 保存新的刷新令牌到数据库
+	newRefreshTokenSession := &model.UserRefreshToken{
+		UserID:    user.ID,
+		TokenHash: newRefreshToken,
+		ExpiresAt: time.Now().Add(7 * 24 * time.Hour), // refresh token 有效期为7天
+	}
+	err = s.UserRepo.CreateRefreshToken(newRefreshTokenSession)
+	if err != nil {
+		return "", "", 0, "", err
+	}
+
+	return newAccessToken, newRefreshToken, user.ID, user.Username, nil
+}

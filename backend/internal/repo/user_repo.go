@@ -38,6 +38,15 @@ func (r *UserRepo) FindByUsername(username string) (*model.User, error) {
 	return &user, nil
 }
 
+// FindByID 根据ID查找用户
+func (r *UserRepo) FindByID(id uint) (*model.User, error) {
+	var user model.User
+	if err := r.db.First(&user, id).Error; err != nil {
+		return nil, err
+	}
+	return &user, nil
+}
+
 // CreateRefreshToken 创建刷新令牌
 func (r *UserRepo) CreateRefreshToken(rt *model.UserRefreshToken) error {
 	return r.db.Create(rt).Error
@@ -46,7 +55,7 @@ func (r *UserRepo) CreateRefreshToken(rt *model.UserRefreshToken) error {
 // GetRefreshToken 根据token字符串获取刷新令牌
 func (r *UserRepo) GetRefreshToken(tokenStr string) (*model.UserRefreshToken, error) {
 	var rt model.UserRefreshToken
-	err := r.db.Where("token = ? AND expire_at > now()", tokenStr).First(&rt).Error
+	err := r.db.Where("token_hash = ? AND expires_at > now()", tokenStr).First(&rt).Error // 查询未过期的刷新令牌
 	if err != nil {
 		return nil, err
 	}
@@ -55,10 +64,10 @@ func (r *UserRepo) GetRefreshToken(tokenStr string) (*model.UserRefreshToken, er
 
 // DeleteRefreshToken 删除刷新令牌
 func (r *UserRepo) DeleteRefreshToken(tokenStr string) error {
-	return r.db.Where("token = ?", tokenStr).Delete(&model.UserRefreshToken{}).Error
+	return r.db.Where("token_hash = ?", tokenStr).Delete(&model.UserRefreshToken{}).Error
 }
 
 // CleanExpiredRefreshToken 清理过期的刷新令牌，应设置为定时任务
 func (r *UserRepo) CleanExpiredRefreshToken(userId uint) error {
-	return r.db.Where("user_id=? AND expire_at < now()", userId).Delete(&model.UserRefreshToken{}).Error
+	return r.db.Where("user_id=? AND expires_at < now()", userId).Delete(&model.UserRefreshToken{}).Error
 }

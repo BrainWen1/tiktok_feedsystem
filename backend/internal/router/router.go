@@ -34,8 +34,9 @@ func SetupRouter(sqlDB *gorm.DB, cache *cache.RedisCache) *gin.Engine {
 	// 用户相关路由
 	userGroup := r.Group("/user")
 	{
-		userGroup.POST("/register", userHandler.Register) // 用户注册
-		userGroup.POST("/login", userHandler.Login)       // 用户登录
+		userGroup.POST("/register", userHandler.Register)    // 用户注册
+		userGroup.POST("/login", userHandler.Login)          // 用户登录
+		userGroup.POST("/refresh", userHandler.RefreshToken) // 刷新Token
 	}
 
 	return r

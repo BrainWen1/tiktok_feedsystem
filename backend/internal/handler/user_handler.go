@@ -70,3 +70,29 @@ func (h *UserHandler) Login(ctx *gin.Context) {
 		Username:     req.Username,
 	})
 }
+
+// RefreshToken 刷新令牌
+func (h *UserHandler) RefreshToken(ctx *gin.Context) {
+	// 解析请求参数
+	var req dto.RefreshRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		response.FailResponse(ctx, "Invalid request parameters")
+		return
+	}
+
+	// 调用服务层刷新令牌
+	newAccessToken, newRefreshToken, uid, uname, err := h.UserService.RefreshToken(req.RefreshToken)
+	if err != nil {
+		response.FailResponse(ctx, err.Error())
+		log.Printf("Error refreshing token in UserHandler: %v", err)
+		return
+	}
+
+	// 返回成功响应，将新的 accessToken 和 refreshToken 打包发回前端
+	response.SuccessResponse(ctx, gin.H{
+		"access_token":  newAccessToken,
+		"refresh_token": newRefreshToken,
+		"user_id":       uid,
+		"username":      uname,
+	})
+}
