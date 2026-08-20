@@ -64,10 +64,9 @@ func (h *UserHandler) Login(ctx *gin.Context) {
 	}
 
 	// 返回成功响应，将 accessToken 和 refreshToken 打包发回前端
-	response.SuccessResponse(ctx, gin.H{
-		"status":        "Login successfully",
-		"username":      req.Username,
-		"access_token":  accessToken,
-		"refresh_token": refreshToken,
+	response.SuccessResponse(ctx, dto.LoginResponse{
+		Token:        accessToken,
+		RefreshToken: refreshToken,
+		Username:     req.Username,
 	})
 }

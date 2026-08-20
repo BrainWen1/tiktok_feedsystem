@@ -42,7 +42,6 @@ type LoginRequest struct {
 type LoginResponse struct {
 	Token        string `json:"token"`
 	RefreshToken string `json:"refresh_token"`
-	AccountID    uint   `json:"account_id"`
 	Username     string `json:"username"`
 }
 
