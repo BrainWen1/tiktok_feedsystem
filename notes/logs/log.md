@@ -23,3 +23,7 @@ docker一键启动mysql、redis、rabbitmq
 优化数据库的字段命名和时区设置
 增加全链路透传context
 取消repo层查询工作的SQL语句硬编码
+
+### 8.24
+引入Redis黑名单机制，登出时拉黑该用户的access token
+新增登出时先判断传入的refresh token是否属于该用户
