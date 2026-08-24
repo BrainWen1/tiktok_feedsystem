@@ -2,6 +2,8 @@ package cache
 
 import (
 	"context"
+	"fmt"
+	"log"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -47,4 +49,29 @@ func (r *RedisCache) Set(ctx context.Context, key string, value interface{}, exp
 // Delete删除缓存值
 func (r *RedisCache) Delete(ctx context.Context, keys ...string) error {
 	return r.client.Del(ctx, keys...).Err()
+}
+
+// AddTokenToBlacklist 将Access Token加入黑名单
+func (r *RedisCache) AddTokenToBlacklist(ctx context.Context, token string, expiration time.Duration) error {
+	// 将token加入黑名单，设置过期时间为token的剩余有效期
+	log.Printf("Adding token to blacklist: %s with expiration: %v", token, expiration)
+	return r.Set(ctx, fmt.Sprintf("blacklist_token:%s", token), "blacklisted", expiration)
+}
+
+// IsTokenInBlacklist 检查Access Token是否在黑名单中
+func (r *RedisCache) IsTokenInBlacklist(ctx context.Context, token string) (bool, error) {
+	// 尝试从Redis的黑名单中获取token
+	val, err := r.Get(ctx, fmt.Sprintf("blacklist_token:%s", token))
+	// Redis返回缓存未命中
+	if err != nil {
+		// 不在黑名单中
+		if err.Error() == "redis: nil" {
+			return false, nil
+		}
+		// 其他错误
+		log.Printf("Error checking token in blacklist in UserService: %v", err)
+		return false, err
+	}
+	// 如果Redis返回的值是"blacklisted"，说明token在黑名单中
+	return val == "blacklisted", nil
 }

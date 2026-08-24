@@ -12,7 +12,7 @@ import (
 	"gorm.io/gorm"
 )
 
-func SetupRouter(sqlDB *gorm.DB, cache *cache.RedisCache) *gin.Engine {
+func SetupRouter(sqlDB *gorm.DB, cache *cache.RedisCache, authMiddleware *middleware.AuthMiddleware) *gin.Engine {
 	// 创建一个默认的Gin引擎
 	r := gin.Default()
 
@@ -40,7 +40,7 @@ func SetupRouter(sqlDB *gorm.DB, cache *cache.RedisCache) *gin.Engine {
 		userGroup.POST("/refresh", userHandler.RefreshToken) // 刷新Token
 	}
 	// 受保护的路由组
-	protectedUserGroup := userGroup.Group("/").Use(middleware.Auth()) // 使用Auth中间件鉴权
+	protectedUserGroup := userGroup.Group("/").Use(authMiddleware.Auth()) // 使用Auth中间件鉴权
 	{
 		protectedUserGroup.POST("/logout", userHandler.Logout) // 用户登出
 	}

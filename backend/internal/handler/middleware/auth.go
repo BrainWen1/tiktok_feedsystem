@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"feedsystem/internal/infra/cache"
 	"feedsystem/internal/utils/jwt"
 	"feedsystem/internal/utils/response"
 	"log"
@@ -9,8 +10,17 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// 避免auth中间件和service层绑定，AuthMiddleware不直接依赖业务层UserService，而是依赖基础设施层的RedisCache
+type AuthMiddleware struct {
+	cache *cache.RedisCache
+}
+
+func NewAuthMiddleware(cache *cache.RedisCache) *AuthMiddleware {
+	return &AuthMiddleware{cache: cache}
+}
+
 // Auth 中间件用于验证请求中的JWT令牌
-func Auth() gin.HandlerFunc {
+func (am *AuthMiddleware) Auth() gin.HandlerFunc {
 	return func(ctx *gin.Context) {
 		// 拿到请求头中的Authorization字段
 		authHeader := ctx.GetHeader("Authorization")
@@ -36,6 +46,21 @@ func Auth() gin.HandlerFunc {
 		if err != nil {
 			log.Printf("Failed to parse token: %v", err)
 			response.FailAuthResponse(ctx, "无效的token")
+			ctx.Abort()
+			return
+		}
+
+		// 检查token是否在黑名单中
+		isBlacklisted, err := am.cache.IsTokenInBlacklist(ctx, token)
+		if err != nil {
+			log.Printf("Error checking token blacklist: %v", err)
+			response.FailAuthResponse(ctx, "服务器错误")
+			ctx.Abort()
+			return
+		}
+		if isBlacklisted { // token在黑名单中，说明用户已经登出或token已被注销
+			log.Printf("Token is blacklisted: %s", token)
+			response.FailAuthResponse(ctx, "token已被注销")
 			ctx.Abort()
 			return
 		}

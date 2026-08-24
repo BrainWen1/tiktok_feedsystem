@@ -4,6 +4,7 @@ import (
 	"errors"
 	"feedsystem/internal/dto"
 	"feedsystem/internal/service"
+	"feedsystem/internal/utils/jwt"
 	"feedsystem/internal/utils/response"
 	"log"
 
@@ -143,8 +144,23 @@ func (h *UserHandler) Logout(ctx *gin.Context) {
 		return
 	}
 
+	// 获取原始 access token
+	accessToken, err := jwt.ExtractBearerToken(ctx)
+	if err != nil {
+		log.Printf("Error extracting access token in UserHandler: %v", err)
+		response.FailResponse(ctx, "Failed to extract access token")
+		return
+	}
+	// 获取 access token 剩余有效期
+	remainingExpire, err := jwt.GetTokenRemainingExpire(accessToken)
+	if err != nil {
+		log.Printf("Error getting token remaining expire in UserHandler: %v", err)
+		response.FailResponse(ctx, "Failed to get token remaining expire")
+		return
+	}
+
 	// 调用服务层进行登出
-	err = h.UserService.Logout(ctx.Request.Context(), userID, req.RefreshToken)
+	err = h.UserService.Logout(ctx.Request.Context(), userID, req.RefreshToken, accessToken, remainingExpire)
 	if err != nil {
 		response.FailResponse(ctx, "Failed to logout user")
 		log.Printf("Error logging out user in UserHandler: %v", err)

@@ -6,12 +6,15 @@ import (
 	"errors"
 	"feedsystem/internal/config"
 	"log"
+	"strings"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
+	JWT "github.com/golang-jwt/jwt/v5"
 )
 
-// 返回JWT密钥和过期时间
+// 返回JWT密钥和设置的过期时间
 func jwtSecret() ([]byte, int) {
 	key := config.AppConfig.JWT_secret
 	expireHour := config.AppConfig.JWT_expire_hour
@@ -28,7 +31,7 @@ func jwtSecret() ([]byte, int) {
 type Claims struct {
 	UserID   uint   `json:"user_id"`
 	UserName string `json:"user_name"`
-	jwt.RegisteredClaims
+	JWT.RegisteredClaims
 }
 
 // GenerateToken 生成 JWT token
@@ -38,14 +41,14 @@ func GenerateToken(userID uint, userName string) (string, error) {
 	claims := Claims{
 		UserID:   userID,
 		UserName: userName,
-		RegisteredClaims: jwt.RegisteredClaims{
+		RegisteredClaims: JWT.RegisteredClaims{
 			Issuer:    "feedsystem",                                                              // 签发者
-			IssuedAt:  jwt.NewNumericDate(time.Now()),                                            // 签发时间
-			ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour * time.Duration(expiration))), // 过期时间
+			IssuedAt:  JWT.NewNumericDate(time.Now()),                                            // 签发时间
+			ExpiresAt: JWT.NewNumericDate(time.Now().Add(time.Hour * time.Duration(expiration))), // 过期时间
 		},
 	}
 	// 创建 token
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	token := JWT.NewWithClaims(jwt.SigningMethodHS256, claims)
 	// 签名
 	return token.SignedString(jwtSecretKey)
 }
@@ -53,7 +56,7 @@ func GenerateToken(userID uint, userName string) (string, error) {
 // ParseToken 解析和验证JWT令牌
 func ParseToken(tokenString string) (*Claims, error) {
 	// 解析令牌
-	token, err := jwt.ParseWithClaims(tokenString, &Claims{}, func(token *jwt.Token) (interface{}, error) {
+	token, err := JWT.ParseWithClaims(tokenString, &Claims{}, func(token *JWT.Token) (interface{}, error) {
 		jwtSecretKey, _ := jwtSecret()
 		return jwtSecretKey, nil // 使用配置中的JWT密钥进行验证
 	})
@@ -77,4 +80,54 @@ func GenerateRefreshToken(user_id uint) (string, error) {
 	}
 	// 将32位随机字节转换为十六进制字符串
 	return hex.EncodeToString(b), nil
+}
+
+// ExtractBearerToken 从请求中提取 access token
+func ExtractBearerToken(ctx *gin.Context) (string, error) {
+	// 从请求头中获取 Authorization 字段
+	authHeader := ctx.GetHeader("Authorization")
+	if authHeader == "" {
+		log.Printf("Authorization header is empty")
+		return "", errors.New("authorization header is empty")
+	}
+	// 检查 Authorization 字段的格式是否正确并获取token，通常是 "Bearer <token>"
+	parts := strings.SplitN(authHeader, " ", 2)
+	if !(len(parts) == 2 && parts[0] == "Bearer") { // parts[0]:"Bearer"  parts[1]:token
+		log.Printf("Authorization header format is invalid: %s", authHeader)
+		return "", errors.New("authorization header format is invalid")
+	}
+	return parts[1], nil
+}
+
+// GetTokenRemainingExpire 获取 token 剩余有效期（秒）
+func GetTokenRemainingExpire(tokenStr string) (int64, error) {
+	// 解析 token 并获取 claims
+	token, err := JWT.Parse(tokenStr, func(token *JWT.Token) (interface{}, error) {
+		jwtSecretKey, _ := jwtSecret()
+		return jwtSecretKey, nil
+	})
+	if err != nil {
+		log.Printf("Error parsing token: %v", err)
+		return 0, err
+	}
+	// 检查 token 是否有效
+	if !token.Valid {
+		log.Printf("Invalid token: %v", err)
+		return 0, errors.New("invalid token")
+	}
+	// 断言 claims 类型
+	claims, ok := token.Claims.(JWT.MapClaims)
+	if !ok {
+		log.Printf("Error asserting token claims: %v", err)
+		return 0, errors.New("invalid token claims")
+	}
+	// 获取 exp 字段并计算剩余时间
+	exp := int64(claims["exp"].(float64))
+	now := time.Now().Unix()
+	remain := exp - now
+	if remain < 0 {
+		log.Printf("Token has expired: exp=%d, now=%d", exp, now)
+		return 0, errors.New("token has expired")
+	}
+	return remain, nil
 }

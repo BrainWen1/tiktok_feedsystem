@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"feedsystem/internal/config"
+	"feedsystem/internal/handler/middleware"
 	"feedsystem/internal/infra/cache"
 	"feedsystem/internal/infra/database"
 	"feedsystem/internal/infra/mq"
@@ -62,8 +63,11 @@ func main() {
 		log.Printf("RabbitMQ connected")
 	}
 
+	// 初始化中间件
+	authMiddleware := middleware.NewAuthMiddleware(cache)
+
 	// 设置路由
-	r := router.SetupRouter(db, cache)
+	r := router.SetupRouter(db, cache, authMiddleware)
 
 	// 启动服务器
 	if err := r.Run(":8080"); err != nil {

@@ -180,7 +180,7 @@ func (s *UserService) RefreshToken(ctx context.Context, refreshToken string) (ne
 }
 
 // Logout 用户登出
-func (s *UserService) Logout(ctx context.Context, userID uint, refreshToken string) error {
+func (s *UserService) Logout(ctx context.Context, userID uint, refreshToken, accessToken string, remainingExpire int64) error {
 	// // 删除该用户的所有刷新令牌
 	// err := s.UserRepo.DeleteRefreshTokenByUserID(ctx, userID)
 	// if err != nil {
@@ -193,6 +193,43 @@ func (s *UserService) Logout(ctx context.Context, userID uint, refreshToken stri
 	// 由于我们在Redis中使用的key是 refresh_token:{refreshToken字符串}，而没有直接存储userID到key中
 	// 所以我们无法直接通过userID删除所有相关的refresh token
 	// 因此，我们需要在用户登出时，前端传递当前的refresh token，服务端根据这个token删除对应的缓存
+
+	// 获取refresh token对应的userID，与access token中解析出的userID进行比对，确保是同一个用户在登出
 	redisKey := fmt.Sprintf("refresh_token:%s", refreshToken)
-	return s.cache.Delete(ctx, redisKey)
+	valStr, err := s.cache.Get(ctx, redisKey)
+	if err != nil {
+		log.Printf("Error getting refresh token from Redis in UserService: %v", err)
+		return fmt.Errorf("invalid or expired refresh token")
+	}
+	userIDuint64, err := strconv.ParseUint(valStr, 10, 64) // 将字符串转换为uint64
+	if err != nil {
+		log.Printf("Error parsing userID from Redis value in UserService: %v", err)
+		return fmt.Errorf("invalid refresh token data")
+	}
+	if uint(userIDuint64) != userID { // 对比用户ID
+		log.Printf("User ID mismatch during logout: token userID %d, context userID %d", userIDuint64, userID)
+		return fmt.Errorf("user ID mismatch")
+	}
+
+	// 删除refresh token缓存
+	err = s.cache.Delete(ctx, redisKey)
+	if err != nil {
+		log.Printf("Error deleting refresh token from Redis in UserService: %v", err)
+		return fmt.Errorf("failed to delete refresh token")
+	}
+
+	// 将access token加入黑名单，设置过期时间为剩余有效期
+	ttl := time.Duration(remainingExpire) * time.Second // time.Duration是以纳秒为单位的，所以需要乘以time.Second
+	if ttl <= 0 {                                       // 如果剩余有效期小于等于0，说明token已经过期，无需加入黑名单
+		log.Printf("Access token already expired, no need to blacklist")
+		return nil
+	}
+
+	err = s.cache.AddTokenToBlacklist(ctx, accessToken, ttl)
+	if err != nil {
+		log.Printf("Error adding access token to blacklist in UserService: %v", err)
+		return fmt.Errorf("failed to blacklist access token")
+	}
+
+	return nil
 }
