@@ -11,18 +11,12 @@ type RenameRequest struct {
 	NewUsername string `json:"new_user_name"`
 }
 
-// FindByIDResponse 查询用户信息响应
-type FindByIDResponse struct {
+// ProfileResponse 查询用户信息响应
+type ProfileResponse struct {
 	ID        uint   `json:"id"`
 	Username  string `json:"user_name"`
-	AvatarURL string `json:"avatar_url,omitempty"`
-	Bio       string `json:"bio,omitempty"`
-}
-
-// FindByUsernameResponse
-type FindByUsernameResponse struct {
-	ID       uint   `json:"id"`
-	Username string `json:"user_name"`
+	AvatarURL string `json:"avatar_url"`
+	Bio       string `json:"bio"`
 }
 
 // 修改密码请求
@@ -63,11 +57,11 @@ type RefreshRequest struct {
 	OldAccessToken string `json:"old_access_token"`
 }
 
-// GetProfileResponse 用户主页资料响应，统计字段，业务中redis/异步计数，禁止实时count大表
-type GetProfileResponse struct {
-	Account       FindByIDResponse `json:"account"`
-	VideoCount    int64            `json:"video_count"`
-	TotalLikes    int64            `json:"total_likes"`
-	FollowerCount int64            `json:"follower_count"`
-	VloggerCount  int64            `json:"vlogger_count"`
+// UserDetailsResponse 用户主页资料响应，统计字段，业务中redis/异步计数，禁止实时count大表
+type UserDetailsResponse struct {
+	Account       ProfileResponse `json:"account"`
+	VideoCount    int64           `json:"video_count"`
+	TotalLikes    int64           `json:"total_likes"`
+	FollowerCount int64           `json:"follower_count"`
+	VloggerCount  int64           `json:"vlogger_count"`
 }

@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"feedsystem/internal/dto"
 	"feedsystem/internal/infra/cache"
 	"feedsystem/internal/model"
 	"feedsystem/internal/repo"
@@ -249,4 +250,21 @@ func (s *UserService) Logout(ctx context.Context, userID uint, refreshToken, acc
 	}
 
 	return nil
+}
+
+func (s *UserService) GetProfile(ctx context.Context, userID uint) (*dto.ProfileResponse, error) {
+	// 根据用户ID查询数据库
+	user, err := s.UserRepo.FindByID(ctx, userID)
+	if err != nil {
+		log.Printf("Error getting user profile in UserService: %v", err)
+		return nil, err
+	}
+
+	// 组装脱敏返回
+	return &dto.ProfileResponse{
+		ID:        user.ID,
+		Username:  user.UserName,
+		AvatarURL: user.AvatarURL,
+		Bio:       user.Bio,
+	}, nil
 }

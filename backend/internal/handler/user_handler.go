@@ -174,3 +174,24 @@ func (h *UserHandler) Logout(ctx *gin.Context) {
 		"user_name": username,
 	})
 }
+
+func (h *UserHandler) GetProfile(ctx *gin.Context) {
+	// 从上下文中获取用户ID和用户名
+	userID, _, err := getUserFromCtx(ctx)
+	if err != nil {
+		log.Printf("Error getting user from context in UserHandler: %v", err)
+		response.FailResponse(ctx, "Failed to get user ID from context")
+		return
+	}
+
+	// 调用服务层获取用户资料
+	profile, err := h.UserService.GetProfile(ctx.Request.Context(), userID)
+	if err != nil {
+		log.Printf("Error getting user profile in UserHandler: %v", err)
+		response.FailResponse(ctx, "Failed to get user profile")
+		return
+	}
+
+	// 返回成功响应，包含用户资料
+	response.SuccessResponse(ctx, profile)
+}
