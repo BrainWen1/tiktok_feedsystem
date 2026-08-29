@@ -27,3 +27,8 @@ docker一键启动mysql、redis、rabbitmq
 ### 8.24
 引入Redis黑名单机制，登出时拉黑该用户的access token
 新增登出时先判断传入的refresh token是否属于该用户
+
+### 8.29
+refresh接口也增加了拉黑旧access token的机制，但是这个字段是非必需的
+新增get profile接口，获取用户基础信息
+为用户新增默认头像和简介，注册时直接填入默认头像和简介，后续在update profile接口里修改，在get profile接口里一并返回
