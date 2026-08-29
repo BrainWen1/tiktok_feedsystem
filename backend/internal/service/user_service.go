@@ -47,10 +47,16 @@ func (s *UserService) Register(ctx context.Context, username, password string) (
 		return nil, err
 	}
 
+	// 注册直接填入默认头像和简介
+	avatarURL := "/static/default_avatar.png" // 默认头像URL
+	bio := "这个人很懒，什么都没有留下。"                   // 默认简介
+
 	// 创建用户
 	user := &model.User{
-		UserName: username,
-		Password: string(hashedPassword),
+		UserName:  username,
+		Password:  string(hashedPassword),
+		AvatarURL: avatarURL,
+		Bio:       bio,
 	}
 	err = s.UserRepo.Register(ctx, user)
 	if err != nil {

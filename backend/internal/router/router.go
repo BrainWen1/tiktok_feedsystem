@@ -19,6 +19,9 @@ func SetupRouter(sqlDB *gorm.DB, cache *cache.RedisCache, authMiddleware *middle
 	// 注册全局中间件
 	r.Use(middleware.Cors()) // 跨域中间件
 
+	// 注册静态文件路由，用于访问默认头像等静态资源
+	r.Static("/static", "./assets/static")
+
 	// 初始化各层组件
 	// User
 	userRepo := repo.NewUserRepo(sqlDB)

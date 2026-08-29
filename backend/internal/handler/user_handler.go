@@ -32,6 +32,13 @@ func (h *UserHandler) Register(ctx *gin.Context) {
 		return
 	}
 
+	// 判断用户名和密码是否为空
+	if req.Username == "" || req.Password == "" {
+		log.Printf("Username or password is empty: username='%s', password='%s'", req.Username, req.Password)
+		response.FailResponse(ctx, "Username and password cannot be empty")
+		return
+	}
+
 	// 调用服务层注册用户
 	user, err := h.UserService.Register(ctx.Request.Context(), req.Username, req.Password)
 	if err != nil {
