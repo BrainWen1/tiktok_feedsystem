@@ -59,7 +59,8 @@ type UpdateProfileRequest struct {
 
 // 刷新Token请求
 type RefreshRequest struct {
-	RefreshToken string `json:"refresh_token"`
+	RefreshToken   string `json:"refresh_token"`
+	OldAccessToken string `json:"old_access_token"`
 }
 
 // GetProfileResponse 用户主页资料响应，统计字段，业务中redis/异步计数，禁止实时count大表

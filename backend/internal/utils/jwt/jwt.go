@@ -125,6 +125,7 @@ func GetTokenRemainingExpire(tokenStr string) (int64, error) {
 	exp := int64(claims["exp"].(float64))
 	now := time.Now().Unix()
 	remain := exp - now
+	// 如果剩余时间小于0，说明token已经过期，返回错误
 	if remain < 0 {
 		log.Printf("Token has expired: exp=%d, now=%d", exp, now)
 		return 0, errors.New("token has expired")

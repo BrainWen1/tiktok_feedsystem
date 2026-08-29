@@ -109,7 +109,7 @@ func (s *UserService) Login(ctx context.Context, username, password string) (acc
 }
 
 // RefreshToken 刷新令牌
-func (s *UserService) RefreshToken(ctx context.Context, refreshToken string) (newAccessToken string, newRefreshToken string, uid uint, uname string, err error) {
+func (s *UserService) RefreshToken(ctx context.Context, refreshToken string, OldAccessToken string) (newAccessToken string, newRefreshToken string, uid uint, uname string, err error) {
 	if refreshToken == "" {
 		return "", "", 0, "", fmt.Errorf("refresh token is empty")
 	}
@@ -133,6 +133,29 @@ func (s *UserService) RefreshToken(ctx context.Context, refreshToken string) (ne
 	user, err := s.UserRepo.FindByID(ctx, uid)
 	if err != nil {
 		return "", "", 0, "", fmt.Errorf("user not found")
+	}
+
+	// 删除旧的refresh token
+	err = s.cache.Delete(ctx, redisKey)
+	if err != nil {
+		return "", "", 0, "", fmt.Errorf("failed revoke old refresh token: %w", err)
+	}
+	// 拉黑旧的access token，设置过期时间为剩余有效期
+	// 此项一定要设计成非必填的，因为有时候刷新就是因为access token过期了，前端没有办法传回
+	if OldAccessToken != "" {
+		remainingExpire, err := jwt.GetTokenRemainingExpire(OldAccessToken)
+		if err == nil {
+			// 解析成功，加入黑名单
+			err = s.cache.AddTokenToBlacklist(ctx, OldAccessToken, time.Duration(remainingExpire)*time.Second)
+			if err != nil {
+				// 解析成功，但加入黑名单失败，记录日志并返回错误
+				log.Printf("Error adding old access token to blacklist in UserService: %v", err)
+				return "", "", 0, "", fmt.Errorf("failed to blacklist old access token: %w", err)
+			}
+		} else {
+			// 解析失败，直接忽略，不要返回错误
+			log.Printf("Error getting remaining expire for old access token in UserService: %v", err)
+		}
 	}
 
 	// 生成新的访问令牌和刷新令牌
@@ -162,12 +185,6 @@ func (s *UserService) RefreshToken(ctx context.Context, refreshToken string) (ne
 	// 	return "", "", 0, "", err
 	// }
 
-	// 改用Redis缓存保存新的刷新令牌，并删除旧的刷新令牌
-	// 删除旧的refresh token
-	err = s.cache.Delete(ctx, redisKey)
-	if err != nil {
-		return "", "", 0, "", fmt.Errorf("failed revoke old refresh token: %w", err)
-	}
 	// 将新refreshToken写入Redis，7天TTL
 	newRedisKey := fmt.Sprintf("refresh_token:%s", newRefreshToken)
 	ttl := 7 * 24 * time.Hour

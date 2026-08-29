@@ -83,7 +83,7 @@ func (h *UserHandler) RefreshToken(ctx *gin.Context) {
 	}
 
 	// 调用服务层刷新令牌
-	newAccessToken, newRefreshToken, uid, uname, err := h.UserService.RefreshToken(ctx.Request.Context(), req.RefreshToken)
+	newAccessToken, newRefreshToken, uid, uname, err := h.UserService.RefreshToken(ctx.Request.Context(), req.RefreshToken, req.OldAccessToken)
 	if err != nil {
 		response.FailResponse(ctx, err.Error())
 		log.Printf("Error refreshing token in UserHandler: %v", err)
