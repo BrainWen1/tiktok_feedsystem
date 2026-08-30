@@ -101,9 +101,27 @@ func (r *UserRepo) DeleteRefreshTokenByUserID(ctx context.Context, userID uint) 
 
 // UpdateProfile 更新用户资料
 func (r *UserRepo) UpdateProfile(ctx context.Context, userID uint, updatedFields map[string]interface{}) error {
-	err := r.db.WithContext(ctx).Model(&model.User{}).Where("id = ?", userID).Updates(updatedFields).Error
+	err := r.db.WithContext(ctx).Model(&model.User{}).Where(&model.User{ID: userID}).Updates(updatedFields).Error
 	if err != nil {
 		log.Printf("Error updating user profile in UserRepo: %v", err)
+		return err
+	}
+	return nil
+}
+
+// UpdatePassword 更新用户密码
+func (r *UserRepo) UpdatePassword(ctx context.Context, userID uint, newPasswordHash string) error {
+	user := model.User{
+		Password: newPasswordHash,
+	}
+	err := r.db.WithContext(ctx).
+		Model(&model.User{}).
+		Where(&model.User{ID: userID}).
+		Select("Password").
+		Updates(user).
+		Error
+	if err != nil {
+		log.Printf("Error updating user password in UserRepo: %v", err)
 		return err
 	}
 	return nil

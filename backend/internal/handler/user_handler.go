@@ -264,3 +264,69 @@ func (h *UserHandler) UploadAvatar(ctx *gin.Context) {
 		"avatar_url": avatarURL,
 	})
 }
+
+// ChangePassword 修改用户密码
+func (h *UserHandler) ChangePassword(ctx *gin.Context) {
+	// 从上下文中获取用户ID
+	userID, _, err := getUserFromCtx(ctx)
+	if err != nil {
+		log.Printf("Error getting user from context in ChangePassword: %v", err)
+		response.FailResponse(ctx, "Failed to get user ID from context")
+		return
+	}
+
+	// 解析请求参数
+	var req dto.ChangePasswordRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		log.Printf("Error parsing change password request in ChangePassword: %v", err)
+		response.FailResponse(ctx, "Invalid request parameters")
+		return
+	}
+
+	// 判断三个字段是否有留空
+	if req.OldPassword == "" || req.NewPassword == "" || req.ConfirmPassword == "" {
+		log.Printf("Old password or new password or confirm password is empty: old='%s', new='%s', confirm='%s'", req.OldPassword, req.NewPassword, req.ConfirmPassword)
+		response.FailResponse(ctx, "Old password and new password and confirm password cannot be empty")
+		return
+	}
+	// 判断新密码和确认密码是否一致
+	if req.NewPassword != req.ConfirmPassword {
+		log.Printf("New password and confirm password do not match: new='%s', confirm='%s'", req.NewPassword, req.ConfirmPassword)
+		response.FailResponse(ctx, "New password and confirm password do not match")
+		return
+	}
+	// 判断新密码是否与旧密码相同
+	if req.OldPassword == req.NewPassword {
+		log.Printf("New password is the same as old password: old='%s', new='%s'", req.OldPassword, req.NewPassword)
+		response.FailResponse(ctx, "New password cannot be the same as old password")
+		return
+	}
+
+	// 获取access token用作service层的拉黑操作
+	accessToken, err := jwt.ExtractBearerToken(ctx)
+	if err != nil {
+		log.Printf("Error extracting access token in UserHandler: %v", err)
+		response.FailResponse(ctx, "Failed to extract access token")
+		return
+	}
+	// 获取access token剩余有效期
+	remainingExpire, err := jwt.GetTokenRemainingExpire(accessToken)
+	if err != nil {
+		log.Printf("Error getting token remaining expire in UserHandler: %v", err)
+		response.FailResponse(ctx, "Failed to get token remaining expire")
+		return
+	}
+
+	// 调用服务层修改密码
+	err = h.UserService.ChangePassword(ctx.Request.Context(), userID, req.OldPassword, req.NewPassword, accessToken, remainingExpire)
+	if err != nil {
+		log.Printf("Error changing password in ChangePassword: %v", err)
+		response.FailResponse(ctx, "Failed to change password: "+err.Error())
+		return
+	}
+
+	// 返回成功响应
+	response.SuccessResponse(ctx, gin.H{
+		"status": "Password changed successfully",
+	})
+}

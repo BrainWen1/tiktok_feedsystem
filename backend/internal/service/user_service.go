@@ -390,3 +390,47 @@ func (s *UserService) UploadAvatar(ctx context.Context, userID uint, fh *multipa
 
 	return urlPath, nil
 }
+
+// ChangePassword 修改用户密码
+func (s *UserService) ChangePassword(ctx context.Context, userID uint, oldPassword, newPassword, access_token string, remainingExpire int64) error {
+	// 查找用户
+	user, err := s.UserRepo.FindByID(ctx, userID)
+	if err != nil {
+		log.Printf("Error finding user in ChangePassword: %v", err)
+		return fmt.Errorf("user not found")
+	}
+
+	// 验证旧密码
+	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(oldPassword)); err != nil {
+		log.Printf("Old password does not match in ChangePassword for userID %d", userID)
+		return fmt.Errorf("old password is incorrect")
+	}
+
+	// 加密新密码
+	hashedNewPassword, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
+	if err != nil {
+		log.Printf("Error hashing new password in ChangePassword: %v", err)
+		return fmt.Errorf("failed to hash new password")
+	}
+
+	// 更新密码
+	err = s.UserRepo.UpdatePassword(ctx, userID, string(hashedNewPassword))
+	if err != nil {
+		log.Printf("Error updating password in ChangePassword: %v", err)
+		return fmt.Errorf("failed to update password")
+	}
+
+	// 拉黑access token
+	ttl := time.Duration(remainingExpire) * time.Second
+	if ttl > 0 { // 如果剩余有效期大于0，才加入黑名单
+		err = s.cache.AddTokenToBlacklist(ctx, access_token, ttl)
+		if err != nil {
+			log.Printf("Error adding access token to blacklist in ChangePassword: %v", err)
+			return fmt.Errorf("failed to blacklist access token")
+		}
+	}
+
+	// 删除该用户的所有refresh token，这一步需要redis里存在<id, refresh_token>的映射，才能删除，目前没有做这个键值对，先鸽着
+
+	return nil
+}

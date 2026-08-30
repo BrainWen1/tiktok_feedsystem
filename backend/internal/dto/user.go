@@ -16,9 +16,9 @@ type ProfileResponse struct {
 
 // 修改密码请求
 type ChangePasswordRequest struct {
-	Username    string `json:"user_name"`
-	OldPassword string `json:"old_password"`
-	NewPassword string `json:"new_password"`
+	OldPassword     string `json:"old_password"`
+	NewPassword     string `json:"new_password"`
+	ConfirmPassword string `json:"confirm_password"` // 确认新密码
 }
 
 // 登陆请求

@@ -46,10 +46,11 @@ func SetupRouter(sqlDB *gorm.DB, cache *cache.RedisCache, authMiddleware *middle
 	// 受保护的路由组
 	protectedUserGroup := userGroup.Group("/").Use(authMiddleware.Auth()) // 使用Auth中间件鉴权
 	{
-		protectedUserGroup.POST("/logout", userHandler.Logout)              // 用户登出
-		protectedUserGroup.GET("/profile", userHandler.GetProfile)          // 获取用户资料
-		protectedUserGroup.PATCH("/profile", userHandler.UpdateProfile)     // 更新用户资料
-		protectedUserGroup.POST("/upload_avatar", userHandler.UploadAvatar) // 上传用户头像
+		protectedUserGroup.POST("/logout", userHandler.Logout)                  // 用户登出
+		protectedUserGroup.GET("/profile", userHandler.GetProfile)              // 获取用户资料
+		protectedUserGroup.PATCH("/profile", userHandler.UpdateProfile)         // 更新用户资料
+		protectedUserGroup.POST("/upload_avatar", userHandler.UploadAvatar)     // 上传用户头像
+		protectedUserGroup.POST("/change_password", userHandler.ChangePassword) // 修改用户密码
 	}
 
 	// 返回配置好的路由引擎
