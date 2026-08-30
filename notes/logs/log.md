@@ -32,3 +32,8 @@ docker一键启动mysql、redis、rabbitmq
 refresh接口也增加了拉黑旧access token的机制，但是这个字段是非必需的
 新增get profile接口，获取用户基础信息
 为用户新增默认头像和简介，注册时直接填入默认头像和简介，后续在update profile接口里修改，在get profile接口里一并返回
+
+### 8.30
+新增update profile接口，允许用户修改头像和简介，并且预留avarta url字段的修改权限，用作前端上传头像后获得后端返回的url地址，前端再将该url地址传给update profile接口进行修改
+新增upload avatar接口，允许用户上传头像，后端将头像保存到本地，并返回相对路径url给前端，前端再将该url地址传给update profile接口进行修改
+新增change password接口，允许用户修改密码，同时在修改密码时将旧的access token拉黑，现阶段未完成删除该用户所有refresh token的功能，后续在redis里增加双向索引，方便删除该用户所有refresh token
