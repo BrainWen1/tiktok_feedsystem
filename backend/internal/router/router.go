@@ -21,6 +21,7 @@ func SetupRouter(sqlDB *gorm.DB, cache *cache.RedisCache, authMiddleware *middle
 
 	// 注册静态文件路由，用于访问默认头像等静态资源
 	r.Static("/static", "./assets/static")
+	r.Static("/upload", "./.run/upload")
 
 	// 初始化各层组件
 	// User
@@ -45,9 +46,10 @@ func SetupRouter(sqlDB *gorm.DB, cache *cache.RedisCache, authMiddleware *middle
 	// 受保护的路由组
 	protectedUserGroup := userGroup.Group("/").Use(authMiddleware.Auth()) // 使用Auth中间件鉴权
 	{
-		protectedUserGroup.POST("/logout", userHandler.Logout)          // 用户登出
-		protectedUserGroup.GET("/profile", userHandler.GetProfile)      // 获取用户资料
-		protectedUserGroup.PATCH("/profile", userHandler.UpdateProfile) // 更新用户资料
+		protectedUserGroup.POST("/logout", userHandler.Logout)              // 用户登出
+		protectedUserGroup.GET("/profile", userHandler.GetProfile)          // 获取用户资料
+		protectedUserGroup.PATCH("/profile", userHandler.UpdateProfile)     // 更新用户资料
+		protectedUserGroup.POST("/upload_avatar", userHandler.UploadAvatar) // 上传用户头像
 	}
 
 	// 返回配置好的路由引擎

@@ -6,9 +6,15 @@ import (
 	"feedsystem/internal/infra/cache"
 	"feedsystem/internal/model"
 	"feedsystem/internal/repo"
+	"feedsystem/internal/utils/file"
 	"feedsystem/internal/utils/jwt"
 	"fmt"
+	"io"
 	"log"
+	"mime/multipart"
+	"os"
+	"path"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -298,8 +304,8 @@ func (s *UserService) UpdateProfile(ctx context.Context, userID uint, req dto.Up
 	}
 	if req.AvatarURL != nil {
 		// 只允许本服务静态资源路径，拒绝外部http/https地址
-		if !strings.HasPrefix(*req.AvatarURL, "/static/") {
-			return nil, fmt.Errorf("头像地址非法，仅允许服务器本地静态资源")
+		if !strings.HasPrefix(*req.AvatarURL, "/upload/") {
+			return nil, fmt.Errorf("invalid avatar URL, must start with /upload/")
 		}
 		updateMap["avatar_url"] = *req.AvatarURL
 	}
@@ -321,4 +327,66 @@ func (s *UserService) UpdateProfile(ctx context.Context, userID uint, req dto.Up
 
 	// 更新成功后，查询最新的用户资料并返回
 	return s.GetProfile(ctx, userID)
+}
+
+// UploadAvatar 上传用户头像
+func (s *UserService) UploadAvatar(ctx context.Context, userID uint, fh *multipart.FileHeader) (string, error) {
+	const maxSize = 10 << 20 // 设置最大文件大小为10MB
+	if fh.Size <= 0 || fh.Size > maxSize {
+		log.Printf("File size is invalid in UploadAvatar: %v", fh.Size)
+		return "", fmt.Errorf("invalid file size")
+	}
+
+	// 检查文件扩展名是否合法
+	ext := strings.ToLower(filepath.Ext(fh.Filename)) // 获取文件扩展名并转换为小写
+	switch ext {
+	case ".jpg", ".jpeg", ".png", ".webp":
+	default:
+		log.Printf("Invalid file type in UploadAvatar: %v", ext)
+		return "", fmt.Errorf("invalid file type")
+	}
+
+	// 创建用户头像存储目录
+	dir := filepath.Join(".run", "upload", "avatars", strconv.FormatUint(uint64(userID), 10)) // 拼接目录路径
+	if err := os.MkdirAll(dir, 0o755); err != nil {                                           // 创建目录，如果目录已存在则不会报错
+		log.Printf("Failed to create directory in UploadAvatar: %v", err)
+		return "", fmt.Errorf("failed to create directory: %w", err)
+	}
+
+	// 生成随机文件名
+	filename, err := file.RandHex(16) // 生成16字节的随机十六进制字符串作为文件名
+	if err != nil {
+		log.Printf("Failed to generate random filename in UploadAvatar: %v", err)
+		return "", fmt.Errorf("failed to generate random filename: %w", err)
+	}
+	filename = filename + ext // 拼接完整文件名
+
+	// 拼接完整文件路径
+	absPath := filepath.Join(dir, filename)
+
+	// 保存上传的文件到指定路径，由于service层不能绑定gin.Context，所以这里使用io.Copy来保存文件
+	// 打开上传的文件
+	srcFile, err := fh.Open()
+	if err != nil {
+		return "", fmt.Errorf("open upload file failed: %w", err)
+	}
+	defer srcFile.Close() // 注册延迟关闭文件句柄
+
+	// 创建本地目标文件
+	dstFile, err := os.Create(absPath)
+	if err != nil {
+		return "", fmt.Errorf("create target file failed: %w", err)
+	}
+	defer dstFile.Close()
+
+	// 拷贝流写入磁盘
+	_, err = io.Copy(dstFile, srcFile)
+	if err != nil {
+		return "", fmt.Errorf("copy file content failed: %w", err)
+	}
+
+	// 返回相对路径，供handler层拼接成http可访问URL
+	urlPath := path.Join("/upload", "avatars", strconv.FormatUint(uint64(userID), 10), filename)
+
+	return urlPath, nil
 }

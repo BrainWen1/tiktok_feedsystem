@@ -232,3 +232,35 @@ func (h *UserHandler) UpdateProfile(ctx *gin.Context) {
 	// 返回成功响应
 	response.SuccessResponse(ctx, updatedUser)
 }
+
+// UploadAvatar 上传用户头像
+func (h *UserHandler) UploadAvatar(ctx *gin.Context) {
+	// 从上下文中获取用户ID
+	userID, _, err := getUserFromCtx(ctx)
+	if err != nil {
+		log.Printf("Failed to get user from context in UploadAvatar: %v", err)
+		response.FailAuthResponse(ctx, "Failed to get user ID from context")
+		return
+	}
+
+	// 解析上传的文件
+	fh, err := ctx.FormFile("file") // 获取表单中key为"file"的文件
+	if err != nil {
+		log.Printf("Failed to get uploaded file in UploadAvatar: %v", err)
+		response.FailResponse(ctx, "Failed to get uploaded file: "+err.Error())
+		return
+	}
+
+	// 调用服务层处理头像上传
+	avatarURL, err := h.UserService.UploadAvatar(ctx.Request.Context(), userID, fh)
+	if err != nil {
+		log.Printf("Failed to upload avatar in UploadAvatar: %v", err)
+		response.FailResponse(ctx, "Failed to upload avatar: "+err.Error())
+		return
+	}
+
+	// 返回成功响应，直接返回相对路径URL
+	response.SuccessResponse(ctx, gin.H{
+		"avatar_url": avatarURL,
+	})
+}
