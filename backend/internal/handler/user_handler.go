@@ -6,6 +6,7 @@ import (
 	"feedsystem/internal/service"
 	"feedsystem/internal/utils/jwt"
 	"feedsystem/internal/utils/response"
+	"fmt"
 	"log"
 
 	"github.com/gin-gonic/gin"
@@ -201,4 +202,33 @@ func (h *UserHandler) GetProfile(ctx *gin.Context) {
 
 	// 返回成功响应，包含用户资料
 	response.SuccessResponse(ctx, profile)
+}
+
+func (h *UserHandler) UpdateProfile(ctx *gin.Context) {
+	// 从上下文中获取用户ID和用户名
+	userID, _, err := getUserFromCtx(ctx)
+	if err != nil {
+		log.Printf("Error getting user from context in UserHandler: %v", err)
+		response.FailResponse(ctx, "Failed to get user ID from context")
+		return
+	}
+
+	// 解析请求参数
+	var req dto.UpdateProfileRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		log.Printf("Error parsing update profile request in UserHandler: %v", err)
+		response.FailResponse(ctx, "Invalid request parameters")
+		return
+	}
+
+	// 调用服务层更新用户资料
+	updatedUser, err := h.UserService.UpdateProfile(ctx.Request.Context(), userID, req)
+	if err != nil {
+		log.Printf("Error updating user profile in UserHandler: %v", err)
+		response.FailResponse(ctx, fmt.Sprintf("Failed to update user profile: %v", err))
+		return
+	}
+
+	// 返回成功响应
+	response.SuccessResponse(ctx, updatedUser)
 }

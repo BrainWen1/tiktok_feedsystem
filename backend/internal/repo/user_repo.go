@@ -98,3 +98,13 @@ func (r *UserRepo) DeleteRefreshTokenByUserID(ctx context.Context, userID uint) 
 	}
 	return nil
 }
+
+// UpdateProfile 更新用户资料
+func (r *UserRepo) UpdateProfile(ctx context.Context, userID uint, updatedFields map[string]interface{}) error {
+	err := r.db.WithContext(ctx).Model(&model.User{}).Where("id = ?", userID).Updates(updatedFields).Error
+	if err != nil {
+		log.Printf("Error updating user profile in UserRepo: %v", err)
+		return err
+	}
+	return nil
+}

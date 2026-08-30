@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log"
 	"strconv"
+	"strings"
 	"time"
 
 	"golang.org/x/crypto/bcrypt"
@@ -258,6 +259,7 @@ func (s *UserService) Logout(ctx context.Context, userID uint, refreshToken, acc
 	return nil
 }
 
+// GetProfile 获取用户资料
 func (s *UserService) GetProfile(ctx context.Context, userID uint) (*dto.ProfileResponse, error) {
 	// 根据用户ID查询数据库
 	user, err := s.UserRepo.FindByID(ctx, userID)
@@ -273,4 +275,50 @@ func (s *UserService) GetProfile(ctx context.Context, userID uint) (*dto.Profile
 		AvatarURL: user.AvatarURL,
 		Bio:       user.Bio,
 	}, nil
+}
+
+// UpdateProfile 更新用户资料
+func (s *UserService) UpdateProfile(ctx context.Context, userID uint, req dto.UpdateProfileRequest) (*dto.ProfileResponse, error) {
+	updateMap := make(map[string]interface{})
+
+	// 逐个检查请求参数是否为空，如果不为空则加入更新映射
+	if req.UserName != nil {
+		// 检查用户名是否已存在
+		existingUser, err := s.UserRepo.FindByUsername(ctx, *req.UserName)
+		if err != nil && err != gorm.ErrRecordNotFound {
+			// 出现错误，并且不是记录未找到的错误，说明查询失败
+			log.Printf("Error checking existing username in UserService: %v", err)
+			return nil, fmt.Errorf("failed to check existing username")
+		}
+		if existingUser != nil && existingUser.ID != userID {
+			// 该用户名已被其他用户使用
+			return nil, fmt.Errorf("username already exists")
+		}
+		updateMap["user_name"] = *req.UserName
+	}
+	if req.AvatarURL != nil {
+		// 只允许本服务静态资源路径，拒绝外部http/https地址
+		if !strings.HasPrefix(*req.AvatarURL, "/static/") {
+			return nil, fmt.Errorf("头像地址非法，仅允许服务器本地静态资源")
+		}
+		updateMap["avatar_url"] = *req.AvatarURL
+	}
+	if req.Bio != nil {
+		updateMap["bio"] = *req.Bio
+	}
+
+	// 如果没有任何字段需要更新，直接返回错误
+	if len(updateMap) == 0 {
+		return nil, fmt.Errorf("no fields to update")
+	}
+
+	// 调用仓库层更新用户资料
+	err := s.UserRepo.UpdateProfile(ctx, userID, updateMap)
+	if err != nil {
+		log.Printf("Error updating user profile in UserService: %v", err)
+		return nil, err
+	}
+
+	// 更新成功后，查询最新的用户资料并返回
+	return s.GetProfile(ctx, userID)
 }

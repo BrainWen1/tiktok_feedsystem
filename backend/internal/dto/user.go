@@ -6,11 +6,6 @@ type RegisterRequest struct {
 	Password string `json:"password"`
 }
 
-// 重命名请求
-type RenameRequest struct {
-	NewUsername string `json:"new_user_name"`
-}
-
 // ProfileResponse 查询用户信息响应
 type ProfileResponse struct {
 	ID        uint   `json:"id"`
@@ -47,8 +42,10 @@ type LogoutRequest struct {
 
 // 更新用户资料请求
 type UpdateProfileRequest struct {
-	AvatarURL string `json:"avatar_url"`
-	Bio       string `json:"bio"`
+	// 使用指针类型，这样可以区分字段是未传入还是传入了空值
+	UserName  *string `json:"user_name"`
+	AvatarURL *string `json:"avatar_url"`
+	Bio       *string `json:"bio"`
 }
 
 // 刷新Token请求
