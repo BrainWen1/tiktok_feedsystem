@@ -37,3 +37,7 @@ refresh接口也增加了拉黑旧access token的机制，但是这个字段是�
 新增update profile接口，允许用户修改头像和简介，并且预留avarta url字段的修改权限，用作前端上传头像后获得后端返回的url地址，前端再将该url地址传给update profile接口进行修改
 新增upload avatar接口，允许用户上传头像，后端将头像保存到本地，并返回相对路径url给前端，前端再将该url地址传给update profile接口进行修改
 新增change password接口，允许用户修改密码，同时在修改密码时将旧的access token拉黑，现阶段未完成删除该用户所有refresh token的功能，后续在redis里增加双向索引，方便删除该用户所有refresh token
+
+### 8.31
+新增redis双向索引<userId, refreshToken_set>，方便删除该用户所有refresh token
+设置定时异步清理任务，每internal时间间清理一次redis中refresh_token_set中已经过期的refresh token，避免redis中refresh_token_set无限增长
