@@ -118,6 +118,11 @@ func (s *UserService) Login(ctx context.Context, username, password string) (acc
 		log.Printf("Error saving refresh token to Redis in UserService: %v", err)
 		return "", "", fmt.Errorf("save refresh token to redis failed: %w", err)
 	}
+	// 双向索引<userId, refreshToken>
+	if s.cache.AddUserRefreshSet(ctx, user.ID, refreshToken, ttl) != nil {
+		log.Printf("Error adding refresh token to user set in Redis in UserService: %v", err)
+		return "", "", fmt.Errorf("add refresh token to user set failed: %w", err)
+	}
 
 	return accessToken, refreshToken, nil
 }
@@ -154,6 +159,12 @@ func (s *UserService) RefreshToken(ctx context.Context, refreshToken string, Old
 	if err != nil {
 		return "", "", 0, "", fmt.Errorf("failed revoke old refresh token: %w", err)
 	}
+	err = s.cache.RemoveUserRefreshSetItem(ctx, uid, refreshToken) // 从用户的refresh token集合中移除旧的refresh token
+	if err != nil {
+		log.Printf("Error removing refresh token from user set in Redis in UserService: %v", err)
+		return "", "", 0, "", fmt.Errorf("failed remove old refresh token from user set: %w", err)
+	}
+
 	// 拉黑旧的access token，设置过期时间为剩余有效期
 	// 此项一定要设计成非必填的，因为有时候刷新就是因为access token过期了，前端没有办法传回
 	if OldAccessToken != "" {
@@ -206,6 +217,12 @@ func (s *UserService) RefreshToken(ctx context.Context, refreshToken string, Old
 	if err != nil {
 		return "", "", 0, "", fmt.Errorf("failed store new refresh token: %w", err)
 	}
+	// 双向索引<userId, refreshToken>
+	err = s.cache.AddUserRefreshSet(ctx, user.ID, newRefreshToken, ttl)
+	if err != nil {
+		log.Printf("Error adding refresh token to user set in Redis in UserService: %v", err)
+		return "", "", 0, "", fmt.Errorf("failed add refresh token to user set: %w", err)
+	}
 
 	return newAccessToken, newRefreshToken, user.ID, user.UserName, nil
 }
@@ -247,6 +264,11 @@ func (s *UserService) Logout(ctx context.Context, userID uint, refreshToken, acc
 	if err != nil {
 		log.Printf("Error deleting refresh token from Redis in UserService: %v", err)
 		return fmt.Errorf("failed to delete refresh token")
+	}
+	err = s.cache.RemoveUserRefreshSetItem(ctx, userID, refreshToken) // 从用户的refresh token集合中移除旧的refresh token
+	if err != nil {
+		log.Printf("Error removing refresh token from user set in Redis in UserService: %v", err)
+		return fmt.Errorf("failed remove refresh token from user set: %w", err)
 	}
 
 	// 将access token加入黑名单，设置过期时间为剩余有效期
@@ -431,6 +453,7 @@ func (s *UserService) ChangePassword(ctx context.Context, userID uint, oldPasswo
 	}
 
 	// 删除该用户的所有refresh token，这一步需要redis里存在<id, refresh_token>的映射，才能删除，目前没有做这个键值对，先鸽着
+	err = s.cache.CleanAllUserRefresh(ctx, userID)
 
 	return nil
 }

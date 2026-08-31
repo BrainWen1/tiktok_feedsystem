@@ -75,3 +75,37 @@ func (r *RedisCache) IsTokenInBlacklist(ctx context.Context, token string) (bool
 	// 如果Redis返回的值是"blacklisted"，说明token在黑名单中
 	return val == "blacklisted", nil
 }
+
+// AddUserRefreshSet 将refresh token加入用户集合
+func (c *RedisCache) AddUserRefreshSet(ctx context.Context, uid uint, refresh_token string, expire time.Duration) error {
+	key := fmt.Sprintf("refresh_set:%d", uid)
+	// sadd 插入成员
+	err := c.client.SAdd(ctx, key, refresh_token).Err()
+	if err != nil {
+		return err
+	}
+	// 设置集合整体过期时间
+	return c.client.Expire(ctx, key, expire).Err()
+}
+
+// RemoveUserRefreshSetItem 用户集合移除单条refresh token
+func (c *RedisCache) RemoveUserRefreshSetItem(ctx context.Context, uid uint, refresh_token string) error {
+	key := fmt.Sprintf("refresh_set:%d", uid)
+	return c.client.SRem(ctx, key, refresh_token).Err()
+}
+
+// CleanAllUserRefresh 清空该用户全部refresh
+func (c *RedisCache) CleanAllUserRefresh(ctx context.Context, uid uint) error {
+	setKey := fmt.Sprintf("refresh_set:%d", uid)
+	// 获取集合里面全部rt
+	refresh_tokens, err := c.client.SMembers(ctx, setKey).Result()
+	if err != nil {
+		return err
+	}
+	// 逐个删除 rt:{token}
+	for _, refresh_token := range refresh_tokens {
+		_ = c.client.Del(ctx, fmt.Sprintf("refresh_token:%s", refresh_token)).Err()
+	}
+	// 删除整个set集合
+	return c.client.Del(ctx, setKey).Err()
+}
