@@ -15,6 +15,44 @@ import (
 	"github.com/joho/godotenv"
 )
 
+// StartRefreshCleanTask 启动定时清扫，单独goroutine常驻运行
+func StartRefreshCleanTask(ctx context.Context, redisCache *cache.RedisCache) {
+	go func() {
+		const interval = 4 * time.Hour //每4小时自动清理一次，可调整
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+
+		log.Printf("refresh token stale cleaner started, interval=%v\n", interval)
+		for {
+			select {
+			case <-ctx.Done(): // 监听上下文取消信号，优雅退出
+				log.Println("refresh cleaner stopped")
+				return
+			case <-ticker.C: // 定时触发清理任务
+				log.Println("refresh token stale cleaner triggered")
+				//捕获panic，防止任务崩溃导致整个goroutine死掉不再执行
+				func() {
+					defer func() {
+						if err := recover(); err != nil {
+							log.Printf("clean task panic recovered: %v", err)
+						}
+					}()
+					cleanCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+					defer cancel()
+
+					// 调用Redis缓存的清理方法
+					err := redisCache.CleanStaleRefreshSetMembers(cleanCtx)
+					if err != nil {
+						log.Printf("clean stale refresh failed: %v", err)
+					} else {
+						log.Println("stale refresh token clean success")
+					}
+				}()
+			}
+		}
+	}()
+}
+
 func main() {
 	// 加载 .env（本地开发）
 	if err := godotenv.Load(); err != nil {
@@ -68,6 +106,11 @@ func main() {
 
 	// 设置路由
 	r := router.SetupRouter(db, cache, authMiddleware)
+
+	// 设置定时异步的redis清理任务
+	globalCtx, stop := context.WithCancel(context.Background()) // 创建一个可取消的上下文，用于控制清理任务的生命周期
+	defer stop()
+	StartRefreshCleanTask(globalCtx, cache)
 
 	// 启动服务器
 	if err := r.Run(":8080"); err != nil {

@@ -109,3 +109,49 @@ func (c *RedisCache) CleanAllUserRefresh(ctx context.Context, uid uint) error {
 	// 删除整个set集合
 	return c.client.Del(ctx, setKey).Err()
 }
+
+// CleanStaleRefreshSetMembers 清扫集合里已经过期消失的refresh token垃圾成员
+func (c *RedisCache) CleanStaleRefreshSetMembers(ctx context.Context) error {
+	var cursor uint64
+	// Scan迭代查找所有 refresh_set:* 的key
+	for {
+		var keys []string
+		var err error
+		// 获取一批 refresh_set:* 的keys
+		keys, cursor, err = c.client.Scan(ctx, cursor, "refresh_set:*", 100).Result()
+		if err != nil {
+			return err
+		}
+		// 获取单个key
+		for _, setKey := range keys {
+			var sCursor uint64
+			// 获取该key对应的一批 refresh token
+			for {
+				members, nextSCursor, err := c.client.SScan(ctx, setKey, sCursor, "", 100).Result()
+				if err != nil {
+					return err
+				}
+				// 遍历该批次里的每个refresh token，检查其对应的key是否存在，如果不存在则从集合中移除
+				for _, rt := range members {
+					rtKey := fmt.Sprintf("refresh:%s", rt)
+					exists, err := c.client.Exists(ctx, rtKey).Result()
+					if err != nil {
+						continue
+					}
+					// rt对应的key已经过期不存在，从集合删掉这条脏数据
+					if exists == 0 {
+						_ = c.client.SRem(ctx, setKey, rt).Err()
+					}
+				}
+				sCursor = nextSCursor
+				if sCursor == 0 {
+					break
+				}
+			}
+		}
+		if cursor == 0 {
+			break
+		}
+	}
+	return nil
+}
