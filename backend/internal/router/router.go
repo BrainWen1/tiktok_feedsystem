@@ -28,6 +28,10 @@ func SetupRouter(sqlDB *gorm.DB, cache *cache.RedisCache, authMiddleware *middle
 	userRepo := repo.NewUserRepo(sqlDB)
 	userService := service.NewUserService(userRepo, cache)
 	userHandler := handler.NewUserHandler(userService)
+	// Video
+	videoRepo := repo.NewVideoRepo(sqlDB)
+	videoService := service.NewVideoService(videoRepo)
+	videoHandler := handler.NewVideoHandler(videoService)
 
 	// 设置路由
 	// 健康检查路由
@@ -53,6 +57,17 @@ func SetupRouter(sqlDB *gorm.DB, cache *cache.RedisCache, authMiddleware *middle
 		protectedUserGroup.PATCH("/profile", userHandler.UpdateProfile)         // 更新用户资料
 		protectedUserGroup.POST("/upload_avatar", userHandler.UploadAvatar)     // 上传用户头像
 		protectedUserGroup.POST("/change_password", userHandler.ChangePassword) // 修改用户密码
+	}
+
+	// 视频相关路由
+	videoGroup := r.Group("/video")
+	{
+
+	}
+	// 受保护的路由组
+	protectedVideoGroup := videoGroup.Group("/").Use(authMiddleware.Auth()) // 使用Auth中间件鉴权
+	{
+		protectedVideoGroup.POST("/upload_video", videoHandler.Upload) // 上传视频
 	}
 
 	// 返回配置好的路由引擎
