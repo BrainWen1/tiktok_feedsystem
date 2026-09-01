@@ -457,3 +457,35 @@ func (s *UserService) ChangePassword(ctx context.Context, userID uint, oldPasswo
 
 	return nil
 }
+
+// FindByID 根据ID查找用户
+func (s *UserService) FindByID(ctx context.Context, id uint) (*dto.ProfileResponse, error) {
+	user, err := s.UserRepo.FindByID(ctx, id)
+	if err != nil {
+		log.Printf("Error finding user by ID in FindByID: %v", err)
+		return nil, fmt.Errorf("user not found")
+	}
+
+	return &dto.ProfileResponse{
+		ID:        user.ID,
+		Username:  user.UserName,
+		AvatarURL: user.AvatarURL,
+		Bio:       user.Bio,
+	}, nil
+}
+
+// FindByUsername 根据用户名查找用户
+func (s *UserService) FindByUsername(ctx context.Context, username string) (*dto.ProfileResponse, error) {
+	user, err := s.UserRepo.FindByUsername(ctx, username)
+	if err != nil {
+		log.Printf("Error finding user by username in FindByUsername: %v", err)
+		return nil, fmt.Errorf("user not found")
+	}
+
+	return &dto.ProfileResponse{
+		ID:        user.ID,
+		Username:  user.UserName,
+		AvatarURL: user.AvatarURL,
+		Bio:       user.Bio,
+	}, nil
+}

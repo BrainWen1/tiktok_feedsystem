@@ -62,3 +62,13 @@ type UserDetailsResponse struct {
 	FollowerCount int64           `json:"follower_count"`
 	VloggerCount  int64           `json:"vlogger_count"`
 }
+
+// FindByIDRequest 根据ID查找用户请求
+type FindByIDRequest struct {
+	UserID uint `json:"user_id"`
+}
+
+// FindByUsernameRequest 根据用户名查找用户请求
+type FindByUsernameRequest struct {
+	Username string `json:"user_name"`
+}

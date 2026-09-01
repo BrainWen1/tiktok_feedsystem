@@ -39,9 +39,11 @@ func SetupRouter(sqlDB *gorm.DB, cache *cache.RedisCache, authMiddleware *middle
 	// 公共路由组
 	userGroup := r.Group("/user")
 	{
-		userGroup.POST("/register", userHandler.Register)    // 用户注册
-		userGroup.POST("/login", userHandler.Login)          // 用户登录
-		userGroup.POST("/refresh", userHandler.RefreshToken) // 刷新Token
+		userGroup.POST("/register", userHandler.Register)               // 用户注册
+		userGroup.POST("/login", userHandler.Login)                     // 用户登录
+		userGroup.POST("/refresh", userHandler.RefreshToken)            // 刷新Token
+		userGroup.POST("/find_by_id", userHandler.FindByID)             // 根据ID查找用户
+		userGroup.POST("/find_by_username", userHandler.FindByUsername) // 根据用户名查找用户
 	}
 	// 受保护的路由组
 	protectedUserGroup := userGroup.Group("/").Use(authMiddleware.Auth()) // 使用Auth中间件鉴权

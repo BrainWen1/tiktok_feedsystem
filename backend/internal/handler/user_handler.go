@@ -330,3 +330,43 @@ func (h *UserHandler) ChangePassword(ctx *gin.Context) {
 		"status": "Password changed successfully",
 	})
 }
+
+// FindByID 根据ID查找用户
+func (h *UserHandler) FindByID(ctx *gin.Context) {
+	// 解析请求参数
+	var req dto.FindByIDRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		response.FailResponse(ctx, "Invalid request parameters")
+		return
+	}
+
+	// 调用服务层根据ID查找用户
+	user, err := h.UserService.FindByID(ctx.Request.Context(), req.UserID)
+	if err != nil {
+		response.FailResponse(ctx, err.Error())
+		log.Printf("Error finding user by ID in UserHandler: %v", err)
+		return
+	}
+
+	response.SuccessResponse(ctx, user)
+}
+
+// FindByUsername 根据用户名查找用户
+func (h *UserHandler) FindByUsername(ctx *gin.Context) {
+	// 解析请求参数
+	var req dto.FindByUsernameRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		response.FailResponse(ctx, "Invalid request parameters")
+		return
+	}
+
+	// 调用服务层根据用户名查找用户
+	user, err := h.UserService.FindByUsername(ctx.Request.Context(), req.Username)
+	if err != nil {
+		response.FailResponse(ctx, err.Error())
+		log.Printf("Error finding user by username in UserHandler: %v", err)
+		return
+	}
+
+	response.SuccessResponse(ctx, user)
+}
