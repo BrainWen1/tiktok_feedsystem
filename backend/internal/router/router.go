@@ -67,7 +67,8 @@ func SetupRouter(sqlDB *gorm.DB, cache *cache.RedisCache, authMiddleware *middle
 	// 受保护的路由组
 	protectedVideoGroup := videoGroup.Group("/").Use(authMiddleware.Auth()) // 使用Auth中间件鉴权
 	{
-		protectedVideoGroup.POST("/upload_video", videoHandler.Upload) // 上传视频
+		protectedVideoGroup.POST("/upload_video", videoHandler.UploadVideo) // 上传视频
+		protectedVideoGroup.POST("/upload_cover", videoHandler.UploadCover) // 上传视频封面
 	}
 
 	// 返回配置好的路由引擎
