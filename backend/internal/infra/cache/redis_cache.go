@@ -2,6 +2,8 @@ package cache
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"log"
 	"time"
@@ -154,4 +156,47 @@ func (c *RedisCache) CleanStaleRefreshSetMembers(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+// 工具函数：randToken 生成随机token字符串
+func randToken(n int) (string, error) {
+	b := make([]byte, n)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b), nil
+}
+
+// Lock 尝试获取分布式锁，返回锁的token和是否成功获取锁
+func (c *RedisCache) Lock(ctx context.Context, key string, ttl time.Duration) (string, bool, error) {
+	if c == nil || c.client == nil {
+		return "", false, nil
+	}
+	// 生成随机token作为锁的值
+	token, err := randToken(16)
+	if err != nil {
+		return "", false, err
+	}
+	// 尝试使用SETNX命令设置锁，成功则返回token和true，失败则返回false
+	ok, err := c.client.SetNX(ctx, key, token, ttl).Result()
+	return token, ok, err
+}
+
+// unlockScript 是一个Lua脚本，用于在释放锁时检查锁的值是否与token匹配，如果匹配则删除锁，否则不做任何操作
+var unlockScript = redis.NewScript(`
+if redis.call("GET", KEYS[1]) == ARGV[1] then
+  return redis.call("DEL", KEYS[1])
+else
+  return 0
+end
+`)
+
+// Unlock 释放分布式锁，只有当锁的值与token匹配时才会释放锁
+func (c *RedisCache) Unlock(ctx context.Context, key string, token string) error {
+	if c == nil || c.client == nil {
+		return nil
+	}
+	// 使用Lua脚本原子性地检查锁的值是否与token匹配，如果匹配则删除锁，否则不做任何操作
+	_, err := unlockScript.Run(ctx, c.client, []string{key}, token).Result()
+	return err
 }

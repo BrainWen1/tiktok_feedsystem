@@ -2,7 +2,9 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"feedsystem/internal/dto"
+	"feedsystem/internal/infra/cache"
 	"feedsystem/internal/model"
 	"feedsystem/internal/repo"
 	"feedsystem/internal/utils/file"
@@ -15,14 +17,18 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 )
 
+// 折中的耦合方案，后期解耦把部分用户信息写到video表里，配合mq做异步更新
 type VideoService struct {
-	VideoRepo *repo.VideoRepo
+	VideoRepo   *repo.VideoRepo
+	UserService *UserService
+	cache       *cache.RedisCache
 }
 
-func NewVideoService(videoRepo *repo.VideoRepo) *VideoService {
-	return &VideoService{VideoRepo: videoRepo}
+func NewVideoService(videoRepo *repo.VideoRepo, userService *UserService, cache *cache.RedisCache) *VideoService {
+	return &VideoService{VideoRepo: videoRepo, UserService: userService, cache: cache}
 }
 
 // UploadVideo 处理视频上传逻辑
@@ -183,12 +189,18 @@ func (s *VideoService) PublishVideo(ctx context.Context, userID uint, title, des
 
 // VideoDetail 获取单条视频详情，软鉴权
 func (s *VideoService) VideoDetail(ctx context.Context, videoID uint, uid uint) (*dto.VideoDetailResponse, error) {
-	// repo查询视频+联表拿到作者基础信息
-	video, author, err := s.VideoRepo.FindWithAuthor(ctx, videoID)
+	// 调用带Redis缓存+分布式锁的底层方法，拿到公共视频数据
+	video, err := s.getDetail(ctx, videoID)
 	if err != nil {
 		return nil, err
 	}
-	// 组装基础返回数据
+	// 通过视频里的AuthorID查询作者信息
+	author, err := s.UserService.FindByID(ctx, video.AuthorID)
+	if err != nil {
+		return nil, err
+	}
+
+	// 组装返回DTO
 	resp := &dto.VideoDetailResponse{
 		ID:          video.ID,
 		Title:       video.Title,
@@ -197,17 +209,129 @@ func (s *VideoService) VideoDetail(ctx context.Context, videoID uint, uid uint) 
 		CoverURL:    video.CoverURL,
 		LikesCount:  video.LikesCount,
 		AuthorInfo: dto.AuthorBrief{
-			UserId:    author.ID,
-			UserName:  author.UserName,
+			UserID:    author.ID,
+			UserName:  author.Username,
 			AvatarURL: author.AvatarURL,
 		},
-		IsLiked: false, // 默认false，游客到此结束
+		IsLiked: false, //游客默认false
 	}
 
-	// 只有登录用户才查询点赞状态，暂时没做like模块，先假设所有用户都点赞了
+	// 登录用户才判断点赞状态，uid!=0代表携带有效token
 	if uid != 0 {
+		//TODO：后续接入点赞repo，去数据库/redis查询当前用户是否点赞这条视频
 		resp.IsLiked = true
 	}
-
 	return resp, nil
+}
+
+// getCached 封装读取并反序列化缓存的逻辑
+func (s *VideoService) getCached(ctx context.Context, cacheKey string) (*model.Video, bool) {
+	// 设置一个短超时，避免Redis阻塞过久
+	opCtx, cancel := context.WithTimeout(ctx, 50*time.Millisecond)
+	defer cancel()
+	// 尝试从Redis获取缓存
+	val, err := s.cache.Get(opCtx, cacheKey)
+	if err != nil {
+		return nil, false
+	}
+	// 反序列化缓存数据
+	b := []byte(val)
+	var cached model.Video
+	if err := json.Unmarshal(b, &cached); err != nil {
+		log.Printf("Failed to unmarshal cached video data: %v", err)
+		return nil, false
+	}
+	return &cached, true
+}
+
+// setCached 将视频结构体序列化写入redis缓存
+func (s *VideoService) setCached(ctx context.Context, cacheKey string, video *model.Video) error {
+	// 序列化视频结构体
+	b, err := json.Marshal(video)
+	if err != nil {
+		log.Printf("Failed to marshal video for caching: %v", err)
+		return err
+	}
+	opCtx, cancel := context.WithTimeout(ctx, 50*time.Millisecond)
+	defer cancel()
+	// 写入Redis缓存，设置过期时间为10分钟
+	err = s.cache.Set(opCtx, cacheKey, b, 10*time.Minute)
+	if err != nil {
+		log.Printf("Failed to set video cache in Redis: %v", err)
+		return err
+	}
+	return nil
+}
+
+// getDetail 底层方法：仅获取视频基础公共元数据，带Redis缓存+分布式锁防击穿
+func (s *VideoService) getDetail(ctx context.Context, vid uint) (*model.Video, error) {
+	cacheKey := fmt.Sprintf("video_detail:%d", vid) // Redis缓存key
+
+	if s.cache != nil {
+		//第一次读取缓存
+		if v, ok := s.getCached(ctx, cacheKey); ok {
+			log.Printf("Cache hit for video %d", vid) // [日志] 缓存命中
+			return v, nil
+		}
+		log.Printf("Cache miss for video %d, attempting to acquire lock", vid) // [日志] 缓存未命中
+		//缓存未命中，加分布式锁防止缓存击穿
+		lockKey := fmt.Sprintf("lock:%d", vid)
+		lockCtx, lockCancel := context.WithTimeout(ctx, 50*time.Millisecond)
+		token, locked, lockErr := s.cache.Lock(lockCtx, lockKey, 2*time.Second)
+		lockCancel()
+
+		if lockErr == nil && locked {
+			// 拿到锁，查询数据库并更新缓存
+			log.Printf("Acquired lock for video %d, querying database", vid) // [日志] 拿到锁
+			defer func() {                                                   // 注册延迟释放锁
+				err := s.cache.Unlock(context.Background(), lockKey, token)
+				if err != nil {
+					log.Printf("unlock failed key=%s err=%v", lockKey, err)
+				}
+			}()
+			//拿到锁后二次校验缓存
+			if v, ok := s.getCached(ctx, cacheKey); ok {
+				// 成功拿到缓存，直接返回
+				return v, nil
+			}
+			// 缓存仍然未命中，查询数据库
+			video, err := s.VideoRepo.FindByID(ctx, vid)
+			if err != nil {
+				return nil, err
+			}
+			log.Printf("Fetched video %d from database, updating cache", vid) // [日志] 查询数据库
+			// 将查询到的视频数据写入缓存
+			err = s.setCached(ctx, cacheKey, video)
+			if err != nil {
+				return nil, err
+			}
+			log.Printf("Cache miss for video %d, fetched from DB and cached", vid) // [日志] 设置缓存
+			return video, nil
+		}
+		//抢锁失败，轮询等待缓存构建完成
+		for i := 0; i < 5; i++ {
+			select {
+			case <-ctx.Done(): // 上下文超时或取消
+				return nil, ctx.Err()
+			case <-time.After(20 * time.Millisecond): // 短暂等待后重试
+			}
+			// 尝试再次读取缓存
+			if v, ok := s.getCached(ctx, cacheKey); ok {
+				return v, nil
+			}
+		}
+	}
+	//兜底：缓存不可用/重试失败直接查库
+	log.Printf("warn: cache wait timeout, fallback to db for video %d", vid)
+	video, err := s.VideoRepo.FindByID(ctx, vid)
+	if err != nil {
+		return nil, err
+	}
+	if s.cache != nil {
+		err = s.setCached(ctx, cacheKey, video)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return video, nil
 }

@@ -20,6 +20,15 @@ func (r *VideoRepo) Create(ctx context.Context, video *model.Video) error {
 	return r.db.WithContext(ctx).Create(video).Error
 }
 
+// FindByID 根据ID查找视频
+func (r *VideoRepo) FindByID(ctx context.Context, id uint) (*model.Video, error) {
+	var video model.Video
+	if err := r.db.WithContext(ctx).First(&video, id).Error; err != nil {
+		return nil, err
+	}
+	return &video, nil
+}
+
 // FindWithAuthor 根据视频ID查询视频及其作者信息
 func (r *VideoRepo) FindWithAuthor(ctx context.Context, videoID uint) (*model.Video, *model.User, error) {
 	var video model.Video

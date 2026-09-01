@@ -42,7 +42,7 @@ type VideoDetailResponse struct {
 
 // AuthorBrief 作者简要信息
 type AuthorBrief struct {
-	UserId    uint   `json:"user_id"`
+	UserID    uint   `json:"user_id"`
 	UserName  string `json:"user_name"`
 	AvatarURL string `json:"avatar_url"`
 }

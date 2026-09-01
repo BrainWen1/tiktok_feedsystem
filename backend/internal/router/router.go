@@ -30,7 +30,7 @@ func SetupRouter(sqlDB *gorm.DB, cache *cache.RedisCache, authMiddleware *middle
 	userHandler := handler.NewUserHandler(userService)
 	// Video
 	videoRepo := repo.NewVideoRepo(sqlDB)
-	videoService := service.NewVideoService(videoRepo)
+	videoService := service.NewVideoService(videoRepo, userService, cache) // 传入UserService以便查询作者信息
 	videoHandler := handler.NewVideoHandler(videoService)
 
 	// 设置路由
