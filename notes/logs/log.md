@@ -41,3 +41,9 @@ refresh接口也增加了拉黑旧access token的机制，但是这个字段是�
 ### 8.31
 新增redis双向索引<userId, refreshToken_set>，方便删除该用户所有refresh token
 设置定时异步清理任务，每internal时间间清理一次redis中refresh_token_set中已经过期的refresh token，避免redis中refresh_token_set无限增长
+
+### 9.1
+新增用户模块的find user by id/username接口，方便后续在视频模块中获取视频作者的用户信息
+开始开发视频模块，新增上传视频和封面接口，以及发布视频接口，目前暂未做发布视频时传入的url的校验工作，后续会在redis中临时寄存上传记录
+新增按id查询视频接口，带redis缓存热点数据，并且在缓存未命中时加分布式锁防止缓存击穿
+
