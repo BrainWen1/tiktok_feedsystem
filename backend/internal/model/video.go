@@ -8,7 +8,7 @@ type Video struct {
 	AuthorID    uint   `gorm:"index;not null" json:"author_id"`                 // 作者ID
 	Title       string `gorm:"type:varchar(255);not null" json:"title"`         // 视频标题
 	Description string `gorm:"type:varchar(255);" json:"description,omitempty"` // 视频简介
-	PlayURL     string `gorm:"type:varchar(255);not null" json:"play_url"`      // 视频播放URL
+	VideoURL    string `gorm:"type:varchar(255);not null" json:"video_url"`     // 视频播放URL
 	CoverURL    string `gorm:"type:varchar(255);not null" json:"cover_url"`     // 视频封面URL
 
 	CreateTime time.Time `gorm:"autoCreateTime;index:idx_videos_create_time;index:idx_videos_popularity_time_id,priority:2,sort:desc" json:"create_time"` // 创建时间

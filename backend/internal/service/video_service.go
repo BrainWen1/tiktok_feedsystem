@@ -1,6 +1,9 @@
 package service
 
 import (
+	"context"
+	"feedsystem/internal/dto"
+	"feedsystem/internal/model"
 	"feedsystem/internal/repo"
 	"feedsystem/internal/utils/file"
 	"fmt"
@@ -23,7 +26,7 @@ func NewVideoService(videoRepo *repo.VideoRepo) *VideoService {
 }
 
 // UploadVideo 处理视频上传逻辑
-func (s *VideoService) UploadVideo(userID uint, fh *multipart.FileHeader) (string, error) {
+func (s *VideoService) UploadVideo(ctx context.Context, userID uint, fh *multipart.FileHeader) (string, error) {
 	const maxSize = 100 << 20 // 100MB
 	// 检查文件大小
 	if fh.Size <= 0 || fh.Size > maxSize {
@@ -86,7 +89,7 @@ func (s *VideoService) UploadVideo(userID uint, fh *multipart.FileHeader) (strin
 }
 
 // UploadCover 处理视频封面上传逻辑
-func (s *VideoService) UploadCover(userID uint, fh *multipart.FileHeader) (string, error) {
+func (s *VideoService) UploadCover(ctx context.Context, userID uint, fh *multipart.FileHeader) (string, error) {
 	const maxSize = 10 << 20 // 最大文件大小为10MB
 	if fh.Size <= 0 || fh.Size > maxSize {
 		log.Printf("File size is invalid in UploadCover: %v", fh.Size)
@@ -145,4 +148,35 @@ func (s *VideoService) UploadCover(userID uint, fh *multipart.FileHeader) (strin
 	urlPath := path.Join("/upload", "covers", strconv.FormatUint(uint64(userID), 10), filename)
 
 	return urlPath, nil
+}
+
+// PublishVideo 处理视频发布逻辑
+func (s *VideoService) PublishVideo(ctx context.Context, userID uint, title, description, videoURL, coverURL string) (*dto.PublishVideoResponse, error) {
+	// 验证输入参数
+	if title == "" || videoURL == "" || coverURL == "" {
+		log.Printf("Invalid input parameters in PublishVideo: title=%v, videoURL=%v, coverURL=%v", title, videoURL, coverURL)
+		return nil, fmt.Errorf("title, video URL, and cover URL cannot be empty")
+	}
+
+	if !strings.HasPrefix(videoURL, "/upload/videos/") || !strings.HasPrefix(coverURL, "/upload/covers/") {
+		log.Printf("Invalid URL format in PublishVideo: videoURL=%v, coverURL=%v", videoURL, coverURL)
+		return nil, fmt.Errorf("invalid video or cover URL format")
+	}
+
+	// 创建视频模型实例
+	video := &model.Video{
+		AuthorID:    userID,
+		Title:       title,
+		Description: description,
+		VideoURL:    videoURL,
+		CoverURL:    coverURL,
+	}
+
+	// 保存视频信息到数据库
+	if err := s.VideoRepo.Create(ctx, video); err != nil {
+		log.Printf("Failed to publish video in PublishVideo: %v", err)
+		return nil, fmt.Errorf("failed to publish video: %w", err)
+	}
+
+	return &dto.PublishVideoResponse{VideoID: video.ID}, nil
 }

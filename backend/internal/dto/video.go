@@ -4,8 +4,13 @@ package dto
 type PublishVideoRequest struct {
 	Title       string `json:"title"`
 	Description string `json:"description"`
-	PlayURL     string `json:"play_url"`
+	VideoURL    string `json:"video_url"`
 	CoverURL    string `json:"cover_url"`
+}
+
+// 发布视频响应
+type PublishVideoResponse struct {
+	VideoID uint `json:"video_id"`
 }
 
 // 删除视频请求

@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"feedsystem/internal/dto"
 	"feedsystem/internal/service"
 	"feedsystem/internal/utils/response"
 	"fmt"
@@ -36,7 +37,7 @@ func (h *VideoHandler) UploadVideo(ctx *gin.Context) {
 	}
 
 	// 调用 VideoService 的 Upload 方法处理视频上传
-	videoUrl, err := h.VideoService.UploadVideo(userID, fh)
+	videoUrl, err := h.VideoService.UploadVideo(ctx.Request.Context(), userID, fh)
 	if err != nil {
 		log.Printf("Failed to upload video: %v", err)
 		response.FailResponse(ctx, fmt.Sprintf("Failed to upload video: %v", err))
@@ -65,7 +66,7 @@ func (h *VideoHandler) UploadCover(ctx *gin.Context) {
 	}
 
 	// 调用 VideoService 的 UploadCover 方法处理封面上传
-	coverUrl, err := h.VideoService.UploadCover(userID, fh)
+	coverUrl, err := h.VideoService.UploadCover(ctx.Request.Context(), userID, fh)
 	if err != nil {
 		log.Printf("Failed to upload cover: %v", err)
 		response.FailResponse(ctx, fmt.Sprintf("Failed to upload cover: %v", err))
@@ -73,4 +74,33 @@ func (h *VideoHandler) UploadCover(ctx *gin.Context) {
 	}
 
 	response.SuccessResponse(ctx, gin.H{"cover_url": coverUrl})
+}
+
+// PublishVideo 发布视频接口
+func (h *VideoHandler) PublishVideo(ctx *gin.Context) {
+	// 获取用户ID
+	userID, _, err := getUserFromCtx(ctx)
+	if err != nil {
+		log.Printf("Failed to get user from context: %v", err)
+		response.FailResponse(ctx, fmt.Sprintf("Failed to get user from context: %v", err))
+		return
+	}
+
+	// 解析请求参数
+	var req dto.PublishVideoRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		log.Printf("Failed to bind request JSON: %v", err)
+		response.FailResponse(ctx, fmt.Sprintf("Failed to bind request JSON: %v", err))
+		return
+	}
+
+	// 调用服务层实现
+	videoID, err := h.VideoService.PublishVideo(ctx.Request.Context(), userID, req.Title, req.Description, req.VideoURL, req.CoverURL)
+	if err != nil {
+		log.Printf("Failed to publish video: %v", err)
+		response.FailResponse(ctx, fmt.Sprintf("Failed to publish video: %v", err))
+		return
+	}
+
+	response.SuccessResponse(ctx, videoID)
 }

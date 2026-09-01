@@ -69,6 +69,7 @@ func SetupRouter(sqlDB *gorm.DB, cache *cache.RedisCache, authMiddleware *middle
 	{
 		protectedVideoGroup.POST("/upload_video", videoHandler.UploadVideo) // 上传视频
 		protectedVideoGroup.POST("/upload_cover", videoHandler.UploadCover) // 上传视频封面
+		protectedVideoGroup.POST("/publish", videoHandler.PublishVideo)     // 发布视频
 	}
 
 	// 返回配置好的路由引擎
