@@ -180,3 +180,34 @@ func (s *VideoService) PublishVideo(ctx context.Context, userID uint, title, des
 
 	return &dto.PublishVideoResponse{VideoID: video.ID}, nil
 }
+
+// VideoDetail 获取单条视频详情，软鉴权
+func (s *VideoService) VideoDetail(ctx context.Context, videoID uint, uid uint) (*dto.VideoDetailResponse, error) {
+	// repo查询视频+联表拿到作者基础信息
+	video, author, err := s.VideoRepo.FindWithAuthor(ctx, videoID)
+	if err != nil {
+		return nil, err
+	}
+	// 组装基础返回数据
+	resp := &dto.VideoDetailResponse{
+		ID:          video.ID,
+		Title:       video.Title,
+		Description: video.Description,
+		VideoURL:    video.VideoURL,
+		CoverURL:    video.CoverURL,
+		LikesCount:  video.LikesCount,
+		AuthorInfo: dto.AuthorBrief{
+			UserId:    author.ID,
+			UserName:  author.UserName,
+			AvatarURL: author.AvatarURL,
+		},
+		IsLiked: false, // 默认false，游客到此结束
+	}
+
+	// 只有登录用户才查询点赞状态，暂时没做like模块，先假设所有用户都点赞了
+	if uid != 0 {
+		resp.IsLiked = true
+	}
+
+	return resp, nil
+}

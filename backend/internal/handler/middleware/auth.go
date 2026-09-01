@@ -73,3 +73,23 @@ func (am *AuthMiddleware) Auth() gin.HandlerFunc {
 		ctx.Next()
 	}
 }
+
+// TryGetUID 尝试从token中获取用户ID，如果解析失败则返回0，表示游客
+func TryGetUID(ctx *gin.Context) uint {
+	authHeader := ctx.GetHeader("Authorization")
+	if authHeader == "" {
+		return 0
+	}
+	parts := strings.Split(authHeader, " ")
+	if len(parts) != 2 || parts[0] != "Bearer" {
+		return 0
+	}
+	tokenStr := parts[1]
+
+	// 解析token，获取用户ID
+	claims, err := jwt.ParseToken(tokenStr)
+	if err != nil {
+		return 0
+	}
+	return claims.UserID
+}

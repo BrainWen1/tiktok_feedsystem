@@ -2,10 +2,12 @@ package handler
 
 import (
 	"feedsystem/internal/dto"
+	"feedsystem/internal/handler/middleware"
 	"feedsystem/internal/service"
 	"feedsystem/internal/utils/response"
 	"fmt"
 	"log"
+	"strconv"
 
 	"github.com/gin-gonic/gin"
 )
@@ -103,4 +105,26 @@ func (h *VideoHandler) PublishVideo(ctx *gin.Context) {
 	}
 
 	response.SuccessResponse(ctx, videoID)
+}
+
+// VideoDetail 获取单条视频详情，软鉴权
+func (h *VideoHandler) VideoDetail(ctx *gin.Context) {
+	// 获取video id
+	videoIDStr := ctx.Param("id")
+	videoID, err := strconv.ParseUint(videoIDStr, 10, 64)
+	if err != nil || videoID == 0 {
+		response.FailResponse(ctx, "video id is invalid")
+		return
+	}
+
+	// 尝试获取用户id，解析失败不报错，游客继续访问
+	uid, err := middleware.TryGetUID(ctx), nil
+
+	// 调用service处理
+	detail, err := h.VideoService.VideoDetail(ctx, uint(videoID), uid)
+	if err != nil {
+		response.FailResponse(ctx, "视频不存在")
+		return
+	}
+	response.SuccessResponse(ctx, detail)
 }
