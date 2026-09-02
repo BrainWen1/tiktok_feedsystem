@@ -4,13 +4,16 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"feedsystem/internal/infra/cache"
 	"feedsystem/internal/repo"
+	"fmt"
 	"log"
 	"strings"
+	"time"
 )
 
 // StartLikeConsumer 启动点赞消费，给worker调用
-func StartLikeConsumer(lmq *LikeMQ, likeRepo *repo.LikeRepo) error {
+func StartLikeConsumer(lmq *LikeMQ, likeRepo *repo.LikeRepo, cache *cache.RedisCache) error {
 	if lmq == nil || lmq.ch == nil {
 		return errors.New("like mq is not initialized")
 	}
@@ -33,6 +36,10 @@ func StartLikeConsumer(lmq *LikeMQ, likeRepo *repo.LikeRepo) error {
 	// 使用goroutine处理消息
 	go func() {
 		for msg := range msgs {
+			// 设置一个超时上下文，避免消息处理时间过长导致阻塞
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+
 			log.Printf("received like event: %s", msg.Body)
 			var event LikeEvent
 			// 解析消息体为LikeEvent结构体s
@@ -42,13 +49,28 @@ func StartLikeConsumer(lmq *LikeMQ, likeRepo *repo.LikeRepo) error {
 				continue
 			}
 
+			// 引入Redis缓存消息ID，先检查是否已经处理过，没有的话再处理，处理完后将消息ID存入Redis，设置过期时间，避免重复消费
+			key := fmt.Sprintf("mq_like_event_id:%s", event.EventID)
+			val, err := cache.Get(ctx, key)
+			if err != nil {
+				log.Printf("redis get error: %v", err)
+				_ = msg.Nack(false, true) // Redis异常，放回队列重试
+				continue
+			}
+			if val != "" {
+				// 如果Redis中存在该消息ID，说明已经处理过，直接ACK掉消息
+				log.Printf("like event already processed: %s", event.EventID)
+				_ = msg.Ack(false)
+				continue
+			}
+
 			// 根据事件类型调用相应的repo方法处理点赞或取消点赞
 			var consumeErr error
 			switch event.Action {
 			case "like":
-				consumeErr = likeRepo.CreateLike(context.Background(), event.UserID, event.VideoID)
+				consumeErr = likeRepo.CreateLike(ctx, event.UserID, event.VideoID)
 			case "unlike":
-				consumeErr = likeRepo.DeleteLike(context.Background(), event.UserID, event.VideoID)
+				consumeErr = likeRepo.DeleteLike(ctx, event.UserID, event.VideoID)
 			default:
 				log.Printf("unknown like event action: %s", event.Action)
 				_ = msg.Ack(false) // 未知的事件类型直接ACK掉，避免无限重试
@@ -65,6 +87,15 @@ func StartLikeConsumer(lmq *LikeMQ, likeRepo *repo.LikeRepo) error {
 					strings.Contains(errStr, "UNIQUE") {
 					log.Printf("like already exists, treat as success: user=%d video=%d, err=%v", event.UserID, event.VideoID, consumeErr)
 					_ = msg.Ack(false)
+
+					// 在这里尝试写入redis，即使第一次成功处理后redis写入失败，也可以在这里再次尝试写入，
+					// 避免后续所有重复消费全部缓存miss进入数据库
+					err = cache.Set(ctx, key, "1", 24*time.Hour) // 过期时间为24小时
+					if err != nil {
+						// 再次写入失败直接跳过，避免陷入死循环，后续重复消费会再次尝试写入redis
+						log.Printf("redis set error: %v", err)
+					}
+
 					continue
 				}
 
@@ -80,6 +111,15 @@ func StartLikeConsumer(lmq *LikeMQ, likeRepo *repo.LikeRepo) error {
 
 				continue
 			}
+
+			// 成功处理后，将消息ID存入Redis，设置过期时间，避免重复消费
+			err = cache.Set(ctx, key, "1", 24*time.Hour) // 过期时间为24小时
+			if err != nil {
+				log.Printf("redis set error: %v", err)
+				_ = msg.Ack(false) // Redis异常，但是数据库操作已经成功，仍然ACK掉消息，避免重复消费
+				continue
+			}
+
 			_ = msg.Ack(false) // 成功处理后 ACK 掉消息
 		}
 	}()

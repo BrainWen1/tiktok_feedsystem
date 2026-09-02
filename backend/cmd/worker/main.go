@@ -2,6 +2,7 @@ package main
 
 import (
 	"feedsystem/internal/config"
+	"feedsystem/internal/infra/cache"
 	"feedsystem/internal/infra/database"
 	"feedsystem/internal/infra/mq"
 	"feedsystem/internal/model"
@@ -45,8 +46,14 @@ func main() {
 
 	likeRepo := repo.NewLikeRepo(db)
 
+	// 初始化Redis缓存
+	cache := cache.NewRedisCache(config.AppConfig.Redis_addr, config.AppConfig.Redis_password, config.AppConfig.Redis_db)
+	if cache == nil {
+		log.Fatalf("Failed to initialize Redis cache")
+	}
+
 	// 启动点赞消费
-	err = mq.StartLikeConsumer(likeMQ, likeRepo)
+	err = mq.StartLikeConsumer(likeMQ, likeRepo, cache)
 	if err != nil {
 		log.Fatalf("Failed to start like consumer: %v", err)
 	}

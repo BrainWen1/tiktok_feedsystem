@@ -24,7 +24,7 @@ const (
 
 type LikeEvent struct {
 	// 点赞事件结构体
-	EventID    string    `json:"event_id"`
+	EventID    string    `json:"event_id"` // 全局唯一的消息ID，用于幂等处理，避免MQ重复投递
 	Action     string    `json:"action"`
 	UserID     uint      `json:"user_id"`
 	VideoID    uint      `json:"video_id"`
