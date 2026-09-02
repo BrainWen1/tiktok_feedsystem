@@ -46,3 +46,9 @@ type AuthorBrief struct {
 	UserName  string `json:"user_name"`
 	AvatarURL string `json:"avatar_url"`
 }
+
+// VideoListResponse 视频列表返回
+type VideoListResponse struct {
+	Total  int64                 `json:"total"`
+	Videos []VideoDetailResponse `json:"videos"`
+}

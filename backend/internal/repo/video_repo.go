@@ -75,3 +75,25 @@ func (r *VideoRepo) FindWithAuthor(ctx context.Context, videoID uint) (*model.Vi
 
 	return &video, &author, nil
 }
+
+// VideoList 根据作者ID分页查询视频列表
+func (r *VideoRepo) VideoList(ctx context.Context, authorID uint, pageNum, pageSize int) ([]model.Video, int64, error) {
+	var videos []model.Video
+	var total int64
+
+	// 获取总数
+	if err := r.db.WithContext(ctx).Model(&model.Video{}).Where("author_id = ?", authorID).Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	// 分页查询
+	if err := r.db.WithContext(ctx).Model(&model.Video{}).Where("author_id = ?", authorID).
+		Order("created_at DESC").         // 按创建时间降序排列
+		Offset((pageNum - 1) * pageSize). // 偏移量
+		Limit(pageSize).                  // 限制每页数量
+		Find(&videos).Error; err != nil {
+		return nil, 0, err
+	}
+
+	return videos, total, nil
+}

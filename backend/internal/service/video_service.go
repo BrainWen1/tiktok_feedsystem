@@ -335,3 +335,68 @@ func (s *VideoService) getDetail(ctx context.Context, vid uint) (*model.Video, e
 	}
 	return video, nil
 }
+
+// VideoList 获取视频列表
+func (s *VideoService) VideoList(ctx context.Context, authorID uint, uid uint, pageNum, pageSize int) (*dto.VideoListResponse, error) {
+	// 参数保护，限制最大条数，防止恶意拉取大量数据
+	if pageSize > 20 {
+		pageSize = 20
+	}
+	if pageNum < 1 {
+		pageNum = 1
+	}
+
+	// 查询视频列表
+	videos, total, err := s.VideoRepo.VideoList(ctx, authorID, pageNum, pageSize)
+	if err != nil {
+		return nil, err
+	}
+	if len(videos) == 0 {
+		return &dto.VideoListResponse{Total: total, Videos: []dto.VideoDetailResponse{}}, nil
+	}
+	// 只查询一次作者信息，避免N+1
+	author, err := s.UserService.FindByID(ctx, authorID)
+	if err != nil {
+		return nil, err
+	}
+	authorDTO := dto.AuthorBrief{
+		UserID:    author.ID,
+		UserName:  author.Username,
+		AvatarURL: author.AvatarURL,
+	}
+
+	// 收集所有vid，如果用户已登录，批量查询点赞
+	var vidList []uint
+	for _, v := range videos {
+		vidList = append(vidList, v.ID)
+	}
+
+	// 鸽着
+	likedMap := make(map[uint]bool)
+	if uid != 0 {
+		// TODO：后续接入点赞repo，批量查询当前用户是否点赞这些视频
+		for _, vid := range vidList {
+			likedMap[vid] = true // 现在先假设都点赞了
+		}
+	}
+
+	// 循环组装DTO，所有查询已经完成，这里只有内存操作，没有DB访问
+	var itemList []dto.VideoDetailResponse
+	for _, v := range videos {
+		item := dto.VideoDetailResponse{
+			ID:          v.ID,
+			Title:       v.Title,
+			Description: v.Description,
+			VideoURL:    v.VideoURL,
+			CoverURL:    v.CoverURL,
+			LikesCount:  v.LikesCount,
+			IsLiked:     likedMap[v.ID],
+			AuthorInfo:  authorDTO,
+		}
+		itemList = append(itemList, item)
+	}
+	return &dto.VideoListResponse{
+		Total:  total,
+		Videos: itemList,
+	}, nil
+}

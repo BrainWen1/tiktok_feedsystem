@@ -128,3 +128,32 @@ func (h *VideoHandler) VideoDetail(ctx *gin.Context) {
 	}
 	response.SuccessResponse(ctx, detail)
 }
+
+// VideoList 获取视频列表，软鉴权
+func (h *VideoHandler) VideoList(ctx *gin.Context) {
+	//软鉴权
+	uid := middleware.TryGetUID(ctx)
+
+	//从url query拿参数
+	// 分页参数
+	var req struct {
+		AuthorID uint `form:"author_id" binding:"required"`
+		PageNum  int  `form:"page_num" binding:"min=1"`
+		PageSize int  `form:"page_size" binding:"min=1"`
+	}
+	if err := ctx.ShouldBindQuery(&req); err != nil {
+		log.Printf("Invalid query parameters: %v", err)
+		response.FailResponse(ctx, "Invalid query parameters: "+err.Error())
+		return
+	}
+
+	// 调用service处理
+	resp, err := h.VideoService.VideoList(ctx.Request.Context(), req.AuthorID, uid, req.PageNum, req.PageSize)
+	if err != nil {
+		log.Printf("Failed to list videos: %v", err)
+		response.FailResponse(ctx, "Failed to list videos: "+err.Error())
+		return
+	}
+
+	response.SuccessResponse(ctx, resp)
+}
