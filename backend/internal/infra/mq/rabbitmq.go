@@ -25,6 +25,7 @@ func NewRabbitMQ() (*RabbitMQ, error) {
 	cfg := &config.AppConfig
 	// 组装 AMQP URL
 	url := "amqp://" + cfg.MQ_Username + ":" + cfg.MQ_Password + "@" + cfg.MQ_Host + ":" + strconv.Itoa(cfg.MQ_Port) + "/"
+	log.Printf("Connecting to RabbitMQ: %s", url)
 	// 建立连接
 	conn, err := amqp.Dial(url)
 	if err != nil {

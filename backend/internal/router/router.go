@@ -4,15 +4,17 @@ import (
 	"feedsystem/internal/handler"
 	"feedsystem/internal/handler/middleware"
 	"feedsystem/internal/infra/cache"
+	"feedsystem/internal/infra/mq"
 	"feedsystem/internal/repo"
 	"feedsystem/internal/service"
 	"feedsystem/internal/utils/response"
+	"log"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
 
-func SetupRouter(sqlDB *gorm.DB, cache *cache.RedisCache, authMiddleware *middleware.AuthMiddleware) *gin.Engine {
+func SetupRouter(sqlDB *gorm.DB, cache *cache.RedisCache, rmq *mq.RabbitMQ, authMiddleware *middleware.AuthMiddleware) *gin.Engine {
 	// 创建一个默认的Gin引擎
 	r := gin.Default()
 
@@ -33,8 +35,13 @@ func SetupRouter(sqlDB *gorm.DB, cache *cache.RedisCache, authMiddleware *middle
 	videoService := service.NewVideoService(videoRepo, userService, cache) // 传入UserService以便查询作者信息
 	videoHandler := handler.NewVideoHandler(videoService)
 	// Like
+	likeMQ, err := mq.NewLikeMQ(rmq)
+	if err != nil {
+		log.Printf("Failed to initialize LikeMQ: %v", err)
+		likeMQ = nil // 如果初始化失败，设置为nil以便后续处理
+	}
 	likeRepo := repo.NewLikeRepo(sqlDB)
-	likeService := service.NewLikeService(likeRepo)
+	likeService := service.NewLikeService(likeRepo, likeMQ)
 	likeHandler := handler.NewLikeHandler(likeService)
 
 	// 设置路由

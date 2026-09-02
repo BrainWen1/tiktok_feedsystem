@@ -105,7 +105,7 @@ func main() {
 	authMiddleware := middleware.NewAuthMiddleware(cache)
 
 	// 设置路由
-	r := router.SetupRouter(db, cache, authMiddleware)
+	r := router.SetupRouter(db, cache, rmq, authMiddleware)
 
 	// 设置定时异步的redis清理任务
 	globalCtx, stop := context.WithCancel(context.Background()) // 创建一个可取消的上下文，用于控制清理任务的生命周期
