@@ -32,6 +32,10 @@ func SetupRouter(sqlDB *gorm.DB, cache *cache.RedisCache, authMiddleware *middle
 	videoRepo := repo.NewVideoRepo(sqlDB)
 	videoService := service.NewVideoService(videoRepo, userService, cache) // 传入UserService以便查询作者信息
 	videoHandler := handler.NewVideoHandler(videoService)
+	// Like
+	likeRepo := repo.NewLikeRepo(sqlDB)
+	likeService := service.NewLikeService(likeRepo)
+	likeHandler := handler.NewLikeHandler(likeService)
 
 	// 设置路由
 	// 健康检查路由
@@ -72,6 +76,14 @@ func SetupRouter(sqlDB *gorm.DB, cache *cache.RedisCache, authMiddleware *middle
 		protectedVideoGroup.POST("/upload_video", videoHandler.UploadVideo) // 上传视频
 		protectedVideoGroup.POST("/upload_cover", videoHandler.UploadCover) // 上传视频封面
 		protectedVideoGroup.POST("/publish", videoHandler.PublishVideo)     // 发布视频
+	}
+
+	// 点赞相关路由
+	likeGroup := r.Group("/like").Use(authMiddleware.Auth()) // Like都是需要鉴权
+	{
+		likeGroup.POST("/like", likeHandler.LikeVideo)     // 点赞视频
+		likeGroup.POST("/unlike", likeHandler.UnlikeVideo) // 取消点赞视频
+		likeGroup.POST("/is_liked", likeHandler.IsLiked)   // 检查用户是否点赞了视频
 	}
 
 	// 返回配置好的路由引擎
