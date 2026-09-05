@@ -120,6 +120,33 @@ func StartLikeConsumer(lmq *LikeMQ, likeRepo *repo.LikeRepo, cache *cache.RedisC
 				continue
 			}
 
+			// 根据事件类型更新Redis缓存，便于快速查询用户是否点赞过某个视频
+			key = fmt.Sprintf("user_liked_videos:%d", event.UserID)
+			switch event.Action {
+			case "like":
+				{
+					// 将 <uid, vid_set> 存入redis，便于快捷查询是否点赞，永不过期
+					err = cache.AddToSet(ctx, key, event.VideoID, 0) // 0表示永不过期
+					if err != nil {
+						// 此操作与MQ消费的幂等性无关，失败了也不影响数据库操作成功，所以直接打印日志并继续
+						log.Printf("redis add to set error: %v", err)
+						continue
+					}
+				}
+			case "unlike":
+				{
+					// 将当前vid从 <uid, vid_set> 中删除
+					err = cache.RemoveFromSet(ctx, key, event.VideoID)
+					if err != nil {
+						log.Printf("redis remove from set error: %v", err)
+						continue
+					}
+				}
+			default:
+				log.Printf("unknown like event action: %s", event.Action)
+				continue
+			}
+
 			_ = msg.Ack(false) // 成功处理后 ACK 掉消息
 		}
 	}()

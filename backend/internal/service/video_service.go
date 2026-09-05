@@ -25,10 +25,11 @@ type VideoService struct {
 	VideoRepo   *repo.VideoRepo
 	UserService *UserService
 	cache       *cache.RedisCache
+	LikeService *LikeService
 }
 
-func NewVideoService(videoRepo *repo.VideoRepo, userService *UserService, cache *cache.RedisCache) *VideoService {
-	return &VideoService{VideoRepo: videoRepo, UserService: userService, cache: cache}
+func NewVideoService(videoRepo *repo.VideoRepo, userService *UserService, cache *cache.RedisCache, likeService *LikeService) *VideoService {
+	return &VideoService{VideoRepo: videoRepo, UserService: userService, cache: cache, LikeService: likeService}
 }
 
 // UploadVideo 处理视频上传逻辑
@@ -218,8 +219,39 @@ func (s *VideoService) VideoDetail(ctx context.Context, videoID uint, uid uint) 
 
 	// 登录用户才判断点赞状态，uid!=0代表携带有效token
 	if uid != 0 {
-		//TODO：后续接入点赞repo，去数据库/redis查询当前用户是否点赞这条视频
-		resp.IsLiked = true
+		// 查询用户是否点赞过该视频
+		// 先查redis缓存，缓存未命中再查数据库
+		key := fmt.Sprintf("user_liked_videos:%d", uid)
+		isLiked, err := s.cache.IsMemberOfSet(ctx, key, videoID)
+		if err != nil {
+			log.Printf("Error checking like status in Redis for user %d and video %d: %v", uid, videoID, err)
+			// Redis异常，兜底查数据库
+			isLikedResp, err := s.LikeService.IsLiked(ctx, uid, videoID)
+			isLiked = isLikedResp.IsLiked
+			if err != nil {
+				log.Printf("Error checking like status in DB for user %d and video %d: %v", uid, videoID, err)
+				return nil, fmt.Errorf("failed to check like status: %w", err)
+			}
+		}
+
+		if isLiked == false {
+			// Redis缓存未命中，兜底查数据库
+			isLikedResp, err := s.LikeService.IsLiked(ctx, uid, videoID)
+			if err != nil {
+				log.Printf("Error checking like status in DB for user %d and video %d: %v", uid, videoID, err)
+				return nil, fmt.Errorf("failed to check like status: %w", err)
+			}
+			isLiked = isLikedResp.IsLiked
+
+			// 将数据库查询结果写入Redis缓存，避免下次重复查询
+			if isLikedResp.IsLiked == true {
+				err = s.cache.AddToSet(ctx, key, videoID, 0) // 0表示永不过期
+				if err != nil {
+					log.Printf("Error adding video %d to Redis set for user %d: %v", videoID, uid, err)
+				}
+			}
+		}
+		// Redis缓存命中，直接使用
 	}
 	return resp, nil
 }
@@ -366,17 +398,53 @@ func (s *VideoService) VideoList(ctx context.Context, authorID uint, uid uint, p
 	}
 
 	// 收集所有vid，如果用户已登录，批量查询点赞
-	var vidList []uint
+	var vidList []interface{}
 	for _, v := range videos {
 		vidList = append(vidList, v.ID)
 	}
 
-	// 鸽着
-	likedMap := make(map[uint]bool)
+	// 登录用户才判断点赞状态，uid!=0代表携带有效token
+	likedMap := make(map[uint]bool) // <vid, isLiked>
 	if uid != 0 {
-		// TODO：后续接入点赞repo，批量查询当前用户是否点赞这些视频
-		for _, vid := range vidList {
-			likedMap[vid] = true // 现在先假设都点赞了
+		// 查询用户是否点赞过这些视频
+		key := fmt.Sprintf("user_liked_videos:%d", uid)
+		// 批量查询
+		isLikedList, err := s.cache.MIsMemberOfSet(ctx, key, vidList)
+		if err != nil {
+			log.Printf("Error checking like status in Redis for user %d: %v", uid, err)
+			// Redis异常，兜底查数据库
+			for _, vid := range vidList {
+				isLikedResp, err := s.LikeService.IsLiked(ctx, uid, vid.(uint))
+				if err != nil {
+					log.Printf("Error checking like status in DB for user %d and video %d: %v", uid, vid, err)
+					return nil, fmt.Errorf("failed to check like status: %w", err)
+				}
+				likedMap[vid.(uint)] = isLikedResp.IsLiked
+			}
+		} else {
+			for i, vid := range vidList {
+				isLiked := isLikedList[i]
+				if isLiked == false {
+					// Redis缓存未命中，兜底查数据库
+					isLikedResp, err := s.LikeService.IsLiked(ctx, uid, vid.(uint))
+					if err != nil {
+						log.Printf("Error checking like status in DB for user %d and video %d: %v", uid, vid, err)
+						return nil, fmt.Errorf("failed to check like status: %w", err)
+					}
+					likedMap[vid.(uint)] = isLikedResp.IsLiked
+
+					// 将数据库查询结果写入Redis缓存，避免下次重复查询
+					if isLikedResp.IsLiked == true {
+						err = s.cache.AddToSet(ctx, key, vid.(uint), 0) // 0表示永不过期
+						if err != nil {
+							log.Printf("Error adding video %d to Redis set for user %d: %v", vid, uid, err)
+						}
+					}
+				} else {
+					// Redis缓存命中，直接使用
+					likedMap[vid.(uint)] = true
+				}
+			}
 		}
 	}
 

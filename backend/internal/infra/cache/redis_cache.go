@@ -200,3 +200,45 @@ func (c *RedisCache) Unlock(ctx context.Context, key string, token string) error
 	_, err := unlockScript.Run(ctx, c.client, []string{key}, token).Result()
 	return err
 }
+
+// AddToSet 将元素添加到Redis集合中
+func (c *RedisCache) AddToSet(ctx context.Context, key string, member interface{}, ttl time.Duration) error {
+	err := c.client.SAdd(ctx, key, member).Err()
+	if err != nil {
+		log.Printf("Error adding member to set %s: %v", key, err)
+		return err
+	}
+	// 设置集合整体过期时间
+	return c.client.Expire(ctx, key, ttl).Err()
+}
+
+// RemoveFromSet 将元素从Redis集合中移除
+func (c *RedisCache) RemoveFromSet(ctx context.Context, key string, member interface{}) error {
+	err := c.client.SRem(ctx, key, member).Err()
+	if err != nil {
+		log.Printf("Error removing member from set %s: %v", key, err)
+		return err
+	}
+	return nil
+}
+
+// IsMemberOfSet 检查元素是否在Redis集合中
+func (c *RedisCache) IsMemberOfSet(ctx context.Context, key string, member interface{}) (bool, error) {
+	isMember, err := c.client.SIsMember(ctx, key, member).Result()
+	if err != nil {
+		log.Printf("Error checking membership of %v in set %s: %v", member, key, err)
+		return false, err
+	}
+	return isMember, nil
+}
+
+// MIsMemberOfSet 批量检查元素是否在Redis集合中
+func (c *RedisCache) MIsMemberOfSet(ctx context.Context, key string, members []interface{}) ([]bool, error) {
+	// 调用SMIsMember命令批量检查每个元素是否在集合中，返回一个布尔切片
+	result, err := c.client.SMIsMember(ctx, key, members...).Result()
+	if err != nil {
+		log.Printf("Error checking membership of %v in set %s: %v", members, key, err)
+		return nil, err
+	}
+	return result, nil
+}

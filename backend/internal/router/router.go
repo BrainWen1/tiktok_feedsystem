@@ -30,10 +30,6 @@ func SetupRouter(sqlDB *gorm.DB, cache *cache.RedisCache, rmq *mq.RabbitMQ, auth
 	userRepo := repo.NewUserRepo(sqlDB)
 	userService := service.NewUserService(userRepo, cache)
 	userHandler := handler.NewUserHandler(userService)
-	// Video
-	videoRepo := repo.NewVideoRepo(sqlDB)
-	videoService := service.NewVideoService(videoRepo, userService, cache) // 传入UserService以便查询作者信息
-	videoHandler := handler.NewVideoHandler(videoService)
 	// Like
 	likeMQ, err := mq.NewLikeMQ(rmq)
 	if err != nil {
@@ -43,6 +39,10 @@ func SetupRouter(sqlDB *gorm.DB, cache *cache.RedisCache, rmq *mq.RabbitMQ, auth
 	likeRepo := repo.NewLikeRepo(sqlDB)
 	likeService := service.NewLikeService(likeRepo, likeMQ)
 	likeHandler := handler.NewLikeHandler(likeService)
+	// Video
+	videoRepo := repo.NewVideoRepo(sqlDB)
+	videoService := service.NewVideoService(videoRepo, userService, cache, likeService) // 传入UserService以便查询作者信息
+	videoHandler := handler.NewVideoHandler(videoService)
 
 	// 设置路由
 	// 健康检查路由
