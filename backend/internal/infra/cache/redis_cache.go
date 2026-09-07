@@ -203,13 +203,18 @@ func (c *RedisCache) Unlock(ctx context.Context, key string, token string) error
 
 // AddToSet 将元素添加到Redis集合中
 func (c *RedisCache) AddToSet(ctx context.Context, key string, member interface{}, ttl time.Duration) error {
+	log.Printf("trying to add member %v to set %s with ttl %v", member, key, ttl)
 	err := c.client.SAdd(ctx, key, member).Err()
 	if err != nil {
 		log.Printf("Error adding member to set %s: %v", key, err)
 		return err
 	}
 	// 设置集合整体过期时间
-	return c.client.Expire(ctx, key, ttl).Err()
+	if ttl > 0 {
+		log.Printf("setting ttl for set %s to %v", key, ttl)
+		return c.client.Expire(ctx, key, ttl).Err()
+	}
+	return nil
 }
 
 // RemoveFromSet 将元素从Redis集合中移除

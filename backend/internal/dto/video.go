@@ -52,3 +52,10 @@ type VideoListResponse struct {
 	Total  int64                 `json:"total"`
 	Videos []VideoDetailResponse `json:"videos"`
 }
+
+// ListLikedVideosRequest 列出用户点赞过的视频请求
+type ListLikedVideosRequest struct {
+	UserID   uint `json:"user_id" binding:"required" min:"1"`
+	PageNum  int  `json:"page_num" binding:"required" min:"1"`
+	PageSize int  `json:"page_size" binding:"required" min:"1" max:"30"`
+}

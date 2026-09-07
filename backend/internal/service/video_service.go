@@ -228,6 +228,7 @@ func (s *VideoService) VideoDetail(ctx context.Context, videoID uint, uid uint) 
 		// 查询用户是否点赞过该视频
 		// 先查redis缓存，缓存未命中再查数据库
 		key := fmt.Sprintf("user_liked_videos:%d", uid)
+		log.Printf("key:%s", key)
 		// 用户在空占位缓存未过期的时间里再次点赞的话，worker会在点赞集合里写入这个vid，再次查询会直接在这里命中缓存，不会被空占位误判
 		isLiked, err := s.cache.IsMemberOfSet(ctx, key, videoID)
 		if err != nil {
@@ -242,6 +243,7 @@ func (s *VideoService) VideoDetail(ctx context.Context, videoID uint, uid uint) 
 		} else if isLiked == false {
 			// 先检查空缓存占位，避免大量缓存穿透
 			placeholderKey := fmt.Sprintf("user_liked_placeholders:%d:%d", uid, videoID)
+			log.Printf("placeholderKey:%s", placeholderKey)
 			exists, err := s.cache.Exists(ctx, placeholderKey)
 
 			if err == nil && exists == true {
@@ -258,6 +260,7 @@ func (s *VideoService) VideoDetail(ctx context.Context, videoID uint, uid uint) 
 
 				// 如果redis正常才尝试写回redis
 				if err == nil {
+					log.Printf("trying to write into redis")
 					if isLikedResp.IsLiked == true {
 						// 已点赞，写入点赞集合
 						err = s.cache.AddToSet(ctx, key, videoID, 0) // 0表示永不过期
@@ -275,6 +278,8 @@ func (s *VideoService) VideoDetail(ctx context.Context, videoID uint, uid uint) 
 			}
 		}
 		// Redis缓存命中，直接使用
+		log.Printf("isLiked:%v", isLiked)
+		resp.IsLiked = isLiked
 	}
 	return resp, nil
 }
@@ -445,9 +450,11 @@ func (s *VideoService) VideoList(ctx context.Context, authorID uint, uid uint, p
 				likedMap[vid.(uint)] = isLikedResp.IsLiked
 			}
 		} else {
+			log.Printf("redis is ok")
 			for i, vid := range vidList {
 				isLiked := isLikedList[i]
 				if isLiked == false {
+					log.Printf("redis cache miss for user %d and video %d", uid, vid)
 					// Redis缓存未命中，兜底查数据库
 					isLikedResp, err := s.LikeService.IsLiked(ctx, uid, vid.(uint))
 					if err != nil {
@@ -458,6 +465,7 @@ func (s *VideoService) VideoList(ctx context.Context, authorID uint, uid uint, p
 
 					// 将数据库查询结果写入Redis缓存，避免下次重复查询
 					if isLikedResp.IsLiked == true {
+						log.Printf("trying to write into redis for user %d and video %d", uid, vid)
 						err = s.cache.AddToSet(ctx, key, vid.(uint), 0) // 0表示永不过期
 						if err != nil {
 							log.Printf("Error adding video %d to Redis set for user %d: %v", vid, uid, err)
@@ -466,6 +474,7 @@ func (s *VideoService) VideoList(ctx context.Context, authorID uint, uid uint, p
 				} else {
 					// Redis缓存命中，直接使用
 					likedMap[vid.(uint)] = true
+					log.Printf("redis cache hit for user %d and video %d", uid, vid)
 				}
 			}
 		}

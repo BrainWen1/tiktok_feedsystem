@@ -2,6 +2,7 @@ package handler
 
 import (
 	"feedsystem/internal/dto"
+	"feedsystem/internal/handler/middleware"
 	"feedsystem/internal/service"
 	"feedsystem/internal/utils/response"
 	"fmt"
@@ -65,7 +66,7 @@ func (h *LikeHandler) UnlikeVideo(ctx *gin.Context) {
 	// 调用服务层的UnlikeVideo方法
 	if err := h.LikeService.UnlikeVideo(ctx, uid, req.VideoID); err != nil {
 		log.Printf("Failed to unlike video: %v", err)
-		response.FailResponse(ctx, "Failed to unlike video")
+		response.FailResponse(ctx, fmt.Sprintf("Failed to unlike video: %v", err))
 		return
 	}
 
@@ -98,4 +99,29 @@ func (h *LikeHandler) IsLiked(ctx *gin.Context) {
 	}
 
 	response.SuccessResponse(ctx, isLiked)
+}
+
+// ListLikedVideos 列出用户点赞过的视频
+func (h *LikeHandler) ListLikedVideos(ctx *gin.Context) {
+	// 解析请求参数
+	var req dto.ListLikedVideosRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		log.Printf("Failed to bind query parameters: %v", err)
+		response.FailResponse(ctx, fmt.Sprintf("Invalid request parameters: %v", err))
+		return
+	}
+
+	// 获取当前用户的uid，如果未登录则为0
+	uid := middleware.TryGetUID(ctx)
+	log.Printf("ListLikedVideos called by uid=%d for targetUid=%d", uid, req.UserID)
+
+	// 调用服务层的ListLikedVideos方法
+	resp, err := h.LikeService.ListLikedVideos(ctx.Request.Context(), req.UserID, uid, uint(req.PageNum), uint(req.PageSize))
+	if err != nil {
+		log.Printf("Failed to list liked videos: %v", err)
+		response.FailResponse(ctx, fmt.Sprintf("Failed to list liked videos: %v", err))
+		return
+	}
+
+	response.SuccessResponse(ctx, resp)
 }

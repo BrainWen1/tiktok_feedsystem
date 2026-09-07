@@ -37,11 +37,13 @@ func SetupRouter(sqlDB *gorm.DB, cache *cache.RedisCache, rmq *mq.RabbitMQ, auth
 		likeMQ = nil // 如果初始化失败，设置为nil以便后续处理
 	}
 	likeRepo := repo.NewLikeRepo(sqlDB)
-	likeService := service.NewLikeService(likeRepo, likeMQ)
+	likeService := service.NewLikeService(likeRepo, likeMQ, userService)
 	likeHandler := handler.NewLikeHandler(likeService)
 	// Video
 	videoRepo := repo.NewVideoRepo(sqlDB)
 	videoService := service.NewVideoService(videoRepo, userService, cache, likeService) // 传入UserService以便查询作者信息
+	// 这里把 VideoService 以接口形式注入回 LikeService，避免构造时互相依赖形成循环。
+	likeService.SetVideoDetailer(videoService)
 	videoHandler := handler.NewVideoHandler(videoService)
 
 	// 设置路由
@@ -86,11 +88,15 @@ func SetupRouter(sqlDB *gorm.DB, cache *cache.RedisCache, rmq *mq.RabbitMQ, auth
 	}
 
 	// 点赞相关路由
-	likeGroup := r.Group("/like").Use(authMiddleware.Auth()) // Like都是需要鉴权
+	likeGroup := r.Group("/like")
 	{
-		likeGroup.POST("/like", likeHandler.LikeVideo)     // 点赞视频
-		likeGroup.POST("/unlike", likeHandler.UnlikeVideo) // 取消点赞视频
-		likeGroup.POST("/is_liked", likeHandler.IsLiked)   // 检查用户是否点赞了视频
+		likeGroup.POST("/list_liked", likeHandler.ListLikedVideos) // 列出用户点赞过的视频
+	}
+	protectedLikeGroup := likeGroup.Group("/").Use(authMiddleware.Auth())
+	{
+		protectedLikeGroup.POST("/like", likeHandler.LikeVideo)     // 点赞视频
+		protectedLikeGroup.POST("/unlike", likeHandler.UnlikeVideo) // 取消点赞视频
+		protectedLikeGroup.POST("/is_liked", likeHandler.IsLiked)   // 检查用户是否点赞了视频
 	}
 
 	// 返回配置好的路由引擎
