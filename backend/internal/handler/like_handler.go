@@ -4,6 +4,7 @@ import (
 	"feedsystem/internal/dto"
 	"feedsystem/internal/service"
 	"feedsystem/internal/utils/response"
+	"fmt"
 	"log"
 
 	"github.com/gin-gonic/gin"
@@ -37,7 +38,7 @@ func (h *LikeHandler) LikeVideo(ctx *gin.Context) {
 	// 调用服务层的LikeVideo方法
 	if err := h.LikeService.LikeVideo(ctx, uid, req.VideoID); err != nil {
 		log.Printf("Failed to like video: %v", err)
-		response.FailResponse(ctx, "Failed to like video")
+		response.FailResponse(ctx, fmt.Sprintf("Failed to like video: %v", err))
 		return
 	}
 

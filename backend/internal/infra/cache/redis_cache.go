@@ -242,3 +242,13 @@ func (c *RedisCache) MIsMemberOfSet(ctx context.Context, key string, members []i
 	}
 	return result, nil
 }
+
+// Exists 检查Redis中是否存在指定的key
+func (c *RedisCache) Exists(ctx context.Context, key string) (bool, error) {
+	exists, err := c.client.Exists(ctx, key).Result()
+	if err != nil {
+		log.Printf("Error checking existence of key %s: %v", key, err)
+		return false, err
+	}
+	return exists > 0, nil
+}

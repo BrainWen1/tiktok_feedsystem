@@ -12,6 +12,11 @@ import (
 	"time"
 )
 
+const (
+	placeholderTTL = 5 * time.Minute // 空占位缓存的过期时间
+	eventIDTTL     = 24 * time.Hour  // 消息ID缓存的过期时间
+)
+
 // StartLikeConsumer 启动点赞消费，给worker调用
 func StartLikeConsumer(lmq *LikeMQ, likeRepo *repo.LikeRepo, cache *cache.RedisCache) error {
 	if lmq == nil || lmq.ch == nil {
@@ -52,7 +57,7 @@ func StartLikeConsumer(lmq *LikeMQ, likeRepo *repo.LikeRepo, cache *cache.RedisC
 			// 引入Redis缓存消息ID，先检查是否已经处理过，没有的话再处理，处理完后将消息ID存入Redis，设置过期时间，避免重复消费
 			key := fmt.Sprintf("mq_like_event_id:%s", event.EventID)
 			val, err := cache.Get(ctx, key)
-			if err != nil {
+			if err != nil && err.Error() != "redis: nil" {
 				log.Printf("redis get error: %v", err)
 				_ = msg.Nack(false, true) // Redis异常，放回队列重试
 				continue
@@ -90,7 +95,7 @@ func StartLikeConsumer(lmq *LikeMQ, likeRepo *repo.LikeRepo, cache *cache.RedisC
 
 					// 在这里尝试写入redis，即使第一次成功处理后redis写入失败，也可以在这里再次尝试写入，
 					// 避免后续所有重复消费全部缓存miss进入数据库
-					err = cache.Set(ctx, key, "1", 24*time.Hour) // 过期时间为24小时
+					err = cache.Set(ctx, key, "1", eventIDTTL) // 过期时间为24小时
 					if err != nil {
 						// 再次写入失败直接跳过，避免陷入死循环，后续重复消费会再次尝试写入redis
 						log.Printf("redis set error: %v", err)
@@ -113,7 +118,7 @@ func StartLikeConsumer(lmq *LikeMQ, likeRepo *repo.LikeRepo, cache *cache.RedisC
 			}
 
 			// 成功处理后，将消息ID存入Redis，设置过期时间，避免重复消费
-			err = cache.Set(ctx, key, "1", 24*time.Hour) // 过期时间为24小时
+			err = cache.Set(ctx, key, "1", eventIDTTL) // 过期时间为24小时
 			if err != nil {
 				log.Printf("redis set error: %v", err)
 				_ = msg.Ack(false) // Redis异常，但是数据库操作已经成功，仍然ACK掉消息，避免重复消费
@@ -139,6 +144,14 @@ func StartLikeConsumer(lmq *LikeMQ, likeRepo *repo.LikeRepo, cache *cache.RedisC
 					err = cache.RemoveFromSet(ctx, key, event.VideoID)
 					if err != nil {
 						log.Printf("redis remove from set error: %v", err)
+						continue
+					}
+
+					// 插入或更新一个空占位缓存，避免用户在短时间内重复点击取消点赞导致缓存穿透
+					placeholderKey := fmt.Sprintf("user_liked_placeholders:%d:%d", event.UserID, event.VideoID)
+					err = cache.Set(ctx, placeholderKey, "1", placeholderTTL) // 过期时间为5分钟
+					if err != nil {
+						log.Printf("redis set placeholder error: %v", err)
 						continue
 					}
 				}

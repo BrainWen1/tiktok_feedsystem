@@ -20,6 +20,12 @@ import (
 	"time"
 )
 
+const (
+	maxUploadSize  = 100 << 20       // MaxUploadSize 最大上传文件大小，单位字节
+	placeholderTTL = 5 * time.Minute // PlaceholderTTL 空占位缓存过期时间
+
+)
+
 // 折中的耦合方案，后期解耦把部分用户信息写到video表里，配合mq做异步更新
 type VideoService struct {
 	VideoRepo   *repo.VideoRepo
@@ -34,7 +40,7 @@ func NewVideoService(videoRepo *repo.VideoRepo, userService *UserService, cache 
 
 // UploadVideo 处理视频上传逻辑
 func (s *VideoService) UploadVideo(ctx context.Context, userID uint, fh *multipart.FileHeader) (string, error) {
-	const maxSize = 100 << 20 // 100MB
+	const maxSize = maxUploadSize // 100MB
 	// 检查文件大小
 	if fh.Size <= 0 || fh.Size > maxSize {
 		log.Printf("User %d attempted to upload a file which is out of size bounds", userID)
@@ -222,6 +228,7 @@ func (s *VideoService) VideoDetail(ctx context.Context, videoID uint, uid uint) 
 		// 查询用户是否点赞过该视频
 		// 先查redis缓存，缓存未命中再查数据库
 		key := fmt.Sprintf("user_liked_videos:%d", uid)
+		// 用户在空占位缓存未过期的时间里再次点赞的话，worker会在点赞集合里写入这个vid，再次查询会直接在这里命中缓存，不会被空占位误判
 		isLiked, err := s.cache.IsMemberOfSet(ctx, key, videoID)
 		if err != nil {
 			log.Printf("Error checking like status in Redis for user %d and video %d: %v", uid, videoID, err)
@@ -232,22 +239,38 @@ func (s *VideoService) VideoDetail(ctx context.Context, videoID uint, uid uint) 
 				log.Printf("Error checking like status in DB for user %d and video %d: %v", uid, videoID, err)
 				return nil, fmt.Errorf("failed to check like status: %w", err)
 			}
-		}
+		} else if isLiked == false {
+			// 先检查空缓存占位，避免大量缓存穿透
+			placeholderKey := fmt.Sprintf("user_liked_placeholders:%d:%d", uid, videoID)
+			exists, err := s.cache.Exists(ctx, placeholderKey)
 
-		if isLiked == false {
-			// Redis缓存未命中，兜底查数据库
-			isLikedResp, err := s.LikeService.IsLiked(ctx, uid, videoID)
-			if err != nil {
-				log.Printf("Error checking like status in DB for user %d and video %d: %v", uid, videoID, err)
-				return nil, fmt.Errorf("failed to check like status: %w", err)
-			}
-			isLiked = isLikedResp.IsLiked
+			if err == nil && exists == true {
+				// Redis中存在空占位，说明用户未点赞过该视频，直接返回false
+				isLiked = false
+			} else {
+				// 要么是Redis异常，要么是缓存未命中，兜底查数据库
+				isLikedResp, err_1 := s.LikeService.IsLiked(ctx, uid, videoID)
+				if err_1 != nil {
+					log.Printf("Error checking like status in DB for user %d and video %d: %v", uid, videoID, err_1)
+					return nil, fmt.Errorf("failed to check like status: %w", err_1)
+				}
+				isLiked = isLikedResp.IsLiked
 
-			// 将数据库查询结果写入Redis缓存，避免下次重复查询
-			if isLikedResp.IsLiked == true {
-				err = s.cache.AddToSet(ctx, key, videoID, 0) // 0表示永不过期
-				if err != nil {
-					log.Printf("Error adding video %d to Redis set for user %d: %v", videoID, uid, err)
+				// 如果redis正常才尝试写回redis
+				if err == nil {
+					if isLikedResp.IsLiked == true {
+						// 已点赞，写入点赞集合
+						err = s.cache.AddToSet(ctx, key, videoID, 0) // 0表示永不过期
+						if err != nil {
+							log.Printf("Error adding video %d to Redis set for user %d: %v", videoID, uid, err)
+						}
+					} else {
+						// 未点赞，写入空占位
+						err = s.cache.Set(ctx, placeholderKey, "1", placeholderTTL) // 设置空占位，过期时间为5分钟
+						if err != nil {
+							log.Printf("Error setting placeholder key %s in Redis: %v", placeholderKey, err)
+						}
+					}
 				}
 			}
 		}
