@@ -454,8 +454,17 @@ func (s *VideoService) VideoList(ctx context.Context, authorID uint, uid uint, p
 			for i, vid := range vidList {
 				isLiked := isLikedList[i]
 				if isLiked == false {
+					// 点赞集合的缓存未命中
 					log.Printf("redis cache miss for user %d and video %d", uid, vid)
-					// Redis缓存未命中，兜底查数据库
+					// 检查空占位缓存，避免缓存穿透
+					placeholderKey := fmt.Sprintf("user_liked_placeholders:%d:%d", uid, vid.(uint))
+					exists, err := s.cache.Exists(ctx, placeholderKey)
+					if err == nil && exists == true {
+						likedMap[vid.(uint)] = false
+						continue // 空占位缓存命中，说明用户未点赞过该视频，直接返回false
+					}
+
+					// 空占位缓存也未命中，兜底查数据库
 					isLikedResp, err := s.LikeService.IsLiked(ctx, uid, vid.(uint))
 					if err != nil {
 						log.Printf("Error checking like status in DB for user %d and video %d: %v", uid, vid, err)
@@ -465,10 +474,17 @@ func (s *VideoService) VideoList(ctx context.Context, authorID uint, uid uint, p
 
 					// 将数据库查询结果写入Redis缓存，避免下次重复查询
 					if isLikedResp.IsLiked == true {
+						// 已点赞，写入点赞集合缓存
 						log.Printf("trying to write into redis for user %d and video %d", uid, vid)
 						err = s.cache.AddToSet(ctx, key, vid.(uint), 0) // 0表示永不过期
 						if err != nil {
 							log.Printf("Error adding video %d to Redis set for user %d: %v", vid, uid, err)
+						}
+					} else {
+						// 未点赞，写入空占位缓存
+						err = s.cache.Set(ctx, placeholderKey, "1", placeholderTTL)
+						if err != nil {
+							log.Printf("Error setting placeholder key %s in Redis: %v", placeholderKey, err)
 						}
 					}
 				} else {
