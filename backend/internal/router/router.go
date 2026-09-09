@@ -34,7 +34,7 @@ func SetupRouter(sqlDB *gorm.DB, cache *cache.RedisCache, rmq *mq.RabbitMQ, auth
 	likeMQ, err := mq.NewLikeMQ(rmq)
 	if err != nil {
 		log.Printf("Failed to initialize LikeMQ: %v", err)
-		likeMQ = nil // 如果初始化失败，设置为nil以便后续处理
+		return nil
 	}
 	likeRepo := repo.NewLikeRepo(sqlDB)
 	likeService := service.NewLikeService(likeRepo, likeMQ, userService)
@@ -45,6 +45,15 @@ func SetupRouter(sqlDB *gorm.DB, cache *cache.RedisCache, rmq *mq.RabbitMQ, auth
 	// 这里把 VideoService 以接口形式注入回 LikeService，避免构造时互相依赖形成循环。
 	likeService.SetVideoDetailer(videoService)
 	videoHandler := handler.NewVideoHandler(videoService)
+	// Comment
+	commentMQ, err := mq.NewCommentMQ(rmq)
+	if err != nil {
+		log.Printf("Failed to initialize CommentMQ: %v", err)
+		return nil
+	}
+	commentRepo := repo.NewCommentRepo(sqlDB)
+	commentService := service.NewCommentService(commentRepo, commentMQ)
+	commentHandler := handler.NewCommentHandler(commentService)
 
 	// 设置路由
 	// 健康检查路由
@@ -97,6 +106,16 @@ func SetupRouter(sqlDB *gorm.DB, cache *cache.RedisCache, rmq *mq.RabbitMQ, auth
 		protectedLikeGroup.POST("/like", likeHandler.LikeVideo)     // 点赞视频
 		protectedLikeGroup.POST("/unlike", likeHandler.UnlikeVideo) // 取消点赞视频
 		protectedLikeGroup.POST("/is_liked", likeHandler.IsLiked)   // 检查用户是否点赞了视频
+	}
+
+	// 评论相关路由
+	commentGroup := r.Group("/comment")
+	{
+
+	}
+	protectedCommentGroup := commentGroup.Group("/").Use(authMiddleware.Auth())
+	{
+		protectedCommentGroup.POST("/publish", commentHandler.PublishComment) // 发布评论
 	}
 
 	// 返回配置好的路由引擎

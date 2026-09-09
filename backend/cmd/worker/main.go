@@ -30,7 +30,7 @@ func main() {
 		log.Fatalf("Failed to connect to database: %v", err)
 	}
 
-	database.AutoMigrate(db, &model.User{}, &model.Video{}, &model.Like{}) // 自动迁移数据库表结构
+	database.AutoMigrate(db, &model.User{}, &model.Video{}, &model.Like{}, &model.Comment{}) // 自动迁移数据库表结构
 
 	defer database.CloseDB() // 注册关闭数据库连接的延迟调用
 
@@ -43,8 +43,14 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to initialize LikeMQ: %v", err)
 	}
+	commentMQ, err := mq.NewCommentMQ(rmq)
+	if err != nil {
+		log.Fatalf("Failed to initialize CommentMQ: %v", err)
+	}
 
+	// 初始化仓库
 	likeRepo := repo.NewLikeRepo(db)
+	commentRepo := repo.NewCommentRepo(db)
 
 	// 初始化Redis缓存
 	cache := cache.NewRedisCache(config.AppConfig.Redis_addr, config.AppConfig.Redis_password, config.AppConfig.Redis_db)
@@ -58,6 +64,12 @@ func main() {
 		log.Fatalf("Failed to start like consumer: %v", err)
 	}
 
-	log.Println("Worker is running...")
+	// 启动评论消费
+	err = mq.StartCommentConsumer(commentMQ, commentRepo, cache)
+	if err != nil {
+		log.Fatalf("Failed to start comment consumer: %v", err)
+	}
+
+	log.Println("Worker is running for like and comment events...")
 	select {} // 阻塞主线程，保持worker运行
 }
