@@ -119,6 +119,30 @@ func StartCommentConsumer(cmq *CommentMQ, commentRepo *repo.CommentRepo, cache *
 				_ = msg.Ack(false) // Redis异常，但是数据库操作已经成功，仍然ACK掉消息，避免重复消费
 				continue
 			}
+
+			// 根据事件类型操作redis的ZSet缓存，维护视频评论的有序集合
+			switch event.Action {
+			case "create":
+				// 将评论ID加入视频的评论ZSet，score为评论创建时间的Unix时间戳
+				zsetKey := fmt.Sprintf("video:comments:%d", event.Comment.VideoID)
+				score := float64(event.Comment.CreatedAt.Unix())
+				err = cache.ZAdd(ctx, zsetKey, event.Comment.ID, score, 0) // 不设置过期时间，ZSet整体过期时间由视频过期时间控制
+				if err != nil {
+					log.Printf("redis ZAdd error: %v", err)
+					_ = msg.Ack(false) // Redis异常，但是数据库操作已经成功，仍然ACK掉消息，避免重复消费
+					continue
+				}
+			case "delete":
+				// 将评论ID从视频的评论ZSet中移除
+				zsetKey := fmt.Sprintf("video:comments:%d", event.Comment.VideoID)
+				err = cache.ZRem(ctx, zsetKey, event.Comment.ID)
+				if err != nil {
+					log.Printf("redis ZRem error: %v", err)
+					_ = msg.Ack(false) // Redis异常，但是数据库操作已经成功，仍然ACK掉消息，避免重复消费
+					continue
+				}
+			}
+
 			_ = msg.Ack(false) // 成功处理后 ACK 掉消息
 		}
 	}()

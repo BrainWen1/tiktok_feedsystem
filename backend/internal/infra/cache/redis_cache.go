@@ -257,3 +257,28 @@ func (c *RedisCache) Exists(ctx context.Context, key string) (bool, error) {
 	}
 	return exists > 0, nil
 }
+
+// ZAdd 将元素添加到Redis有序集合ZSet中，并设置过期时间
+func (c *RedisCache) ZAdd(ctx context.Context, key string, member interface{}, score float64, ttl time.Duration) error {
+	err := c.client.ZAdd(ctx, key, redis.Z{Score: score, Member: member}).Err()
+	if err != nil {
+		log.Printf("Error adding member to zset %s: %v", key, err)
+		return err
+	}
+	// 设置ZSet整体过期时间
+	if ttl > 0 {
+		log.Printf("setting ttl for zset %s to %v", key, ttl)
+		return c.client.Expire(ctx, key, ttl).Err()
+	}
+	return nil
+}
+
+// ZRem 将元素从Redis有序集合ZSet中移除
+func (c *RedisCache) ZRem(ctx context.Context, key string, member interface{}) error {
+	err := c.client.ZRem(ctx, key, member).Err()
+	if err != nil {
+		log.Printf("Error removing member from zset %s: %v", key, err)
+		return err
+	}
+	return nil
+}
