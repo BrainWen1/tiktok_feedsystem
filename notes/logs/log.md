@@ -66,3 +66,6 @@ VideoList接口也增加了对用户未点赞视频的空占位缓存，避免�
 
 ### 9.9
 开始开发comment评论模块，完成publish发布评论接口，接入redis缓存和mq异步消费做削峰处理。
+
+### 9.10
+完成delete接口，同样用mq异步消费，并且在comment_consumer里维护一个<videoId, commentId_zset>的键值对，便于查询视频的评论列表，并且可以按时间戳有序排列。
