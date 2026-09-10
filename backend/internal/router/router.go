@@ -116,6 +116,7 @@ func SetupRouter(sqlDB *gorm.DB, cache *cache.RedisCache, rmq *mq.RabbitMQ, auth
 	protectedCommentGroup := commentGroup.Group("/").Use(authMiddleware.Auth())
 	{
 		protectedCommentGroup.POST("/publish", commentHandler.PublishComment) // 发布评论
+		protectedCommentGroup.POST("/delete", commentHandler.DeleteComment)   // 删除评论
 	}
 
 	// 返回配置好的路由引擎

@@ -70,7 +70,7 @@ func StartCommentConsumer(cmq *CommentMQ, commentRepo *repo.CommentRepo, cache *
 			case "create":
 				consumeErr = commentRepo.CreateComment(ctx, event.Comment)
 			case "delete":
-				// consumeErr = commentRepo.DeleteComment(ctx, event.UserID, event.VideoID)
+				consumeErr = commentRepo.DeleteComment(ctx, event.Comment.ID)
 			default:
 				log.Printf("unknown comment event action: %s", event.Action)
 				_ = msg.Ack(false) // 未知的事件类型直接ACK掉，避免无限重试

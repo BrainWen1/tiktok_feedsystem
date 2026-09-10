@@ -58,6 +58,11 @@ func (c *CommentMQ) PublishComment(ctx context.Context, comment *model.Comment) 
 	return c.publish(ctx, "create", commentCreateRK, comment)
 }
 
+// DeleteComment 发布删除评论事件到 RabbitMQ
+func (c *CommentMQ) DeleteComment(ctx context.Context, comment *model.Comment) error {
+	return c.publish(ctx, "delete", commentDeleteRK, comment)
+}
+
 // publish 发布评论事件到 RabbitMQ
 func (c *CommentMQ) publish(ctx context.Context, action, routingKey string, comment *model.Comment) error {
 	if c == nil || c.ch == nil {
