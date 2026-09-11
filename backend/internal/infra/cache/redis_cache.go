@@ -282,3 +282,22 @@ func (c *RedisCache) ZRem(ctx context.Context, key string, member interface{}) e
 	}
 	return nil
 }
+
+// Increase 将Redis中的key对应的数值增加指定的增量，并设置过期时间
+func (c *RedisCache) Increase(ctx context.Context, key string, increment int64, ttl time.Duration) (int64, error) {
+	newValue, err := c.client.IncrBy(ctx, key, increment).Result()
+	if err != nil {
+		log.Printf("Error increasing value of key %s by %d: %v", key, increment, err)
+		return 0, err
+	}
+	// 设置key的过期时间
+	if ttl > 0 {
+		log.Printf("setting ttl for key %s to %v", key, ttl)
+		err = c.client.Expire(ctx, key, ttl).Err()
+		if err != nil {
+			log.Printf("Error setting expiration for key %s: %v", key, err)
+			return newValue, err
+		}
+	}
+	return newValue, nil
+}

@@ -52,7 +52,7 @@ func SetupRouter(sqlDB *gorm.DB, cache *cache.RedisCache, rmq *mq.RabbitMQ, auth
 		return nil
 	}
 	commentRepo := repo.NewCommentRepo(sqlDB)
-	commentService := service.NewCommentService(commentRepo, commentMQ)
+	commentService := service.NewCommentService(commentRepo, commentMQ, cache)
 	commentHandler := handler.NewCommentHandler(commentService)
 
 	// 设置路由
@@ -111,7 +111,7 @@ func SetupRouter(sqlDB *gorm.DB, cache *cache.RedisCache, rmq *mq.RabbitMQ, auth
 	// 评论相关路由
 	commentGroup := r.Group("/comment")
 	{
-
+		commentGroup.GET("/list", commentHandler.ListComments) // 获取视频评论列表
 	}
 	protectedCommentGroup := commentGroup.Group("/").Use(authMiddleware.Auth())
 	{

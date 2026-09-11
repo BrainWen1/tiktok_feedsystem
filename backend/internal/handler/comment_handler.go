@@ -2,6 +2,7 @@ package handler
 
 import (
 	"feedsystem/internal/dto"
+	"feedsystem/internal/handler/middleware"
 	"feedsystem/internal/service"
 	"feedsystem/internal/utils/response"
 	"fmt"
@@ -74,4 +75,28 @@ func (h *CommentHandler) DeleteComment(ctx *gin.Context) {
 	}
 
 	response.SuccessResponse(ctx, "Comment deleted successfully")
+}
+
+// ListComment 获取视频评论列表，支持分页
+func (h *CommentHandler) ListComments(ctx *gin.Context) {
+	// 获取请求参数
+	var req dto.ListCommentsRequest
+	if err := ctx.ShouldBindQuery(&req); err != nil {
+		log.Printf("Failed to bind request: %v", err)
+		response.FailResponse(ctx, fmt.Sprintf("Failed to bind request: %v", err))
+		return
+	}
+
+	// 软鉴权：尝试从上下文中获取用户ID，游客返回0
+	uid := middleware.TryGetUID(ctx)
+
+	// 调用服务层获取评论列表
+	resp, err := h.CommentService.ListComments(ctx.Request.Context(), uid, req)
+	if err != nil {
+		log.Printf("Failed to list comments: %v", err)
+		response.FailResponse(ctx, fmt.Sprintf("Failed to list comments: %v", err))
+		return
+	}
+
+	response.SuccessResponse(ctx, resp)
 }
