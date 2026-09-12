@@ -15,18 +15,20 @@ import (
 )
 
 type CommentService struct {
-	CommentRepo *repo.CommentRepo
-	CommentMQ   *mq.CommentMQ
-	cache       *cache.RedisCache
-	userService *UserService // 用于查询作者信息
-	likeService *LikeService // 用于查询评论是否被点赞
+	CommentRepo  *repo.CommentRepo
+	CommentMQ    *mq.CommentMQ
+	cache        *cache.RedisCache
+	likeService  *LikeService  // 用于查询评论是否被点赞
+	videoService *VideoService // 用于查询视频信息
 }
 
-func NewCommentService(commentRepo *repo.CommentRepo, commentMQ *mq.CommentMQ, cache *cache.RedisCache) *CommentService {
+func NewCommentService(commentRepo *repo.CommentRepo, commentMQ *mq.CommentMQ, cache *cache.RedisCache, likeService *LikeService, videoService *VideoService) *CommentService {
 	return &CommentService{
-		CommentRepo: commentRepo,
-		CommentMQ:   commentMQ,
-		cache:       cache,
+		CommentRepo:  commentRepo,
+		CommentMQ:    commentMQ,
+		cache:        cache,
+		likeService:  likeService,
+		videoService: videoService,
 	}
 }
 
@@ -62,15 +64,27 @@ func (s *CommentService) DeleteComment(ctx context.Context, uid, commentID uint)
 		return errors.New("user ID and comment ID must be non-zero")
 	}
 
-	// 检查评论是否属于该用户
+	// 获取comment实例
 	comment, err := s.CommentRepo.FindByID(ctx, commentID)
 	if err != nil {
 		log.Printf("Failed to find comment with ID %d: %v", commentID, err)
 		return errors.New("comment not found")
 	}
+
+	// 检查用户是否有权限删除评论
+	// 1. 评论发布者
 	if comment.UserID != uid {
-		log.Printf("User %d is not authorized to delete comment %d", uid, commentID)
-		return errors.New("user is not authorized to delete this comment")
+		// 获取视频信息
+		video, err := s.videoService.getDetail(ctx, comment.VideoID)
+		if err != nil {
+			log.Printf("Failed to get video detail: %v", err)
+			return errors.New("failed to get video detail")
+		}
+		// 2. 视频作者
+		if video.AuthorID != uid {
+			log.Printf("User %d is not authorized to delete comment %d", uid, commentID)
+			return errors.New("user is not authorized to delete this comment")
+		}
 	}
 
 	//组装消息

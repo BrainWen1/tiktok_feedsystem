@@ -52,7 +52,7 @@ func SetupRouter(sqlDB *gorm.DB, cache *cache.RedisCache, rmq *mq.RabbitMQ, auth
 		return nil
 	}
 	commentRepo := repo.NewCommentRepo(sqlDB)
-	commentService := service.NewCommentService(commentRepo, commentMQ, cache)
+	commentService := service.NewCommentService(commentRepo, commentMQ, cache, likeService, videoService)
 	commentHandler := handler.NewCommentHandler(commentService)
 
 	// 设置路由
