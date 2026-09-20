@@ -54,6 +54,10 @@ func SetupRouter(sqlDB *gorm.DB, cache *cache.RedisCache, rmq *mq.RabbitMQ, auth
 	commentRepo := repo.NewCommentRepo(sqlDB)
 	commentService := service.NewCommentService(commentRepo, commentMQ, cache, likeService, videoService)
 	commentHandler := handler.NewCommentHandler(commentService)
+	// Social
+	socialRepo := repo.NewSocialRepo(sqlDB)
+	socialService := service.NewSocialService(socialRepo)
+	socialHandler := handler.NewSocialHandler(socialService)
 
 	// 设置路由
 	// 健康检查路由
@@ -117,6 +121,17 @@ func SetupRouter(sqlDB *gorm.DB, cache *cache.RedisCache, rmq *mq.RabbitMQ, auth
 	{
 		protectedCommentGroup.POST("/publish", commentHandler.PublishComment) // 发布评论
 		protectedCommentGroup.POST("/delete", commentHandler.DeleteComment)   // 删除评论
+	}
+
+	// 社交相关路由
+	socialGroup := r.Group("/social")
+	{
+
+	}
+	protectedSocialGroup := socialGroup.Group("/").Use(authMiddleware.Auth())
+	{
+		protectedSocialGroup.POST("/follow", socialHandler.Follow)     // 关注博主
+		protectedSocialGroup.POST("/unfollow", socialHandler.Unfollow) // 取消关注博主
 	}
 
 	// 返回配置好的路由引擎
