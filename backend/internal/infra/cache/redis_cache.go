@@ -259,8 +259,14 @@ func (c *RedisCache) Exists(ctx context.Context, key string) (bool, error) {
 }
 
 // ZAdd 将元素添加到Redis有序集合ZSet中，并设置过期时间
-func (c *RedisCache) ZAdd(ctx context.Context, key string, member interface{}, score float64, ttl time.Duration) error {
-	err := c.client.ZAdd(ctx, key, redis.Z{Score: score, Member: member}).Err()
+func (c *RedisCache) ZAdd(ctx context.Context, key string, zList []redis.Z, ttl time.Duration) error {
+	if len(zList) == 0 {
+		log.Printf("zList is empty, nothing to add to zset %s", key)
+		return nil
+	}
+
+	// 使用ZAdd命令将元素添加到ZSet中
+	err := c.client.ZAdd(ctx, key, zList...).Err()
 	if err != nil {
 		log.Printf("Error adding member to zset %s: %v", key, err)
 		return err
@@ -300,4 +306,51 @@ func (c *RedisCache) Increase(ctx context.Context, key string, increment int64, 
 		}
 	}
 	return newValue, nil
+}
+
+// ZCard 获取Redis有序集合ZSet的元素数量
+func (c *RedisCache) ZCard(ctx context.Context, key string) (int64, error) {
+	count, err := c.client.ZCard(ctx, key).Result()
+	if err != nil {
+		log.Printf("Error getting zset cardinality for key %s: %v", key, err)
+		return 0, err
+	}
+	return count, nil
+}
+
+// ZRange 获取Redis有序集合ZSet中指定范围的元素，可指定顺倒序
+func (c *RedisCache) ZRange(ctx context.Context, key string, start, stop int64, reverse bool) ([]string, error) {
+	var result []string
+	var err error
+
+	result, err = c.client.ZRangeArgs(ctx, redis.ZRangeArgs{
+		Key:   key,
+		Start: start,
+		Stop:  stop,
+		Rev:   reverse, // 顺倒序
+	}).Result()
+
+	if err != nil {
+		log.Printf("Error getting zset range for key %s: %v", key, err)
+		return nil, err
+	}
+	return result, nil
+}
+
+// ZIsMember 判断 zset 里面有没有这个 member
+func (c *RedisCache) ZIsMember(ctx context.Context, key string, member interface{}) (bool, error) {
+	// 将 member 转换为字符串类型，因为 ZRank 方法需要字符串类型的 member
+	memberStr := fmt.Sprintf("%v", member)
+
+	_, err := c.client.ZRank(ctx, key, memberStr).Result()
+	if err == redis.Nil {
+		// 查不到，不存在
+		return false, nil
+	}
+	if err != nil {
+		log.Printf("ZRank check failed key=%s member=%v err=%v", key, member, err)
+		return false, err
+	}
+	// 没报错，说明查到了，存在
+	return true, nil
 }

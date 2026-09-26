@@ -2,6 +2,7 @@ package handler
 
 import (
 	"feedsystem/internal/dto"
+	"feedsystem/internal/handler/middleware"
 	"feedsystem/internal/service"
 	"feedsystem/internal/utils/response"
 	"log"
@@ -71,4 +72,58 @@ func (h *SocialHandler) Unfollow(ctx *gin.Context) {
 	}
 
 	response.SuccessResponse(ctx, "Unfollowed successfully")
+}
+
+// GetBloggers 获取用户的关注列表
+func (h *SocialHandler) GetBloggers(ctx *gin.Context) {
+	// 获取查询参数
+	var GetBloggersReq dto.GetBloggersRequest
+	if err := ctx.ShouldBindQuery(&GetBloggersReq); err != nil {
+		log.Printf("Failed to bind query parameters: %v", err)
+		response.FailResponse(ctx, err.Error())
+		return
+	}
+
+	// 软鉴权
+	uid := middleware.TryGetUID(ctx)
+
+	// 调用服务层的GetBloggers方法
+	bloggers, total, err := h.SocialService.GetBloggers(ctx.Request.Context(), GetBloggersReq.Uid, GetBloggersReq.PageNum, GetBloggersReq.PageSize, uid)
+	if err != nil {
+		log.Printf("Failed to get bloggers: %v", err)
+		response.FailResponse(ctx, err.Error())
+		return
+	}
+
+	response.SuccessResponse(ctx, gin.H{
+		"bloggers": bloggers,
+		"total":    total,
+	})
+}
+
+// GetFollowers 获取用户的粉丝列表
+func (h *SocialHandler) GetFollowers(ctx *gin.Context) {
+	// 获取查询参数
+	var GetFollowersReq dto.GetFollowersRequest
+	if err := ctx.ShouldBindQuery(&GetFollowersReq); err != nil {
+		log.Printf("Failed to bind query parameters: %v", err)
+		response.FailResponse(ctx, err.Error())
+		return
+	}
+
+	// 软鉴权
+	uid := middleware.TryGetUID(ctx)
+
+	// 调用服务层的GetBloggers方法
+	followers, total, err := h.SocialService.GetFollowers(ctx.Request.Context(), GetFollowersReq.Uid, GetFollowersReq.PageNum, GetFollowersReq.PageSize, uid)
+	if err != nil {
+		log.Printf("Failed to get followers: %v", err)
+		response.FailResponse(ctx, err.Error())
+		return
+	}
+
+	response.SuccessResponse(ctx, gin.H{
+		"followers": followers,
+		"total":     total,
+	})
 }

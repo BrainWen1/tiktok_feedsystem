@@ -56,7 +56,7 @@ func SetupRouter(sqlDB *gorm.DB, cache *cache.RedisCache, rmq *mq.RabbitMQ, auth
 	commentHandler := handler.NewCommentHandler(commentService)
 	// Social
 	socialRepo := repo.NewSocialRepo(sqlDB)
-	socialService := service.NewSocialService(socialRepo)
+	socialService := service.NewSocialService(socialRepo, cache, userService)
 	socialHandler := handler.NewSocialHandler(socialService)
 
 	// 设置路由
@@ -126,7 +126,8 @@ func SetupRouter(sqlDB *gorm.DB, cache *cache.RedisCache, rmq *mq.RabbitMQ, auth
 	// 社交相关路由
 	socialGroup := r.Group("/social")
 	{
-
+		socialGroup.GET("/bloggers", socialHandler.GetBloggers)   // 获取关注列表
+		socialGroup.GET("/followers", socialHandler.GetFollowers) // 获取粉丝列表
 	}
 	protectedSocialGroup := socialGroup.Group("/").Use(authMiddleware.Auth())
 	{
