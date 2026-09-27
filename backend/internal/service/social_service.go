@@ -428,3 +428,84 @@ func (s *SocialService) GetFollowers(ctx context.Context, targetUid, pageNum, pa
 	}()
 	return userList, total, nil
 }
+
+// IsFollow 获取两者双向关注关系
+func (s *SocialService) IsFollow(ctx context.Context, uid, targetID uint) (bool, bool, error) {
+	if uid == 0 || targetID == 0 {
+		return false, false, errors.New("user id and target id must be non-zero")
+	}
+	if uid == targetID {
+		return false, false, errors.New("user cannot follow themselves")
+	}
+
+	// uid 是否关注 targetID
+	keyUIDBloggers := fmt.Sprintf("%s%d", socialBloggersKey, uid)
+	keyUIDFollowers := fmt.Sprintf("%s%d", socialFollowersKey, uid)
+	keyTIDBloggers := fmt.Sprintf("%s%d", socialBloggersKey, targetID)
+	keyTIDFollowers := fmt.Sprintf("%s%d", socialFollowersKey, targetID)
+
+	isFollow, err := s.cache.ZIsMember(ctx, keyUIDBloggers, targetID)
+	if err != nil {
+		log.Printf("Failed to check follow relation in cache: uid=%d targetID=%d err=%v", uid, targetID, err)
+		return false, false, err
+	}
+	// 查库并回写缓存
+	if !isFollow {
+		isFollow, err = s.SocialRepo.IsFollowing(ctx, uid, targetID)
+		if err != nil {
+			log.Printf("Failed to check follow relation in DB: uid=%d targetID=%d err=%v", uid, targetID, err)
+			return false, false, err
+		}
+		// 数据库查到结果，回填缓存
+		if isFollow {
+			social, err := s.SocialRepo.FindByFollowerAndBlogger(ctx, uid, targetID)
+			if err != nil {
+				log.Printf("Failed to find follow relation in DB: uid=%d targetID=%d err=%v", uid, targetID, err)
+				return false, false, err
+			}
+
+			// 关注缓存
+			if err := s.cache.ZAdd(ctx, keyUIDBloggers, []redis.Z{{Score: float64(social.CreatedAt.Unix()), Member: targetID}}, socialUidsTTL); err != nil {
+				log.Printf("ZAdd follow cache failed, key=%s uid=%d targetID=%d err=%v", keyUIDBloggers, uid, targetID, err)
+			}
+			// 粉丝缓存
+			if err := s.cache.ZAdd(ctx, keyTIDFollowers, []redis.Z{{Score: float64(social.CreatedAt.Unix()), Member: uid}}, socialUidsTTL); err != nil {
+				log.Printf("ZAdd follower cache failed, key=%s targetID=%d uid=%d err=%v", keyTIDFollowers, targetID, uid, err)
+			}
+		}
+	}
+
+	// targetID是否关注uid
+	isFan, err := s.cache.ZIsMember(ctx, keyUIDFollowers, targetID)
+	if err != nil {
+		log.Printf("Failed to check fan relation in cache: uid=%d targetID=%d err=%v", uid, targetID, err)
+		return false, false, err
+	}
+	// 查库并回写缓存
+	if !isFan {
+		isFan, err = s.SocialRepo.IsFollowing(ctx, targetID, uid)
+		if err != nil {
+			log.Printf("Failed to check fan relation in DB: uid=%d targetID=%d err=%v", uid, targetID, err)
+			return false, false, err
+		}
+
+		if isFan {
+			social, err := s.SocialRepo.FindByFollowerAndBlogger(ctx, targetID, uid)
+			if err != nil {
+				log.Printf("Failed to find fan relation in DB: uid=%d targetID=%d err=%v", uid, targetID, err)
+				return false, false, err
+			}
+
+			// 关注缓存
+			if err := s.cache.ZAdd(ctx, keyTIDBloggers, []redis.Z{{Score: float64(social.CreatedAt.Unix()), Member: uid}}, socialUidsTTL); err != nil {
+				log.Printf("ZAdd follow cache failed, key=%s targetID=%d uid=%d err=%v", keyTIDBloggers, targetID, uid, err)
+			}
+			// 粉丝缓存
+			if err := s.cache.ZAdd(ctx, keyUIDFollowers, []redis.Z{{Score: float64(social.CreatedAt.Unix()), Member: targetID}}, socialUidsTTL); err != nil {
+				log.Printf("ZAdd follower cache failed, key=%s uid=%d targetID=%d err=%v", keyUIDFollowers, uid, targetID, err)
+			}
+		}
+	}
+
+	return isFollow, isFan, nil
+}

@@ -127,3 +127,35 @@ func (h *SocialHandler) GetFollowers(ctx *gin.Context) {
 		"total":     total,
 	})
 }
+
+// IsFollow 获取两者关注关系
+func (h *SocialHandler) IsFollow(ctx *gin.Context) {
+	// 获取查询参数
+	var req dto.IsFollowRequest
+	if err := ctx.ShouldBindQuery(&req); err != nil {
+		log.Printf("Failed to bind query parameters: %v", err)
+		response.FailResponse(ctx, err.Error())
+		return
+	}
+
+	// 获取uid
+	uid, _, err := getUserFromCtx(ctx)
+	if err != nil {
+		log.Printf("Failed to get user from context: %v", err)
+		response.FailResponse(ctx, err.Error())
+		return
+	}
+
+	// 调用服务层的IsFollow方法
+	isFollow, isFan, err := h.SocialService.IsFollow(ctx.Request.Context(), uid, uint(req.TargetID))
+	if err != nil {
+		log.Printf("Failed to check follow status: %v", err)
+		response.FailResponse(ctx, err.Error())
+		return
+	}
+
+	response.SuccessResponse(ctx, gin.H{
+		"is_follow": isFollow,
+		"is_fan":    isFan,
+	})
+}

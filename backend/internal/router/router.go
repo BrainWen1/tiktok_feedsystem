@@ -133,6 +133,7 @@ func SetupRouter(sqlDB *gorm.DB, cache *cache.RedisCache, rmq *mq.RabbitMQ, auth
 	{
 		protectedSocialGroup.POST("/follow", socialHandler.Follow)     // 关注博主
 		protectedSocialGroup.POST("/unfollow", socialHandler.Unfollow) // 取消关注博主
+		protectedSocialGroup.GET("/is_follow", socialHandler.IsFollow) // 获取两者关注关系
 	}
 
 	// 返回配置好的路由引擎

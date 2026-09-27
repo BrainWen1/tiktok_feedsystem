@@ -26,3 +26,12 @@ type UserSocialSimpleResponse struct {
 	AvatarUrl string `json:"avatar_url"`
 	IsFollow  bool   `json:"is_follow"`
 }
+
+type IsFollowRequest struct {
+	TargetID uint `form:"target_id" binding:"required"`
+}
+
+type IsFollowResponse struct {
+	IsFollow bool `json:"is_follow"`
+	IsFan    bool `json:"is_fan"`
+}
