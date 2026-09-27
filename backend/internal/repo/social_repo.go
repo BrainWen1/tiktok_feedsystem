@@ -145,3 +145,16 @@ func (r *SocialRepo) ListAllFollowers(ctx context.Context, bloggerID uint, order
 
 	return socials, nil
 }
+
+// GetCounts 获取用户的关注和粉丝数量
+func (r *SocialRepo) GetCounts(ctx context.Context, userID uint) (followCount int64, fanCount int64, err error) {
+	// 获取关注数量
+	if err = r.db.WithContext(ctx).Model(&model.Social{}).Where(&model.Social{FollowerID: userID}).Count(&followCount).Error; err != nil {
+		return
+	}
+	// 获取粉丝数量
+	if err = r.db.WithContext(ctx).Model(&model.Social{}).Where(&model.Social{BloggerID: userID}).Count(&fanCount).Error; err != nil {
+		return
+	}
+	return followCount, fanCount, nil
+}

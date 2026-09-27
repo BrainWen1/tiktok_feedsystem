@@ -159,3 +159,27 @@ func (h *SocialHandler) IsFollow(ctx *gin.Context) {
 		"is_fan":    isFan,
 	})
 }
+
+// GetCounts 获取关注和粉丝数量
+func (h *SocialHandler) GetCounts(ctx *gin.Context) {
+	// 获取查询参数
+	var req dto.GetCountsRequest
+	if err := ctx.ShouldBindQuery(&req); err != nil {
+		log.Printf("Failed to bind query parameters: %v", err)
+		response.FailResponse(ctx, err.Error())
+		return
+	}
+
+	// 调用服务层的GetCounts方法
+	followCount, fanCount, err := h.SocialService.GetCounts(ctx.Request.Context(), req.TargetID)
+	if err != nil {
+		log.Printf("Failed to get counts: %v", err)
+		response.FailResponse(ctx, err.Error())
+		return
+	}
+
+	response.SuccessResponse(ctx, gin.H{
+		"follow_count": followCount,
+		"fan_count":    fanCount,
+	})
+}

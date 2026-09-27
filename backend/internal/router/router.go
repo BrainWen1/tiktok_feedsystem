@@ -128,6 +128,7 @@ func SetupRouter(sqlDB *gorm.DB, cache *cache.RedisCache, rmq *mq.RabbitMQ, auth
 	{
 		socialGroup.GET("/bloggers", socialHandler.GetBloggers)   // 获取关注列表
 		socialGroup.GET("/followers", socialHandler.GetFollowers) // 获取粉丝列表
+		socialGroup.GET("/count", socialHandler.GetCounts)        // 获取关注和粉丝数量
 	}
 	protectedSocialGroup := socialGroup.Group("/").Use(authMiddleware.Auth())
 	{

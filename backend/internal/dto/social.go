@@ -35,3 +35,7 @@ type IsFollowResponse struct {
 	IsFollow bool `json:"is_follow"`
 	IsFan    bool `json:"is_fan"`
 }
+
+type GetCountsRequest struct {
+	TargetID uint `form:"target_id" binding:"required"`
+}

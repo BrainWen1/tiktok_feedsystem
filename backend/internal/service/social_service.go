@@ -509,3 +509,78 @@ func (s *SocialService) IsFollow(ctx context.Context, uid, targetID uint) (bool,
 
 	return isFollow, isFan, nil
 }
+
+// GetCounts 获取关注和粉丝数量
+func (s *SocialService) GetCounts(ctx context.Context, targetID uint) (int64, int64, error) {
+	if targetID == 0 {
+		return 0, 0, errors.New("target id must be non-zero")
+	}
+
+	// 尝试从Redis ZSet拿
+	keyBloggers := fmt.Sprintf("%s%d", socialBloggersKey, targetID)
+	keyFollowers := fmt.Sprintf("%s%d", socialFollowersKey, targetID)
+
+	followCount, err := s.cache.ZCard(ctx, keyBloggers)
+	if err != nil {
+		log.Printf("Failed to get follow count from cache: targetID=%d err=%v", targetID, err)
+		return 0, 0, err
+	}
+
+	fanCount, err := s.cache.ZCard(ctx, keyFollowers)
+	if err != nil {
+		log.Printf("Failed to get fan count from cache: targetID=%d err=%v", targetID, err)
+		return 0, 0, err
+	}
+
+	// 如果缓存中没有数据，查库并回写缓存
+	if followCount == 0 || fanCount == 0 {
+		followCountDB, fanCountDB, err := s.SocialRepo.GetCounts(ctx, targetID)
+		if err != nil {
+			log.Printf("Failed to get counts from DB: targetID=%d err=%v", targetID, err)
+			return 0, 0, err
+		}
+
+		// 回写缓存
+		if followCount == 0 {
+			socials, err := s.SocialRepo.ListAllBloggers(ctx, targetID, true)
+			if err != nil {
+				log.Printf("Failed to list all bloggers for cache: targetID=%d err=%v", targetID, err)
+			} else {
+				var zList []redis.Z
+				for _, social := range socials {
+					zList = append(zList, redis.Z{
+						Score:  float64(social.CreatedAt.Unix()),
+						Member: social.BloggerID,
+					})
+				}
+				err = s.cache.ZAdd(ctx, keyBloggers, zList, socialUidsTTL)
+				if err != nil {
+					log.Printf("Failed to write follow count to cache: targetID=%d err=%v", targetID, err)
+				}
+			}
+		}
+
+		if fanCount == 0 {
+			socials, err := s.SocialRepo.ListAllFollowers(ctx, targetID, true)
+			if err != nil {
+				log.Printf("Failed to list all followers for cache: targetID=%d err=%v", targetID, err)
+			} else {
+				var zList []redis.Z
+				for _, social := range socials {
+					zList = append(zList, redis.Z{
+						Score:  float64(social.CreatedAt.Unix()),
+						Member: social.FollowerID,
+					})
+				}
+				err = s.cache.ZAdd(ctx, keyFollowers, zList, socialUidsTTL)
+				if err != nil {
+					log.Printf("Failed to write fan count to cache: targetID=%d err=%v", targetID, err)
+				}
+			}
+		}
+
+		return followCountDB, fanCountDB, nil
+	}
+
+	return followCount, fanCount, nil
+}
