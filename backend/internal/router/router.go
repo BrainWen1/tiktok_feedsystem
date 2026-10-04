@@ -58,6 +58,9 @@ func SetupRouter(sqlDB *gorm.DB, cache *cache.RedisCache, rmq *mq.RabbitMQ, auth
 	socialRepo := repo.NewSocialRepo(sqlDB)
 	socialService := service.NewSocialService(socialRepo, cache, userService)
 	socialHandler := handler.NewSocialHandler(socialService)
+	// Feed
+	feedService := service.NewFeedService(videoRepo, likeService, socialService, commentService)
+	feedHandler := handler.NewFeedHandler(feedService)
 
 	// 设置路由
 	// 健康检查路由
@@ -135,6 +138,19 @@ func SetupRouter(sqlDB *gorm.DB, cache *cache.RedisCache, rmq *mq.RabbitMQ, auth
 		protectedSocialGroup.POST("/follow", socialHandler.Follow)     // 关注博主
 		protectedSocialGroup.POST("/unfollow", socialHandler.Unfollow) // 取消关注博主
 		protectedSocialGroup.GET("/is_follow", socialHandler.IsFollow) // 获取两者关注关系
+	}
+
+	// feed流相关路由
+	feedGroup := r.Group("/feed")
+	{
+		feedGroup.GET("/list", feedHandler.FeedListLatest) // 获取最新视频流
+		// feedGroup.GET("/listByPopularity", feedHandler.ListByPopularity) // 获取按热度排序的视频流
+		// feedGroup.GET("/listByLikesCount", feedHandler.ListByLikesCount) // 获取按点赞数排序的视频流
+		// feedGroup.GET("/listByTag", feedHandler.ListByTag)               // 获取按标签过滤的视频流
+	}
+	// protectedFeedGroup := feedGroup.Group("/").Use(authMiddleware.Auth())
+	{
+		// protectedFeedGroup.GET("/listByFollowing", feedHandler.ListByFollowing) // 获取关注博主的视频流
 	}
 
 	// 返回配置好的路由引擎
