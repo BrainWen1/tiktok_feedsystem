@@ -1,0 +1,1053 @@
+{
+  "info": {
+    "_postman_id": "b7f7f6db-0f8e-4e52-b9e5-6f6d86c0cc91",
+    "name": "user",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "if (!pm.collectionVariables.get('primary_username')) {",
+          "  const ts = Date.now();",
+          "  pm.collectionVariables.set('primary_username', 'user_' + ts);",
+          "  pm.collectionVariables.set('primary_password', 'P@ssw0rd!' + ts);",
+          "  pm.collectionVariables.set('new_password', 'P@ssw0rdNew!' + ts);",
+          "  pm.collectionVariables.set('updated_bio', 'bio_' + ts);",
+          "  pm.collectionVariables.set('target_username', 'target_' + ts);",
+          "  pm.collectionVariables.set('target_password', 'TargetP@ss!' + ts);",
+          "  pm.collectionVariables.set('refresh_token', '');",
+          "}",
+          "const envToken = pm.environment.get('token');",
+          "const colToken = pm.collectionVariables.get('token');",
+          "if (envToken) {",
+          "  pm.collectionVariables.set('token', envToken);",
+          "} else if (colToken) {",
+          "  pm.environment.set('token', colToken);",
+          "}"
+        ]
+      }
+    }
+  ],
+  "item": [
+    {
+      "name": "正常流程",
+      "item": [
+        {
+          "name": "注册主账号",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"user_name\": \"{{primary_username}}\",\n  \"password\": \"{{primary_password}}\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/user/register",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "user",
+                "register"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', function () { pm.expect(pm.response.code).to.eql(200); });",
+                  "pm.test('business success code', function () { pm.expect([0, 200]).to.include(json.code); });",
+                  "pm.test('register response payload', function () {",
+                  "  pm.expect(json.data).to.have.property('status');",
+                  "  pm.expect(json.data.status).to.eql('Register successfully');",
+                  "  pm.expect(json.data).to.have.property('user_id');",
+                  "  pm.expect(json.data).to.have.property('username');",
+                  "  pm.expect(json.data.username).to.eql(pm.collectionVariables.get('primary_username'));",
+                  "});",
+                  "pm.environment.set('my_uid', json.data.user_id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "登录主账号",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"user_name\": \"{{primary_username}}\",\n  \"password\": \"{{primary_password}}\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/user/login",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "user",
+                "login"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', function () { pm.expect(pm.response.code).to.eql(200); });",
+                  "pm.test('business success code', function () { pm.expect([0, 200]).to.include(json.code); });",
+                  "pm.test('login response payload', function () {",
+                  "  pm.expect(json.data).to.have.property('token');",
+                  "  pm.expect(json.data).to.have.property('refresh_token');",
+                  "  pm.expect(json.data).to.have.property('user_name');",
+                  "  pm.expect(json.data.user_name).to.eql(pm.collectionVariables.get('primary_username'));",
+                  "});",
+                  "pm.environment.set('token', json.data.token);",
+                  "pm.collectionVariables.set('token', json.data.token);",
+                  "pm.collectionVariables.set('refresh_token', json.data.refresh_token);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "获取当前资料",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/user/profile",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "user",
+                "profile"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', function () { pm.expect(pm.response.code).to.eql(200); });",
+                  "pm.test('business success code', function () { pm.expect([0, 200]).to.include(json.code); });",
+                  "pm.test('profile payload', function () {",
+                  "  pm.expect(json.data).to.have.property('id');",
+                  "  pm.expect(json.data).to.have.property('user_name');",
+                  "  pm.expect(json.data).to.have.property('avatar_url');",
+                  "  pm.expect(json.data).to.have.property('bio');",
+                  "  pm.expect(String(json.data.id)).to.eql(String(pm.environment.get('my_uid')));",
+                  "  pm.expect(json.data.user_name).to.eql(pm.collectionVariables.get('primary_username'));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "更新当前资料",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"bio\": \"{{updated_bio}}\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/user/profile",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "user",
+                "profile"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', function () { pm.expect(pm.response.code).to.eql(200); });",
+                  "pm.test('business success code', function () { pm.expect([0, 200]).to.include(json.code); });",
+                  "pm.test('updated profile payload', function () {",
+                  "  pm.expect(json.data).to.have.property('bio');",
+                  "  pm.expect(json.data.bio).to.eql(pm.collectionVariables.get('updated_bio'));",
+                  "  pm.expect(String(json.data.id)).to.eql(String(pm.environment.get('my_uid')));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "再次获取资料验证更新",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/user/profile",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "user",
+                "profile"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', function () { pm.expect(pm.response.code).to.eql(200); });",
+                  "pm.test('business success code', function () { pm.expect([0, 200]).to.include(json.code); });",
+                  "pm.test('bio updated', function () {",
+                  "  pm.expect(json.data.bio).to.eql(pm.collectionVariables.get('updated_bio'));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "刷新令牌",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"refresh_token\": \"{{refresh_token}}\",\n  \"old_access_token\": \"{{token}}\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/user/refresh",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "user",
+                "refresh"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', function () { pm.expect(pm.response.code).to.eql(200); });",
+                  "pm.test('business success code', function () { pm.expect([0, 200]).to.include(json.code); });",
+                  "pm.test('refresh response payload', function () {",
+                  "  pm.expect(json.data).to.have.property('access_token');",
+                  "  pm.expect(json.data).to.have.property('refresh_token');",
+                  "  pm.expect(json.data).to.have.property('user_id');",
+                  "  pm.expect(String(json.data.user_id)).to.eql(String(pm.environment.get('my_uid')));",
+                  "});",
+                  "pm.environment.set('token', json.data.access_token);",
+                  "pm.collectionVariables.set('token', json.data.access_token);",
+                  "pm.collectionVariables.set('refresh_token', json.data.refresh_token);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "上传头像",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": "/home/brianclark/learn/tiktok_feedsystem/backend/assets/static/default_avatar.png"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{base_url}}/user/upload_avatar",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "user",
+                "upload_avatar"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', function () { pm.expect(pm.response.code).to.eql(200); });",
+                  "pm.test('business success code', function () { pm.expect([0, 200]).to.include(json.code); });",
+                  "pm.test('avatar upload payload', function () {",
+                  "  pm.expect(json.data).to.have.property('avatar_url');",
+                  "  pm.expect(json.data.avatar_url).to.include('/upload/avatars/' + pm.environment.get('my_uid') + '/');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "注册目标账号",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"user_name\": \"{{target_username}}\",\n  \"password\": \"{{target_password}}\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/user/register",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "user",
+                "register"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', function () { pm.expect(pm.response.code).to.eql(200); });",
+                  "pm.test('business success code', function () { pm.expect([0, 200]).to.include(json.code); });",
+                  "pm.test('target register payload', function () {",
+                  "  pm.expect(json.data).to.have.property('user_id');",
+                  "  pm.expect(json.data.username).to.eql(pm.collectionVariables.get('target_username'));",
+                  "});",
+                  "pm.environment.set('target_uid', json.data.user_id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "按ID查询自己",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"user_id\": {{my_uid}}\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/user/find_by_id",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "user",
+                "find_by_id"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', function () { pm.expect(pm.response.code).to.eql(200); });",
+                  "pm.test('business success code', function () { pm.expect([0, 200]).to.include(json.code); });",
+                  "pm.test('find by id payload', function () {",
+                  "  pm.expect(String(json.data.id)).to.eql(String(pm.environment.get('my_uid')));",
+                  "  pm.expect(json.data.user_name).to.eql(pm.collectionVariables.get('primary_username'));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "按用户名查询自己",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"user_name\": \"{{primary_username}}\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/user/find_by_username",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "user",
+                "find_by_username"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', function () { pm.expect(pm.response.code).to.eql(200); });",
+                  "pm.test('business success code', function () { pm.expect([0, 200]).to.include(json.code); });",
+                  "pm.test('find by username payload', function () {",
+                  "  pm.expect(json.data.user_name).to.eql(pm.collectionVariables.get('primary_username'));",
+                  "  pm.expect(String(json.data.id)).to.eql(String(pm.environment.get('my_uid')));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "按ID查询目标账号",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"user_id\": {{target_uid}}\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/user/find_by_id",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "user",
+                "find_by_id"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', function () { pm.expect(pm.response.code).to.eql(200); });",
+                  "pm.test('business success code', function () { pm.expect([0, 200]).to.include(json.code); });",
+                  "pm.test('target id payload', function () {",
+                  "  pm.expect(String(json.data.id)).to.eql(String(pm.environment.get('target_uid')));",
+                  "  pm.expect(json.data.user_name).to.eql(pm.collectionVariables.get('target_username'));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "按用户名查询目标账号",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"user_name\": \"{{target_username}}\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/user/find_by_username",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "user",
+                "find_by_username"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', function () { pm.expect(pm.response.code).to.eql(200); });",
+                  "pm.test('business success code', function () { pm.expect([0, 200]).to.include(json.code); });",
+                  "pm.test('target username payload', function () {",
+                  "  pm.expect(json.data.user_name).to.eql(pm.collectionVariables.get('target_username'));",
+                  "  pm.expect(String(json.data.id)).to.eql(String(pm.environment.get('target_uid')));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "修改密码成功",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"old_password\": \"{{primary_password}}\",\n  \"new_password\": \"{{new_password}}\",\n  \"confirm_password\": \"{{new_password}}\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/user/change_password",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "user",
+                "change_password"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', function () { pm.expect(pm.response.code).to.eql(200); });",
+                  "pm.test('business success code', function () { pm.expect([0, 200]).to.include(json.code); });",
+                  "pm.test('change password payload', function () {",
+                  "  pm.expect(json.data).to.have.property('status');",
+                  "  pm.expect(json.data.status).to.eql('Password changed successfully');",
+                  "});",
+                  "pm.collectionVariables.set('primary_password', pm.collectionVariables.get('new_password'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "使用新密码重新登录",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"user_name\": \"{{primary_username}}\",\n  \"password\": \"{{primary_password}}\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/user/login",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "user",
+                "login"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', function () { pm.expect(pm.response.code).to.eql(200); });",
+                  "pm.test('business success code', function () { pm.expect([0, 200]).to.include(json.code); });",
+                  "pm.test('login after password change', function () {",
+                  "  pm.expect(json.data.user_name).to.eql(pm.collectionVariables.get('primary_username'));",
+                  "  pm.expect(json.data).to.have.property('token');",
+                  "  pm.expect(json.data).to.have.property('refresh_token');",
+                  "});",
+                  "pm.environment.set('token', json.data.token);",
+                  "pm.collectionVariables.set('token', json.data.token);",
+                  "pm.collectionVariables.set('refresh_token', json.data.refresh_token);"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "异常边界",
+      "item": [
+        {
+          "name": "重复注册同名账号",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"user_name\": \"{{primary_username}}\",\n  \"password\": \"{{primary_password}}\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/user/register",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "user",
+                "register"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 400', function () { pm.expect(pm.response.code).to.eql(400); });",
+                  "pm.test('business fail code', function () { pm.expect(json.code).to.eql(400); });",
+                  "pm.test('duplicate message', function () {",
+                  "  pm.expect(json.message).to.include('already exists');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "错误密码登录",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"user_name\": \"{{primary_username}}\",\n  \"password\": \"WrongPassword!\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/user/login",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "user",
+                "login"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 400', function () { pm.expect(pm.response.code).to.eql(400); });",
+                  "pm.test('business fail code', function () { pm.expect(json.code).to.eql(400); });",
+                  "pm.test('invalid password message', function () {",
+                  "  pm.expect(json.message).to.include('invalid password');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "刷新令牌使用非法值",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"refresh_token\": \"not-a-real-refresh-token\",\n  \"old_access_token\": \"{{token}}\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/user/refresh",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "user",
+                "refresh"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 400', function () { pm.expect(pm.response.code).to.eql(400); });",
+                  "pm.test('business fail code', function () { pm.expect(json.code).to.eql(400); });",
+                  "pm.test('refresh token message', function () {",
+                  "  pm.expect(json.message).to.include('refresh token');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "更新资料但不提交字段",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            },
+            "url": {
+              "raw": "{{base_url}}/user/profile",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "user",
+                "profile"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 400', function () { pm.expect(pm.response.code).to.eql(400); });",
+                  "pm.test('business fail code', function () { pm.expect(json.code).to.eql(400); });",
+                  "pm.test('empty update message', function () {",
+                  "  pm.expect(json.message).to.include('no fields to update');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "修改密码两次输入不一致",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"old_password\": \"{{primary_password}}\",\n  \"new_password\": \"{{new_password}}\",\n  \"confirm_password\": \"MismatchPassword!\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/user/change_password",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "user",
+                "change_password"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 400', function () { pm.expect(pm.response.code).to.eql(400); });",
+                  "pm.test('business fail code', function () { pm.expect(json.code).to.eql(400); });",
+                  "pm.test('password mismatch message', function () {",
+                  "  pm.expect(json.message).to.include('do not match');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "退出登录",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"refresh_token\": \"{{refresh_token}}\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/user/logout",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "user",
+                "logout"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', function () { pm.expect(pm.response.code).to.eql(200); });",
+                  "pm.test('business success code', function () { pm.expect([0, 200]).to.include(json.code); });",
+                  "pm.test('logout payload', function () {",
+                  "  pm.expect(json.data).to.have.property('status');",
+                  "  pm.expect(json.data.status).to.eql('Logout successfully');",
+                  "  pm.expect(json.data.user_name).to.eql(pm.collectionVariables.get('primary_username'));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "未携带Token访问受保护接口",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/user/profile",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "user",
+                "profile"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 401', function () { pm.expect(pm.response.code).to.eql(401); });",
+                  "pm.test('business auth code', function () { pm.expect(json.code).to.eql(401); });",
+                  "pm.test('missing auth header message', function () {",
+                  "  pm.expect(json.message).to.include('缺少Authorization头');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Authorization格式错误",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "{{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/user/profile",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "user",
+                "profile"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 401', function () { pm.expect(pm.response.code).to.eql(401); });",
+                  "pm.test('business auth code', function () { pm.expect(json.code).to.eql(401); });",
+                  "pm.test('auth format message', function () {",
+                  "  pm.expect(json.message).to.include('Authorization头格式错误');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "退出后再访问受保护接口",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/user/profile",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "user",
+                "profile"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 401', function () { pm.expect(pm.response.code).to.eql(401); });",
+                  "pm.test('business auth code', function () { pm.expect(json.code).to.eql(401); });",
+                  "pm.test('blacklist message', function () {",
+                  "  pm.expect(json.message).to.include('token已被注销');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
