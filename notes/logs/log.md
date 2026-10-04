@@ -84,3 +84,6 @@ delete接口的权限增加视频作者。
 
 ### 9.26
 完成获取关注列表和粉丝列表接口，并且在关注和取消关注接口里维护了<userId, bloggerId_zset>和<userId, followerId_zset>两个键值对，便于查询用户的关注列表和粉丝列表，并且按时间戳有序排列。
+
+### 10.4
+开始开发feed流模块，完成五个接口的router和handler模块，明天完成service和repo。
