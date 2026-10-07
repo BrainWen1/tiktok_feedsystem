@@ -13,14 +13,20 @@ import (
 )
 
 const (
-	placeholderTTL = 5 * time.Minute // 空占位缓存的过期时间
-	eventIDTTL     = 24 * time.Hour  // 消息ID缓存的过期时间
+	placeholderTTL        = 5 * time.Minute // 空占位缓存的过期时间
+	eventIDTTL            = 24 * time.Hour  // 消息ID缓存的过期时间
+	eventKeyPrefix        = "mq:like_event_id:"
+	likeKeyPrefix         = "like:user:"
+	likePlaceholderPrefix = "like:user:placeholder:"
 )
 
 // StartLikeConsumer 启动点赞消费，给worker调用
 func StartLikeConsumer(lmq *LikeMQ, likeRepo *repo.LikeRepo, cache *cache.RedisCache) error {
 	if lmq == nil || lmq.ch == nil {
 		return errors.New("like mq is not initialized")
+	}
+	if cache == nil {
+		return errors.New("like cache is not initialized")
 	}
 	if likeRepo == nil {
 		return errors.New("like repo is not initialized")
@@ -55,7 +61,7 @@ func StartLikeConsumer(lmq *LikeMQ, likeRepo *repo.LikeRepo, cache *cache.RedisC
 			}
 
 			// 引入Redis缓存消息ID，先检查是否已经处理过，没有的话再处理，处理完后将消息ID存入Redis，设置过期时间，避免重复消费
-			key := fmt.Sprintf("mq_like_event_id:%s", event.EventID)
+			key := fmt.Sprintf("%s%s", eventKeyPrefix, event.EventID)
 			val, err := cache.Get(ctx, key)
 			if err != nil && err.Error() != "redis: nil" {
 				log.Printf("redis get error: %v", err)
@@ -126,7 +132,7 @@ func StartLikeConsumer(lmq *LikeMQ, likeRepo *repo.LikeRepo, cache *cache.RedisC
 			}
 
 			// 根据事件类型更新Redis缓存，便于快速查询用户是否点赞过某个视频
-			key = fmt.Sprintf("user_liked_videos:%d", event.UserID)
+			key = fmt.Sprintf("%s%d", likeKeyPrefix, event.UserID)
 			switch event.Action {
 			case "like":
 				{
@@ -148,7 +154,7 @@ func StartLikeConsumer(lmq *LikeMQ, likeRepo *repo.LikeRepo, cache *cache.RedisC
 					}
 
 					// 插入或更新一个空占位缓存，避免用户在短时间内重复点击取消点赞导致缓存穿透
-					placeholderKey := fmt.Sprintf("user_liked_placeholders:%d:%d", event.UserID, event.VideoID)
+					placeholderKey := fmt.Sprintf("%s%d:%d", likePlaceholderPrefix, event.UserID, event.VideoID)
 					err = cache.Set(ctx, placeholderKey, "1", placeholderTTL) // 过期时间为5分钟
 					if err != nil {
 						log.Printf("redis set placeholder error: %v", err)

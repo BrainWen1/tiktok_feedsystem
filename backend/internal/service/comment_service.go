@@ -174,3 +174,20 @@ func (s *CommentService) ListComments(ctx context.Context, uid uint, req dto.Lis
 		Total:    total,
 	}, nil
 }
+
+// BatchGetCommentCount 批量获取视频评论数量 map[vid]count
+func (s *CommentService) BatchGetCommentCount(ctx context.Context, vidList []string) (map[string]int64, error) {
+	countMap := make(map[string]int64)
+	if len(vidList) == 0 {
+		return countMap, nil
+	}
+	for _, vid := range vidList {
+		cnt, err := cache.ConvInt64(s.cache.Get(ctx, fmt.Sprintf("comment:video:cnt:%s", vid)))
+		if err != nil {
+			countMap[vid] = 0
+			continue
+		}
+		countMap[vid] = cnt
+	}
+	return countMap, nil
+}

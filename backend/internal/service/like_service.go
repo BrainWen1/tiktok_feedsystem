@@ -4,9 +4,15 @@ import (
 	"context"
 	"errors"
 	"feedsystem/internal/dto"
+	"feedsystem/internal/infra/cache"
 	"feedsystem/internal/infra/mq"
 	"feedsystem/internal/repo"
+	"fmt"
 	"log"
+)
+
+const (
+	likeUserKeyPrefix = "like:user:" // 用户点赞视频的缓存前缀
 )
 
 // VideoDetailer 只暴露 LikeService 需要的最小视频详情能力。
@@ -20,10 +26,11 @@ type LikeService struct {
 	likeMQ        *mq.LikeMQ
 	UserService   *UserService // 引入UserService以便查询作者信息
 	videoDetailer VideoDetailer
+	cache         *cache.RedisCache
 }
 
-func NewLikeService(likeRepo *repo.LikeRepo, likeMQ *mq.LikeMQ, userService *UserService) *LikeService {
-	return &LikeService{likeRepo: likeRepo, likeMQ: likeMQ, UserService: userService}
+func NewLikeService(likeRepo *repo.LikeRepo, likeMQ *mq.LikeMQ, userService *UserService, cache *cache.RedisCache) *LikeService {
+	return &LikeService{likeRepo: likeRepo, likeMQ: likeMQ, UserService: userService, cache: cache}
 }
 
 // SetVideoDetailer 在 VideoService 创建完成后注入。
@@ -122,4 +129,46 @@ func (s *LikeService) ListLikedVideos(ctx context.Context, targetUid uint, visit
 		Videos: resList,
 		Total:  total,
 	}, nil
+}
+
+// BatchGetIsLike 批量查询：loginUid 是否点赞 vidList 里的视频
+// 返回 map[vid]bool
+func (s *LikeService) BatchGetIsLike(ctx context.Context, loginUid uint, vidList []string) (map[string]bool, error) {
+	resMap := make(map[string]bool)
+	if loginUid == 0 || len(vidList) == 0 {
+		return resMap, nil
+	}
+
+	// 缓存优先，批量查redis zset like:video:{vid} 或者 like:user:{uid}
+	// 创建一个包含所有需要检查的key的切片
+	keys := make([]string, 0, len(vidList))
+	for i := 0; i < len(vidList); i++ {
+		keys = append(keys, fmt.Sprintf("%s%d", likeUserKeyPrefix, loginUid))
+	}
+
+	// 简化实现：循环判断，生产可以优化pipeline
+	for _, vid := range vidList {
+		exist, err := s.cache.ZIsMember(ctx, fmt.Sprintf("%s%d", likeUserKeyPrefix, loginUid), vid)
+		if err != nil {
+			return nil, err
+		}
+		resMap[vid] = exist
+	}
+	return resMap, nil
+}
+
+// BatchGetLikeCount 批量获取一批视频的点赞总数量 map[vid]count
+func (s *LikeService) BatchGetLikeCount(ctx context.Context, vidList []string) (map[string]int64, error) {
+	countMap := make(map[string]int64)
+	if len(vidList) == 0 {
+		return countMap, nil
+	}
+	for _, vid := range vidList {
+		cnt, err := s.cache.ZCard(ctx, fmt.Sprintf("like:video:%s", vid))
+		if err != nil {
+			return nil, err
+		}
+		countMap[vid] = cnt
+	}
+	return countMap, nil
 }

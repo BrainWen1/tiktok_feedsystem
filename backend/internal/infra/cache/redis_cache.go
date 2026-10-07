@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log"
+	"strconv"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -41,6 +42,39 @@ func (r *RedisCache) Get(ctx context.Context, key string) (string, error) {
 		return "", err
 	}
 	return val, err
+}
+
+// ConvInt64 将 (valStr,err) 转 int64
+func ConvInt64(val string, err error) (int64, error) {
+	if err != nil {
+		return 0, err
+	}
+	return strconv.ParseInt(val, 10, 64)
+}
+
+// ConvInt 转int
+func ConvInt(val string, err error) (int, error) {
+	if err != nil {
+		return 0, err
+	}
+	v, err := strconv.ParseInt(val, 10, 64)
+	return int(v), err
+}
+
+// ConvBool 转bool，"1"/"0"
+func ConvBool(val string, err error) (bool, error) {
+	if err != nil {
+		return false, err
+	}
+	return strconv.ParseBool(val)
+}
+
+// ConvFloat64 转float64
+func ConvFloat64(val string, err error) (float64, error) {
+	if err != nil {
+		return 0, err
+	}
+	return strconv.ParseFloat(val, 64)
 }
 
 // Set设置缓存值

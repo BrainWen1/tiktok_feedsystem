@@ -158,3 +158,13 @@ func (r *SocialRepo) GetCounts(ctx context.Context, userID uint) (followCount in
 	}
 	return followCount, fanCount, nil
 }
+
+// QueryMyFollowList 【纯DB】查询uid的所有关注记录，返回完整social记录（含CreatedAt）
+func (r *SocialRepo) QueryMyFollowList(ctx context.Context, uid uint) ([]model.Social, error) {
+	var list []model.Social
+	err := r.db.WithContext(ctx).
+		Where("uid = ? AND is_cancel = ?", uid, false).
+		Order("created_at DESC").
+		Find(&list).Error
+	return list, err
+}

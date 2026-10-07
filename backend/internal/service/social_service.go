@@ -8,6 +8,7 @@ import (
 	"feedsystem/internal/repo"
 	"fmt"
 	"log"
+	"strconv"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -583,4 +584,71 @@ func (s *SocialService) GetCounts(ctx context.Context, targetID uint) (int64, in
 	}
 
 	return followCount, fanCount, nil
+}
+
+// GetMyFollowUidList 获取当前用户关注的全部uid集合（给feed关注流使用）
+func (s *SocialService) GetMyFollowUidList(ctx context.Context, uid uint) ([]uint, error) {
+	key := fmt.Sprintf("%s%d", socialBloggersKey, uid)
+	// 1. 先查Redis缓存
+	strUids, err := s.cache.ZRange(ctx, key, 0, -1, true)
+	if err == nil && len(strUids) > 0 {
+		// 缓存命中，字符串转uint数组直接返回
+		uidList := make([]uint, 0, len(strUids))
+		for _, suid := range strUids {
+			num, parseErr := strconv.ParseUint(suid, 10, 64)
+			if parseErr != nil {
+				continue
+			}
+			uidList = append(uidList, uint(num))
+		}
+		return uidList, nil
+	}
+
+	// 2. 缓存未命中，调用repo查DB（repo只做SQL查询）
+	dbRecords, err := s.SocialRepo.QueryMyFollowList(ctx, uid)
+	if err != nil {
+		return nil, err
+	}
+	if len(dbRecords) == 0 {
+		// 无关注数据，可写入空缓存防缓存穿透（可选）
+		return []uint{}, nil
+	}
+
+	// 3. 查询成功，回填Redis ZSet，score=关注时间毫秒
+	zPairs := make([]redis.Z, 0, len(dbRecords))
+	for _, item := range dbRecords {
+		zPairs = append(zPairs, redis.Z{
+			Score:  float64(item.CreatedAt.UnixMilli()),
+			Member: strconv.FormatUint(uint64(item.BloggerID), 10),
+		})
+	}
+
+	err = s.cache.ZAdd(ctx, key, zPairs, socialUidsTTL)
+	if err != nil {
+		log.Printf("Failed to write follow list to cache: uid=%d err=%v", uid, err)
+	}
+
+	// 组装返回uint数组
+	uidList := make([]uint, 0, len(dbRecords))
+	for _, item := range dbRecords {
+		uidList = append(uidList, item.BloggerID)
+	}
+	return uidList, nil
+}
+
+// BatchIsFollow 批量查询：loginUid 是否关注 authorUidList 里面的作者
+func (s *SocialService) BatchIsFollow(ctx context.Context, loginUid uint, authorUidList []uint) (map[uint]bool, error) {
+	resMap := make(map[uint]bool)
+	if loginUid == 0 || len(authorUidList) == 0 {
+		return resMap, nil
+	}
+	key := fmt.Sprintf("%s%d", socialBloggersKey, loginUid)
+	for _, auid := range authorUidList {
+		isMember, err := s.cache.ZIsMember(ctx, key, strconv.FormatUint(uint64(auid), 10))
+		if err != nil {
+			return nil, err
+		}
+		resMap[auid] = isMember
+	}
+	return resMap, nil
 }

@@ -37,7 +37,7 @@ func SetupRouter(sqlDB *gorm.DB, cache *cache.RedisCache, rmq *mq.RabbitMQ, auth
 		return nil
 	}
 	likeRepo := repo.NewLikeRepo(sqlDB)
-	likeService := service.NewLikeService(likeRepo, likeMQ, userService)
+	likeService := service.NewLikeService(likeRepo, likeMQ, userService, cache)
 	likeHandler := handler.NewLikeHandler(likeService)
 	// Video
 	videoRepo := repo.NewVideoRepo(sqlDB)
@@ -59,7 +59,8 @@ func SetupRouter(sqlDB *gorm.DB, cache *cache.RedisCache, rmq *mq.RabbitMQ, auth
 	socialService := service.NewSocialService(socialRepo, cache, userService)
 	socialHandler := handler.NewSocialHandler(socialService)
 	// Feed
-	feedService := service.NewFeedService(videoRepo, likeService, socialService, commentService)
+	feedRepo := repo.NewFeedRepo(sqlDB)
+	feedService := service.NewFeedService(feedRepo, likeService, socialService, commentService, userService)
 	feedHandler := handler.NewFeedHandler(feedService)
 
 	// 设置路由
@@ -143,14 +144,14 @@ func SetupRouter(sqlDB *gorm.DB, cache *cache.RedisCache, rmq *mq.RabbitMQ, auth
 	// feed流相关路由
 	feedGroup := r.Group("/feed")
 	{
-		feedGroup.GET("/list", feedHandler.FeedListLatest) // 获取最新视频流
-		// feedGroup.GET("/listByPopularity", feedHandler.ListByPopularity) // 获取按热度排序的视频流
-		// feedGroup.GET("/listByLikesCount", feedHandler.ListByLikesCount) // 获取按点赞数排序的视频流
-		// feedGroup.GET("/listByTag", feedHandler.ListByTag)               // 获取按标签过滤的视频流
+		feedGroup.GET("/list", feedHandler.FeedListLatest)                   // 获取最新视频流
+		feedGroup.GET("/listByPopularity", feedHandler.FeedListByPopularity) // 获取按热度排序的视频流
+		feedGroup.GET("/listByLikesCount", feedHandler.FeedListLikesCount)   // 获取按点赞数排序的视频流
+		feedGroup.GET("/listByTag", feedHandler.FeedListByTag)               // 获取按标签过滤的视频流
 	}
-	// protectedFeedGroup := feedGroup.Group("/").Use(authMiddleware.Auth())
+	protectedFeedGroup := feedGroup.Group("/").Use(authMiddleware.Auth())
 	{
-		// protectedFeedGroup.GET("/listByFollowing", feedHandler.ListByFollowing) // 获取关注博主的视频流
+		protectedFeedGroup.GET("/listByFollowing", feedHandler.FeedListByFollowing) // 获取关注博主的视频流
 	}
 
 	// 返回配置好的路由引擎
