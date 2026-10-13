@@ -20,7 +20,7 @@ func (r *FeedRepo) ListLatest(ctx context.Context, lastVid string, limit int) ([
 	var list []model.Video
 	q := r.db.WithContext(ctx).Model(&model.Video{}).Order("created_at DESC")
 	if lastVid != "" {
-		q = q.Where("vid < ?", lastVid)
+		q = q.Where("id < ?", lastVid)
 	}
 	err := q.Limit(limit).Find(&list).Error
 	return list, err
@@ -29,9 +29,9 @@ func (r *FeedRepo) ListLatest(ctx context.Context, lastVid string, limit int) ([
 // ListByAuthorUids 根据一批作者uid，查询这些作者发布的视频（用于关注流 listByFollowing）
 func (r *FeedRepo) ListByAuthorUids(ctx context.Context, authorUidList []uint, lastVid string, limit int) ([]model.Video, error) {
 	var list []model.Video
-	q := r.db.WithContext(ctx).Model(&model.Video{}).Where("uid IN ?", authorUidList).Order("created_at DESC")
+	q := r.db.WithContext(ctx).Model(&model.Video{}).Where("author_id IN ?", authorUidList).Order("created_at DESC")
 	if lastVid != "" {
-		q = q.Where("vid < ?", lastVid)
+		q = q.Where("id < ?", lastVid)
 	}
 	err := q.Limit(limit).Find(&list).Error
 	return list, err
@@ -43,7 +43,7 @@ func (r *FeedRepo) ListByPopularity(ctx context.Context, lastVid string, limit i
 	// 示例：先按创建时间倒序，后续可以改成结合redis点赞热度的逻辑
 	q := r.db.WithContext(ctx).Model(&model.Video{}).Order("created_at DESC")
 	if lastVid != "" {
-		q = q.Where("vid < ?", lastVid)
+		q = q.Where("id < ?", lastVid)
 	}
 	err := q.Limit(limit).Find(&list).Error
 	return list, err
@@ -55,7 +55,7 @@ func (r *FeedRepo) ListByLikeCount(ctx context.Context, lastVid string, limit in
 	// 提示：demo阶段简单实现；真实项目应该读取redis zset拿到vid有序列表，再in查询vid
 	q := r.db.WithContext(ctx).Model(&model.Video{}).Order("created_at DESC")
 	if lastVid != "" {
-		q = q.Where("vid < ?", lastVid)
+		q = q.Where("id < ?", lastVid)
 	}
 	err := q.Limit(limit).Find(&list).Error
 	return list, err
@@ -66,7 +66,7 @@ func (r *FeedRepo) ListByTag(ctx context.Context, tag string, lastVid string, li
 	var list []model.Video
 	q := r.db.WithContext(ctx).Model(&model.Video{}).Where("tag = ?", tag).Order("created_at DESC")
 	if lastVid != "" {
-		q = q.Where("vid < ?", lastVid)
+		q = q.Where("id < ?", lastVid)
 	}
 	err := q.Limit(limit).Find(&list).Error
 	return list, err
