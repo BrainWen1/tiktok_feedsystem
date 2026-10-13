@@ -90,3 +90,7 @@ delete接口的权限增加视频作者。
 
 ### 10.7
 前几天加上今天终于把feed模块写完了，但是这个虚拟机不知道什么毛病网络出问题了，测试不了，不过问题不大。
+
+### 10.13
+昨天晚上修好了虚拟机，今天先测一下feed模块。
+测了三个接口: listLastest、listByFollowing、listByLikesCount，修了一下repo层的SQL语句。
