@@ -31,7 +31,7 @@ func (h *FeedHandler) FeedListLatest(c *gin.Context) {
 	loginUid := middleware.TryGetUID(c)
 
 	// 调用服务层获取视频列表
-	list, err := h.feedSvc.ListLatest(c.Request.Context(), loginUid, req.LastVid, req.Limit)
+	list, err := h.feedSvc.ListLatest(c.Request.Context(), loginUid, req.Cursor, req.Limit)
 	if err != nil {
 		response.FailResponse(c, fmt.Sprintf("Failed to fetch latest feeds: %v", err))
 		return
@@ -52,7 +52,7 @@ func (h *FeedHandler) FeedListByFollowing(c *gin.Context) {
 	loginUid := middleware.TryGetUID(c)
 
 	// 调用服务层获取视频列表
-	list, err := h.feedSvc.ListByFollowing(c.Request.Context(), loginUid, req.LastVid, req.Limit)
+	list, err := h.feedSvc.ListByFollowing(c.Request.Context(), loginUid, req.Cursor, req.Limit)
 	if err != nil {
 		response.FailResponse(c, fmt.Sprintf("Failed to fetch following feeds: %v", err))
 		return
@@ -73,7 +73,7 @@ func (h *FeedHandler) FeedListByPopularity(c *gin.Context) {
 	loginUid := middleware.TryGetUID(c)
 
 	// 调用服务层获取视频列表
-	list, err := h.feedSvc.ListByPopularity(c.Request.Context(), loginUid, req.LastVid, req.Limit)
+	list, err := h.feedSvc.ListByPopularity(c.Request.Context(), loginUid, req.Cursor, req.Limit)
 	if err != nil {
 		response.FailResponse(c, fmt.Sprintf("Failed to fetch popular feeds: %v", err))
 		return
@@ -94,7 +94,7 @@ func (h *FeedHandler) FeedListLikesCount(c *gin.Context) {
 	loginUid := middleware.TryGetUID(c)
 
 	// 调用服务层获取视频列表
-	list, err := h.feedSvc.ListLikesCount(c.Request.Context(), loginUid, req.LastVid, req.Limit)
+	list, err := h.feedSvc.ListByLikesCount(c.Request.Context(), loginUid, req.Cursor, req.Limit)
 	if err != nil {
 		response.FailResponse(c, fmt.Sprintf("Failed to fetch likes count feeds: %v", err))
 		return
@@ -115,7 +115,7 @@ func (h *FeedHandler) FeedListByTag(c *gin.Context) {
 	loginUid := middleware.TryGetUID(c)
 
 	// 调用服务层获取视频列表
-	list, err := h.feedSvc.ListByTag(c.Request.Context(), loginUid, req.Tag, req.LastVid, req.Limit)
+	list, err := h.feedSvc.ListByTag(c.Request.Context(), loginUid, req.Tag, req.Cursor, req.Limit)
 	if err != nil {
 		response.FailResponse(c, fmt.Sprintf("Failed to fetch feeds by tag: %v", err))
 		return

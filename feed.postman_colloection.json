@@ -1,0 +1,366 @@
+{
+  "info": {
+    "_postman_id": "d3d6d5f8-5ff7-4c8c-b0d9-1a8f5d3d4f0f",
+    "name": "feed",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "description": "Feed module collection for testing the five feed list endpoints. Set feed_tag and token as needed before running protected requests."
+  },
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "if (!pm.collectionVariables.get('feed_limit')) {",
+          "  pm.collectionVariables.set('feed_limit', '20');",
+          "}",
+          "if (!pm.collectionVariables.get('feed_tag')) {",
+          "  pm.collectionVariables.set('feed_tag', 'replace-with-tag');",
+          "}",
+          "const cursorDefaults = {",
+          "  latest_last_vid: '',",
+          "  latest_last_created_at: '',",
+          "  popular_last_vid: '',",
+          "  popular_last_popularity: '',",
+          "  likes_last_vid: '',",
+          "  likes_last_likes_count: '',",
+          "  tag_last_vid: '',",
+          "  tag_last_created_at: '',",
+          "  following_last_vid: '',",
+          "  following_last_created_at: ''",
+          "};",
+          "Object.keys(cursorDefaults).forEach((key) => {",
+          "  if (!pm.collectionVariables.get(key)) {",
+          "    pm.collectionVariables.set(key, cursorDefaults[key]);",
+          "  }",
+          "});"
+        ]
+      }
+    }
+  ],
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://localhost:8080"
+    },
+    {
+      "key": "token",
+      "value": ""
+    },
+    {
+      "key": "feed_limit",
+      "value": "20"
+    },
+    {
+      "key": "feed_tag",
+      "value": "replace-with-tag"
+    },
+    {
+      "key": "latest_last_vid",
+      "value": ""
+    },
+    {
+      "key": "latest_last_created_at",
+      "value": ""
+    },
+    {
+      "key": "popular_last_vid",
+      "value": ""
+    },
+    {
+      "key": "popular_last_popularity",
+      "value": ""
+    },
+    {
+      "key": "likes_last_vid",
+      "value": ""
+    },
+    {
+      "key": "likes_last_likes_count",
+      "value": ""
+    },
+    {
+      "key": "tag_last_vid",
+      "value": ""
+    },
+    {
+      "key": "tag_last_created_at",
+      "value": ""
+    },
+    {
+      "key": "following_last_vid",
+      "value": ""
+    },
+    {
+      "key": "following_last_created_at",
+      "value": ""
+    }
+  ],
+  "item": [
+    {
+      "name": "Feed",
+      "item": [
+        {
+          "name": "获取最新视频流",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/feed/list",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "feed",
+                "list"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "{{feed_limit}}"
+                },
+                {
+                  "key": "cursor.last_vid",
+                  "value": "{{latest_last_vid}}"
+                },
+                {
+                  "key": "cursor.last_created_at",
+                  "value": "{{latest_last_created_at}}"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', function () { pm.expect(pm.response.code).to.eql(200); });",
+                  "pm.test('business success code', function () { pm.expect([0, 200]).to.include(json.code); });",
+                  "pm.test('feed list payload', function () {",
+                  "  pm.expect(json.data).to.have.property('list');",
+                  "});",
+                  "if (json.data && json.data.next_cursor) {",
+                  "  pm.collectionVariables.set('latest_last_vid', json.data.next_cursor.last_vid || '');",
+                  "  pm.collectionVariables.set('latest_last_created_at', json.data.next_cursor.last_created_at || '');",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "获取热门视频流",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/feed/listByPopularity",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "feed",
+                "listByPopularity"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "{{feed_limit}}"
+                },
+                {
+                  "key": "cursor.last_vid",
+                  "value": "{{popular_last_vid}}"
+                },
+                {
+                  "key": "cursor.last_popularity",
+                  "value": "{{popular_last_popularity}}"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', function () { pm.expect(pm.response.code).to.eql(200); });",
+                  "pm.test('business success code', function () { pm.expect([0, 200]).to.include(json.code); });",
+                  "pm.test('feed list payload', function () {",
+                  "  pm.expect(json.data).to.have.property('list');",
+                  "});",
+                  "if (json.data && json.data.next_cursor) {",
+                  "  pm.collectionVariables.set('popular_last_vid', json.data.next_cursor.last_vid || '');",
+                  "  pm.collectionVariables.set('popular_last_popularity', String(json.data.next_cursor.last_popularity || ''));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "获取点赞数榜单",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/feed/listByLikesCount",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "feed",
+                "listByLikesCount"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "{{feed_limit}}"
+                },
+                {
+                  "key": "cursor.last_vid",
+                  "value": "{{likes_last_vid}}"
+                },
+                {
+                  "key": "cursor.last_likes_count",
+                  "value": "{{likes_last_likes_count}}"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', function () { pm.expect(pm.response.code).to.eql(200); });",
+                  "pm.test('business success code', function () { pm.expect([0, 200]).to.include(json.code); });",
+                  "pm.test('feed list payload', function () {",
+                  "  pm.expect(json.data).to.have.property('list');",
+                  "});",
+                  "if (json.data && json.data.next_cursor) {",
+                  "  pm.collectionVariables.set('likes_last_vid', json.data.next_cursor.last_vid || '');",
+                  "  pm.collectionVariables.set('likes_last_likes_count', String(json.data.next_cursor.last_likes_count || ''));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "按标签筛选视频",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/feed/listByTag",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "feed",
+                "listByTag"
+              ],
+              "query": [
+                {
+                  "key": "tag",
+                  "value": "{{feed_tag}}"
+                },
+                {
+                  "key": "limit",
+                  "value": "{{feed_limit}}"
+                },
+                {
+                  "key": "cursor.last_vid",
+                  "value": "{{tag_last_vid}}"
+                },
+                {
+                  "key": "cursor.last_created_at",
+                  "value": "{{tag_last_created_at}}"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', function () { pm.expect(pm.response.code).to.eql(200); });",
+                  "pm.test('business success code', function () { pm.expect([0, 200]).to.include(json.code); });",
+                  "pm.test('feed list payload', function () {",
+                  "  pm.expect(json.data).to.have.property('list');",
+                  "});",
+                  "if (json.data && json.data.next_cursor) {",
+                  "  pm.collectionVariables.set('tag_last_vid', json.data.next_cursor.last_vid || '');",
+                  "  pm.collectionVariables.set('tag_last_created_at', json.data.next_cursor.last_created_at || '');",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "获取关注用户视频流",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/feed/listByFollowing",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "feed",
+                "listByFollowing"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "{{feed_limit}}"
+                },
+                {
+                  "key": "cursor.last_vid",
+                  "value": "{{following_last_vid}}"
+                },
+                {
+                  "key": "cursor.last_created_at",
+                  "value": "{{following_last_created_at}}"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', function () { pm.expect(pm.response.code).to.eql(200); });",
+                  "pm.test('business success code', function () { pm.expect([0, 200]).to.include(json.code); });",
+                  "pm.test('feed list payload', function () {",
+                  "  pm.expect(json.data).to.have.property('list');",
+                  "});",
+                  "if (json.data && json.data.next_cursor) {",
+                  "  pm.collectionVariables.set('following_last_vid', json.data.next_cursor.last_vid || '');",
+                  "  pm.collectionVariables.set('following_last_created_at', json.data.next_cursor.last_created_at || '');",
+                  "}"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
