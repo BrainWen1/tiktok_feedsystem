@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -18,6 +19,7 @@ import (
 	"feedsystem/internal/router"
 	"feedsystem/internal/utils/logger"
 
+	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
 )
 
@@ -32,17 +34,29 @@ func main() {
 		logger.Info(".env not found; continuing")
 	}
 
-	// 日志必须在加载业务配置、启动任何 goroutine 之前初始化，避免启动期日志丢失。
-	// APP_ENV 决定编码器（dev=文本，prod=JSON）与 Gin 模式，LOG_LEVEL 可覆盖默认级别。
+	// 加载配置：config.LoadConfig 会读取 configs/.env.dev，把 APP_ENV/LOG_LEVEL 注入进程环境。
+	// 必须放在日志初始化之前，否则 logger 读到空值，prod 环境下无法切换到 JSON 格式。
+	err := config.LoadConfig()
+	if err != nil {
+		logger.Fatal("failed to load config", logger.Err(err))
+	}
+
+	// 日志在配置加载之后初始化，才能读到正确的 APP_ENV/LOG_LEVEL：
+	// prod => JSON 结构化日志，dev/其他 => 文本日志；LOG_LEVEL 可覆盖环境默认级别。
+	// 仍需在启动任何 goroutine 之前完成，避免启动期日志丢失。
 	if err := logger.InitWithEnv(os.Getenv("APP_ENV"), os.Getenv("LOG_LEVEL")); err != nil {
 		logger.Warn("invalid logger config, fallback to default", logger.Err(err))
 	}
 	defer logger.Sync()
 
-	// 加载配置
-	err := config.LoadConfig()
-	if err != nil {
-		logger.Fatal("failed to load config", logger.Err(err))
+	// Gin 模式必须在 gin.Default() 之前确定，而 gin.Default() 由 router.SetupRouter 内部调用。
+	// 配置加载后 APP_ENV 已可用，这里据此设置：prod => release（关闭 [GIN-debug] 路由打印），
+	// 其余（dev/未配置）=> debug。不引入 GIN_MODE，统一由 APP_ENV 管控环境。
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("APP_ENV"))) {
+	case "prod", "production":
+		gin.SetMode(gin.ReleaseMode)
+	default:
+		gin.SetMode(gin.DebugMode)
 	}
 
 	// 使用配置连接数据库、Redis等服务
