@@ -130,7 +130,7 @@ func (r *RedisCache) AddTokenToBlacklist(ctx context.Context, token string, expi
 	// 将token加入黑名单，设置过期时间为token的剩余有效期
 	// 屏蔽敏感信息，防止日志泄露
 	log.Printf("Adding token to blacklist: [REDACTED] with expiration: %v", expiration)
-	return r.Set(ctx, fmt.Sprintf("blacklist_token:%s", token), "blacklisted", expiration)
+	return r.Set(ctx, BlacklistTokenKey(token), "blacklisted", expiration)
 }
 
 // IsTokenInBlacklist 检查Access Token是否在黑名单中
@@ -139,7 +139,7 @@ func (r *RedisCache) IsTokenInBlacklist(ctx context.Context, token string) (bool
 		return false, nil // 缓存禁用，无法校验黑名单，按未注销处理
 	}
 	// 尝试从Redis的黑名单中获取token
-	val, err := r.Get(ctx, fmt.Sprintf("blacklist_token:%s", token))
+	val, err := r.Get(ctx, BlacklistTokenKey(token))
 	// Redis返回缓存未命中
 	if err != nil {
 		// 不在黑名单中
@@ -155,17 +155,19 @@ func (r *RedisCache) IsTokenInBlacklist(ctx context.Context, token string) (bool
 }
 
 // AddUserRefreshSet 将refresh token加入用户集合
+// 每个 refresh token 的 refresh_token:{token} key 单独设置 TTL，到期后自动失效；
+// 索引集合只负责维护 <uid, tokens> 映射，不再依赖定时任务批量清理。
 func (c *RedisCache) AddUserRefreshSet(ctx context.Context, uid uint, refresh_token string, expire time.Duration) error {
 	if !c.IsEnabled() {
 		return nil // 缓存禁用，跳过写入
 	}
-	key := fmt.Sprintf("refresh_set:%d", uid)
+	key := RefreshSetKey(uid)
 	// sadd 插入成员
 	err := c.client.SAdd(ctx, key, refresh_token).Err()
 	if err != nil {
 		return err
 	}
-	// 设置集合整体过期时间
+	// 设置集合整体过期时间，保证索引不会早于成员 token 过期
 	return c.client.Expire(ctx, key, expire).Err()
 }
 
@@ -174,74 +176,30 @@ func (c *RedisCache) RemoveUserRefreshSetItem(ctx context.Context, uid uint, ref
 	if !c.IsEnabled() {
 		return nil // 缓存禁用，跳过移除
 	}
-	key := fmt.Sprintf("refresh_set:%d", uid)
-	return c.client.SRem(ctx, key, refresh_token).Err()
+	return c.client.SRem(ctx, RefreshSetKey(uid), refresh_token).Err()
 }
 
-// CleanAllUserRefresh 清空该用户全部refresh
+// CleanAllUserRefresh 删除该用户名下全部 refresh token
+// 先取索引集合，再用一次多 key DEL 原子删除所有 refresh_token:{token} 与索引集合；
+// Redis 任一操作失败都会返回 error，由调用方决定是否向上抛出。
 func (c *RedisCache) CleanAllUserRefresh(ctx context.Context, uid uint) error {
 	if !c.IsEnabled() {
 		return nil // 缓存禁用，跳过清理
 	}
-	setKey := fmt.Sprintf("refresh_set:%d", uid)
-	// 获取集合里面全部rt
-	refresh_tokens, err := c.client.SMembers(ctx, setKey).Result()
+	setKey := RefreshSetKey(uid)
+	// 获取集合里面全部 rt
+	refreshTokens, err := c.client.SMembers(ctx, setKey).Result()
 	if err != nil {
-		return err
+		return fmt.Errorf("list refresh tokens for user %d: %w", uid, err)
 	}
-	// 逐个删除 rt:{token}
-	for _, refresh_token := range refresh_tokens {
-		_ = c.client.Del(ctx, fmt.Sprintf("refresh_token:%s", refresh_token)).Err()
+	// 批量删除 token key 和索引集合，DEL 的多 key 删除是原子操作
+	keys := make([]string, 0, len(refreshTokens)+1)
+	for _, token := range refreshTokens {
+		keys = append(keys, RefreshTokenKey(token))
 	}
-	// 删除整个set集合
-	return c.client.Del(ctx, setKey).Err()
-}
-
-// CleanStaleRefreshSetMembers 清扫集合里已经过期消失的refresh token垃圾成员
-func (c *RedisCache) CleanStaleRefreshSetMembers(ctx context.Context) error {
-	if !c.IsEnabled() {
-		return nil // 缓存禁用，跳过定时清扫
-	}
-	var cursor uint64
-	// Scan迭代查找所有 refresh_set:* 的key
-	for {
-		var keys []string
-		var err error
-		// 获取一批 refresh_set:* 的keys
-		keys, cursor, err = c.client.Scan(ctx, cursor, "refresh_set:*", 100).Result()
-		if err != nil {
-			return err
-		}
-		// 获取单个key
-		for _, setKey := range keys {
-			var sCursor uint64
-			// 获取该key对应的一批 refresh token
-			for {
-				members, nextSCursor, err := c.client.SScan(ctx, setKey, sCursor, "", 100).Result()
-				if err != nil {
-					return err
-				}
-				// 遍历该批次里的每个refresh token，检查其对应的key是否存在，如果不存在则从集合中移除
-				for _, rt := range members {
-					rtKey := fmt.Sprintf("refresh:%s", rt)
-					exists, err := c.client.Exists(ctx, rtKey).Result()
-					if err != nil {
-						continue
-					}
-					// rt对应的key已经过期不存在，从集合删掉这条脏数据
-					if exists == 0 {
-						_ = c.client.SRem(ctx, setKey, rt).Err()
-					}
-				}
-				sCursor = nextSCursor
-				if sCursor == 0 {
-					break
-				}
-			}
-		}
-		if cursor == 0 {
-			break
-		}
+	keys = append(keys, setKey)
+	if err := c.client.Del(ctx, keys...).Err(); err != nil {
+		return fmt.Errorf("delete refresh tokens for user %d: %w", uid, err)
 	}
 	return nil
 }

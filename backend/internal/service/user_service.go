@@ -116,9 +116,9 @@ func (s *UserService) Login(ctx context.Context, username, password string) (acc
 	}
 
 	// 改用Redis缓存保存刷新令牌
-	// key 格式 refresh_token:{refreshToken字符串}，value存userID，TTL7天
-	redisKey := fmt.Sprintf("refresh_token:%s", refreshToken)
-	ttl := 7 * 24 * time.Hour
+	// key 格式 refresh_token:{refreshToken字符串}，value存userID，单个 token 独立 TTL
+	redisKey := cache.RefreshTokenKey(refreshToken)
+	ttl := cache.RefreshTokenTTL
 	err = s.cache.Set(ctx, redisKey, user.ID, ttl)
 	if err != nil {
 		log.Printf("Error saving refresh token to Redis in UserService: %v", err)
@@ -144,7 +144,7 @@ func (s *UserService) RefreshToken(ctx context.Context, refreshToken string, Old
 		return "", "", 0, "", fmt.Errorf("refresh token service unavailable: cache disabled")
 	}
 
-	redisKey := fmt.Sprintf("refresh_token:%s", refreshToken)
+	redisKey := cache.RefreshTokenKey(refreshToken)
 
 	// 从Redis读取用户ID
 	valStr, err := s.cache.Get(ctx, redisKey)
@@ -221,9 +221,9 @@ func (s *UserService) RefreshToken(ctx context.Context, refreshToken string, Old
 	// 	return "", "", 0, "", err
 	// }
 
-	// 将新refreshToken写入Redis，7天TTL
-	newRedisKey := fmt.Sprintf("refresh_token:%s", newRefreshToken)
-	ttl := 7 * 24 * time.Hour
+	// 将新refreshToken写入Redis，单个 token 独立 TTL
+	newRedisKey := cache.RefreshTokenKey(newRefreshToken)
+	ttl := cache.RefreshTokenTTL
 	err = s.cache.Set(ctx, newRedisKey, user.ID, ttl)
 	if err != nil {
 		return "", "", 0, "", fmt.Errorf("failed store new refresh token: %w", err)
@@ -260,7 +260,7 @@ func (s *UserService) Logout(ctx context.Context, userID uint, refreshToken, acc
 	}
 
 	// 获取refresh token对应的userID，与access token中解析出的userID进行比对，确保是同一个用户在登出
-	redisKey := fmt.Sprintf("refresh_token:%s", refreshToken)
+	redisKey := cache.RefreshTokenKey(refreshToken)
 	valStr, err := s.cache.Get(ctx, redisKey)
 	if err != nil {
 		log.Printf("Error getting refresh token from Redis in UserService: %v", err)
@@ -465,18 +465,22 @@ func (s *UserService) ChangePassword(ctx context.Context, userID uint, oldPasswo
 		return nil
 	}
 
+	// 先删除该用户名下全部refresh token，保证改密后旧refresh无法继续换取access。
+	// Redis 操作失败必须向上返回，不能吞掉错误让接口误报成功。
+	if err := s.cache.CleanAllUserRefresh(ctx, userID); err != nil {
+		log.Printf("Error cleaning all refresh tokens in ChangePassword for userID %d: %v", userID, err)
+		return fmt.Errorf("failed to revoke refresh tokens: %w", err)
+	}
+
 	// 拉黑access token
 	ttl := time.Duration(remainingExpire) * time.Second
 	if ttl > 0 { // 如果剩余有效期大于0，才加入黑名单
 		err = s.cache.AddTokenToBlacklist(ctx, access_token, ttl)
 		if err != nil {
 			log.Printf("Error adding access token to blacklist in ChangePassword: %v", err)
-			return fmt.Errorf("failed to blacklist access token")
+			return fmt.Errorf("failed to blacklist access token: %w", err)
 		}
 	}
-
-	// 删除该用户的所有refresh token，这一步需要redis里存在<id, refresh_token>的映射，才能删除，目前没有做这个键值对，先鸽着
-	err = s.cache.CleanAllUserRefresh(ctx, userID)
 
 	return nil
 }

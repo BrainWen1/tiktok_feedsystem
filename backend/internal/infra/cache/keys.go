@@ -13,6 +13,22 @@ const (
 	likeUserSetPrefix = "like:user:"
 	// likePlaceholderPrefix 未点赞空占位前缀，Redis 数据结构为 String "1"。
 	likePlaceholderPrefix = "like:user:placeholder:"
+	// likeVideoZSetPrefix 视频点赞明细 ZSet 前缀，member 为点赞用户 id，ZCard 即点赞总数。
+	likeVideoZSetPrefix = "like:video:"
+	// videoRankZSetKey 视频点赞热度榜单 ZSet，member 为 video id，score 为当前点赞总数。
+	videoRankZSetKey = "video:videos"
+	// commentVideoCntPrefix 视频评论计数前缀，Redis 数据结构为 String 计数器。
+	commentVideoCntPrefix = "comment:video:cnt:"
+	// refreshTokenPrefix refresh token 前缀，每个 token 单独一个 key，TTL 到期自动失效。
+	refreshTokenPrefix = "refresh_token:"
+	// refreshSetPrefix 用户 refresh token 索引集合前缀，记录该用户名下全部 refresh token。
+	refreshSetPrefix = "refresh_set:"
+	// blacklistTokenPrefix Access Token 黑名单前缀。
+	blacklistTokenPrefix = "blacklist_token:"
+	// likeEventIDPrefix 点赞 MQ 消费幂等事件ID前缀。
+	likeEventIDPrefix = "mq:like_event_id:"
+	// commentEventIDPrefix 评论 MQ 消费幂等事件ID前缀。
+	commentEventIDPrefix = "mq_comment_event_id:"
 )
 
 const (
@@ -23,6 +39,16 @@ const (
 	LikeUserSetTTL = 7 * 24 * time.Hour
 	// LikePlaceholderTTL 空占位缓存过期时间，仅用于短时间内拦截缓存穿透。
 	LikePlaceholderTTL = 5 * time.Minute
+	// LikeVideoZSetTTL 视频点赞明细 ZSet 过期时间，与用户点赞集合保持统一兜底周期。
+	LikeVideoZSetTTL = 7 * 24 * time.Hour
+	// VideoRankZSetTTL 视频点赞热度榜单 ZSet 过期时间，与点赞明细保持统一兜底周期。
+	VideoRankZSetTTL = 7 * 24 * time.Hour
+	// CommentVideoCntTTL 视频评论计数缓存过期时间。
+	CommentVideoCntTTL = 24 * time.Hour
+	// RefreshTokenTTL refresh token 默认有效期，每个 token 独立设置 TTL。
+	RefreshTokenTTL = 7 * 24 * time.Hour
+	// EventIDTTL MQ 消费幂等事件ID缓存过期时间。
+	EventIDTTL = 24 * time.Hour
 )
 
 // LikeUserSetKey 返回用户点赞视频集合的 Redis key，全链路统一使用 Set 结构。
@@ -33,4 +59,44 @@ func LikeUserSetKey(uid uint) string {
 // LikePlaceholderKey 返回“用户未点赞该视频”的空占位 Redis key。
 func LikePlaceholderKey(uid, vid uint) string {
 	return fmt.Sprintf("%s%d:%d", likePlaceholderPrefix, uid, vid)
+}
+
+// LikeVideoZSetKey 返回视频点赞明细 ZSet 的 Redis key，member=user id，ZCard=点赞数。
+func LikeVideoZSetKey(vid uint) string {
+	return fmt.Sprintf("%s%d", likeVideoZSetPrefix, vid)
+}
+
+// VideoRankZSetKey 返回视频点赞热度榜单 ZSet 的 Redis key，member=video id，score=点赞数。
+func VideoRankZSetKey() string {
+	return videoRankZSetKey
+}
+
+// CommentVideoCntKey 返回视频评论计数缓存的 Redis key。
+func CommentVideoCntKey(vid uint) string {
+	return fmt.Sprintf("%s%d", commentVideoCntPrefix, vid)
+}
+
+// RefreshTokenKey 返回单个 refresh token 的 Redis key，TTL 到期后自动失效。
+func RefreshTokenKey(token string) string {
+	return fmt.Sprintf("%s%s", refreshTokenPrefix, token)
+}
+
+// RefreshSetKey 返回用户 refresh token 索引集合的 Redis key。
+func RefreshSetKey(uid uint) string {
+	return fmt.Sprintf("%s%d", refreshSetPrefix, uid)
+}
+
+// BlacklistTokenKey 返回 Access Token 黑名单的 Redis key。
+func BlacklistTokenKey(token string) string {
+	return fmt.Sprintf("%s%s", blacklistTokenPrefix, token)
+}
+
+// LikeEventIDKey 返回点赞 MQ 消费幂等事件ID的 Redis key。
+func LikeEventIDKey(eventID string) string {
+	return fmt.Sprintf("%s%s", likeEventIDPrefix, eventID)
+}
+
+// CommentEventIDKey 返回评论 MQ 消费幂等事件ID的 Redis key。
+func CommentEventIDKey(eventID string) string {
+	return fmt.Sprintf("%s%s", commentEventIDPrefix, eventID)
 }

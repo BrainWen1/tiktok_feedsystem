@@ -190,9 +190,27 @@ func (s *LikeService) BatchGetLikeCount(ctx context.Context, vidList []string) (
 		return countMap, nil
 	}
 	for _, vid := range vidList {
-		cnt, err := s.cache.ZCard(ctx, fmt.Sprintf("like:video:%s", vid))
+		vidNum, err := strconv.ParseUint(vid, 10, 64)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("invalid video id %q: %w", vid, err)
+		}
+		key := cache.LikeVideoZSetKey(uint(vidNum))
+		cnt, err := s.cache.ZCard(ctx, key)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get like count from cache for video %d: %w", vidNum, err)
+		}
+		if cnt == 0 {
+			// key 不存在说明缓存未命中或 TTL 已到期，回源数据库兜底，避免冷视频点赞数恒为0
+			exists, exErr := s.cache.Exists(ctx, key)
+			if exErr != nil {
+				return nil, fmt.Errorf("failed to check like count cache for video %d: %w", vidNum, exErr)
+			}
+			if !exists {
+				cnt, err = s.likeRepo.CountByVideo(ctx, uint(vidNum))
+				if err != nil {
+					return nil, fmt.Errorf("failed to count likes from db for video %d: %w", vidNum, err)
+				}
+			}
 		}
 		countMap[vid] = cnt
 	}

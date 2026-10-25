@@ -6,14 +6,13 @@ import (
 	"errors"
 	"feedsystem/internal/infra/cache"
 	"feedsystem/internal/repo"
-	"fmt"
 	"log"
 	"strings"
 	"time"
 )
 
 // StartCommentConsumer 启动评论消费，给worker调用
-func StartCommentConsumer(cmq *CommentMQ, commentRepo *repo.CommentRepo, cache *cache.RedisCache) error {
+func StartCommentConsumer(cmq *CommentMQ, commentRepo *repo.CommentRepo, redisCache *cache.RedisCache) error {
 	if !cmq.IsEnabled() {
 		log.Printf("WARN: CommentMQ disabled, skip comment consumer")
 		return ErrMQDisabled // MQ禁用时不启动消费循环
@@ -54,8 +53,8 @@ func StartCommentConsumer(cmq *CommentMQ, commentRepo *repo.CommentRepo, cache *
 			}
 
 			// Redis缓存消息ID，先检查是否已经处理过，没有的话再处理，处理完后将消息ID存入Redis，设置过期时间，避免重复消费
-			key := fmt.Sprintf("mq_comment_event_id:%s", event.EventID)
-			val, err := cache.Get(ctx, key)
+			key := cache.CommentEventIDKey(event.EventID)
+			val, err := redisCache.Get(ctx, key)
 			if err != nil && err.Error() != "redis: nil" {
 				log.Printf("redis get error: %v", err)
 				_ = msg.Nack(false, true) // Redis异常，放回队列重试
@@ -94,11 +93,13 @@ func StartCommentConsumer(cmq *CommentMQ, commentRepo *repo.CommentRepo, cache *
 
 					// 在这里尝试写入redis，即使第一次成功处理后redis写入失败，也可以在这里再次尝试写入，
 					// 避免后续所有重复消费全部缓存miss进入数据库
-					err = cache.Set(ctx, key, "1", eventIDTTL) // 过期时间为24小时
+					err = redisCache.Set(ctx, key, "1", cache.EventIDTTL) // 过期时间为24小时
 					if err != nil {
 						// 再次写入失败直接跳过，避免陷入死循环，后续重复消费会再次尝试写入redis
 						log.Printf("redis set error: %v", err)
 					}
+					// 重复消费说明该评论已在库中，按数据库真实计数回写，修复首次消费可能漏写缓存的问题
+					refreshCommentCountCache(ctx, redisCache, commentRepo, event.Comment.VideoID)
 
 					continue
 				}
@@ -117,38 +118,14 @@ func StartCommentConsumer(cmq *CommentMQ, commentRepo *repo.CommentRepo, cache *
 			}
 
 			// 成功处理后，将消息ID存入Redis，设置过期时间，避免重复消费
-			err = cache.Set(ctx, key, "1", eventIDTTL) // 过期时间为24小时
-			if err != nil {
-				log.Printf("redis set error: %v", err)
-				_ = msg.Ack(false) // Redis异常，但是数据库操作已经成功，仍然ACK掉消息，避免重复消费
-				continue
+			if err := redisCache.Set(ctx, key, "1", cache.EventIDTTL); err != nil {
+				// Redis异常，但数据库操作已经成功；继续回写计数缓存，最后仍 ACK 避免重复消费
+				log.Printf("redis set event id error: %v", err)
 			}
 
-			// 根据事件类型更新视频评论计数器
-			countKey := fmt.Sprintf("video:comment_count:%d", event.Comment.VideoID)
-			switch event.Action {
-			case "create":
-				{
-					// 评论+1
-					_, err := cache.Increase(ctx, countKey, 1, 24*time.Hour)
-					if err != nil {
-						log.Printf("incr comment count err: %v", err)
-						// redis失败，不重试，DB为准，下次读总数时自动兜底count
-					}
-				}
-			case "delete":
-				{
-					// 评论-1
-					_, err := cache.Increase(ctx, countKey, -1, 24*time.Hour)
-					if err != nil {
-						log.Printf("decr comment count err: %v", err)
-					}
-				}
-			default:
-				{
-					log.Printf("unknown comment event action: %s", event.Action)
-				}
-			}
+			// 评论新增/删除已落库，按数据库真实计数回写视频评论计数器。
+			// key 与 feed 读取端共用 cache.CommentVideoCntKey，保证 feeds.comments_cnt 能读到真实计数。
+			refreshCommentCountCache(ctx, redisCache, commentRepo, event.Comment.VideoID)
 
 			_ = msg.Ack(false) // 成功处理后 ACK 掉消息
 		}
@@ -156,4 +133,21 @@ func StartCommentConsumer(cmq *CommentMQ, commentRepo *repo.CommentRepo, cache *
 
 	log.Println("comment consumer running...")
 	return nil
+}
+
+// refreshCommentCountCache 用数据库真实评论数回写 Redis 计数器。
+// 相比 INCR/DECR，DB COUNT 可以避免缓存 key 过期后从 0 开始计数产生漂移或负数，
+// 也与 feed 读取端共用 cache.CommentVideoCntKey，保证 comments_cnt 与实际一致。
+func refreshCommentCountCache(ctx context.Context, redisCache *cache.RedisCache, commentRepo *repo.CommentRepo, vid uint) {
+	if redisCache == nil || !redisCache.IsEnabled() {
+		return // 缓存禁用时保持降级，读取端直接走数据库
+	}
+	cnt, err := commentRepo.CountByVideo(ctx, vid)
+	if err != nil {
+		log.Printf("count comments for video %d failed: %v", vid, err)
+		return
+	}
+	if err := redisCache.Set(ctx, cache.CommentVideoCntKey(vid), cnt, cache.CommentVideoCntTTL); err != nil {
+		log.Printf("set comment count cache for video %d failed: %v", vid, err)
+	}
 }

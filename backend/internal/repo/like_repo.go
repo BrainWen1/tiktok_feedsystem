@@ -49,6 +49,18 @@ func (r *LikeRepo) CountByVideo(ctx context.Context, vid uint) (int64, error) {
 	return count, nil
 }
 
+// FindUserIDsByVideo 查询点赞该视频的全部用户ID，用于点赞明细 ZSet 过期后的缓存重建
+func (r *LikeRepo) FindUserIDsByVideo(ctx context.Context, vid uint) ([]uint, error) {
+	var userIDs []uint
+	err := r.db.WithContext(ctx).Model(&model.Like{}).
+		Where("video_id = ?", vid).
+		Pluck("user_id", &userIDs).Error
+	if err != nil {
+		return nil, err
+	}
+	return userIDs, nil
+}
+
 // FindVidsByUserID 根据用户id和分页信息查询用户点赞过的视频id列表
 func (r *LikeRepo) FindVidsByUserID(ctx context.Context, uid, page_num, page_size uint) ([]uint, int64, error) {
 	var videoIDs []uint

@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"log"
 	"strconv"
-	"time"
 )
 
 type CommentService struct {
@@ -102,29 +101,38 @@ func (s *CommentService) DeleteComment(ctx context.Context, uid, commentID uint)
 
 // GetCommentCount 获取视频评论总数（Redis计数器，DB兜底）
 func (s *CommentService) GetCommentCount(ctx context.Context, vid uint) (int64, error) {
-	key := fmt.Sprintf("video:comment_count:%d", vid)
+	return s.getCommentCount(ctx, vid, true)
+}
+
+// getCommentCount 评论计数内部实现；refreshTTL=false 时批量读取只读不续期，
+// 避免 feed 一次请求对每个视频都产生一次 SET。
+func (s *CommentService) getCommentCount(ctx context.Context, vid uint, refreshTTL bool) (int64, error) {
+	key := cache.CommentVideoCntKey(vid)
 	// 尝试读取redis
 	val, err := s.cache.Get(ctx, key)
 	if err == nil && val != "" {
-		// 成功读取到redis计数器
-		count, _ := strconv.ParseInt(val, 10, 64)
-		// 刷新TTL，避免热视频缓存过期
-		err = s.cache.Set(ctx, key, val, 24*time.Hour)
-		if err != nil {
-			log.Printf("Failed to refresh comment count TTL in cache for video %d: %v", vid, err)
+		count, parseErr := strconv.ParseInt(val, 10, 64)
+		if parseErr == nil {
+			// 成功读取到redis计数器，按需刷新TTL，避免热视频缓存过期
+			if refreshTTL {
+				if err := s.cache.Set(ctx, key, val, cache.CommentVideoCntTTL); err != nil {
+					log.Printf("Failed to refresh comment count TTL in cache for video %d: %v", vid, err)
+				}
+			}
+			return count, nil
 		}
-		return count, nil
+		log.Printf("Invalid comment count cache value for video %d: %v", vid, parseErr)
 	}
 
-	// redis异常/key不存在，回数据库count兜底
+	// redis异常/key不存在/缓存脏数据，回数据库count兜底
 	cnt, err := s.CommentRepo.CountByVideo(ctx, vid)
 	if err != nil {
 		log.Printf("Failed to count comments for video %d: %v", vid, err)
-		return 0, err
+		return 0, fmt.Errorf("failed to count comments for video %d: %w", vid, err)
 	}
 
-	// 回填redis，可以设置TTL，冷视频自动失效，下次访问重新count
-	err = s.cache.Set(ctx, key, strconv.FormatInt(cnt, 10), 24*time.Hour)
+	// 回填redis，冷视频自动失效，下次访问重新count
+	err = s.cache.Set(ctx, key, strconv.FormatInt(cnt, 10), cache.CommentVideoCntTTL)
 	if err != nil {
 		log.Printf("Failed to set comment count in cache for video %d: %v", vid, err)
 	}
@@ -176,31 +184,18 @@ func (s *CommentService) ListComments(ctx context.Context, uid uint, req dto.Lis
 }
 
 // BatchGetCommentCount 批量获取视频评论数量 map[vid]count
+// 统一复用 getCommentCount：优先读 MQ 消费端回写的 comment:video:cnt:{vid}，
+// 缓存未命中或 Redis 异常时回源数据库并回填，保证 feed 的 comments_cnt 不再恒为0。
 func (s *CommentService) BatchGetCommentCount(ctx context.Context, vidList []string) (map[string]int64, error) {
-	countMap := make(map[string]int64)
-	if len(vidList) == 0 {
-		return countMap, nil
-	}
-	// 缓存禁用时直接按数据库评论表统计
-	if !s.cache.IsEnabled() {
-		for _, vid := range vidList {
-			vidNum, err := strconv.ParseUint(vid, 10, 64)
-			if err != nil {
-				return nil, fmt.Errorf("invalid video id %q: %w", vid, err)
-			}
-			cnt, err := s.CommentRepo.CountByVideo(ctx, uint(vidNum))
-			if err != nil {
-				return nil, fmt.Errorf("failed to count comments from db for video %d: %w", vidNum, err)
-			}
-			countMap[vid] = cnt
-		}
-		return countMap, nil
-	}
+	countMap := make(map[string]int64, len(vidList))
 	for _, vid := range vidList {
-		cnt, err := cache.ConvInt64(s.cache.Get(ctx, fmt.Sprintf("comment:video:cnt:%s", vid)))
+		vidNum, err := strconv.ParseUint(vid, 10, 64)
 		if err != nil {
-			countMap[vid] = 0
-			continue
+			return nil, fmt.Errorf("invalid video id %q: %w", vid, err)
+		}
+		cnt, err := s.getCommentCount(ctx, uint(vidNum), false)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get comment count for video %d: %w", vidNum, err)
 		}
 		countMap[vid] = cnt
 	}
