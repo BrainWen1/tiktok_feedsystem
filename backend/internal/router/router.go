@@ -191,8 +191,8 @@ func SetupRouter(sqlDB *gorm.DB, cache *cache.RedisCache, rmq *mq.RabbitMQ, auth
 	videoGroup := r.Group("/video")
 	{
 		// 软鉴权
-		videoGroup.GET(":id", videoHandler.VideoDetail) // 获取视频详情
-		videoGroup.GET("/list", videoHandler.VideoList) // 获取视频列表
+		videoGroup.GET("/:id", videoHandler.VideoDetail) // 获取视频详情（路径参数统一为 /:id）
+		videoGroup.GET("/list", videoHandler.VideoList)  // 获取视频列表
 	}
 	// 受保护的路由组
 	protectedVideoGroup := videoGroup.Group("/").Use(authMiddleware.Auth()) // 使用Auth中间件鉴权

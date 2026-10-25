@@ -17,6 +17,19 @@ import (
 	"time"
 )
 
+// 视频详情缓存、分布式锁与分页参数，集中维护避免散落的 magic number。
+const (
+	defaultVideoPageSize = 20 // 视频列表默认/最大每页条数
+
+	videoCacheOpTimeout   = 50 * time.Millisecond  // 单次 Redis 读写超时，避免缓存抖动阻塞请求
+	videoDetailCacheTTL   = 10 * time.Minute       // 视频详情缓存过期时间
+	videoLockWaitTimeout  = 50 * time.Millisecond  // 抢分布式锁的超时时间
+	videoLockTTL          = 2 * time.Second        // 分布式锁过期时间
+	videoUnlockTimeout    = 200 * time.Millisecond // 解锁超时，避免 Redis 抖动时阻塞请求返回
+	videoLockPollInterval = 20 * time.Millisecond  // 抢锁失败后的轮询间隔
+	videoLockPollAttempts = 5                      // 抢锁失败后的最大轮询次数
+)
+
 // 折中的耦合方案，后期解耦把部分用户信息写到video表里，配合mq做异步更新
 type VideoService struct {
 	VideoRepo   *repo.VideoRepo
@@ -29,14 +42,16 @@ func NewVideoService(videoRepo *repo.VideoRepo, userService *UserService, cache 
 	return &VideoService{VideoRepo: videoRepo, UserService: userService, cache: cache, LikeService: likeService}
 }
 
-// UploadVideo 处理视频上传逻辑
-func (s *VideoService) UploadVideo(ctx context.Context, userID uint, fh *multipart.FileHeader) (string, error) {
+// UploadVideo 处理视频上传逻辑。
+// 上传落盘为本地文件 IO，暂不感知取消；ctx 保留在首位以保持 service 入参风格统一。
+func (s *VideoService) UploadVideo(_ context.Context, userID uint, fh *multipart.FileHeader) (string, error) {
 	// 统一复用 utils/file 中的大小、后缀与真实 MIME 校验及落盘逻辑
 	return file.SaveUpload(fh, userID, file.VideoUploadSpec)
 }
 
-// UploadCover 处理视频封面上传逻辑
-func (s *VideoService) UploadCover(ctx context.Context, userID uint, fh *multipart.FileHeader) (string, error) {
+// UploadCover 处理视频封面上传逻辑。
+// 上传落盘为本地文件 IO，暂不感知取消；ctx 保留在首位以保持 service 入参风格统一。
+func (s *VideoService) UploadCover(_ context.Context, userID uint, fh *multipart.FileHeader) (string, error) {
 	// 统一复用 utils/file 中的大小、后缀与真实 MIME 校验及落盘逻辑
 	return file.SaveUpload(fh, userID, file.CoverUploadSpec)
 }
@@ -196,7 +211,7 @@ func (s *VideoService) VideoDetail(ctx context.Context, videoID uint, userID uin
 // getCached 封装读取并反序列化缓存的逻辑
 func (s *VideoService) getCached(ctx context.Context, cacheKey string) (*model.Video, bool) {
 	// 设置一个短超时，避免Redis阻塞过久
-	opCtx, cancel := context.WithTimeout(ctx, 50*time.Millisecond)
+	opCtx, cancel := context.WithTimeout(ctx, videoCacheOpTimeout)
 	defer cancel()
 	// 尝试从Redis获取缓存；未命中属于正常路径，其余错误记录告警后回源数据库
 	val, err := s.cache.Get(opCtx, cacheKey)
@@ -224,10 +239,10 @@ func (s *VideoService) setCached(ctx context.Context, cacheKey string, video *mo
 		logger.Error("marshal video for cache failed", logger.Err(err))
 		return fmt.Errorf("marshal video for cache: %w", err)
 	}
-	opCtx, cancel := context.WithTimeout(ctx, 50*time.Millisecond)
+	opCtx, cancel := context.WithTimeout(ctx, videoCacheOpTimeout)
 	defer cancel()
-	// 写入Redis缓存，设置过期时间为10分钟
-	err = s.cache.Set(opCtx, cacheKey, b, 10*time.Minute)
+	// 写入Redis缓存
+	err = s.cache.Set(opCtx, cacheKey, b, videoDetailCacheTTL)
 	if err != nil {
 		logger.Error("set video cache failed", logger.Err(err))
 		return fmt.Errorf("set video cache key %s: %w", cacheKey, err)
@@ -249,16 +264,17 @@ func (s *VideoService) getDetail(ctx context.Context, vid uint) (*model.Video, e
 		logger.Debug("video cache miss, acquiring lock", logger.Uint("video_id", vid))
 		//缓存未命中，加分布式锁防止缓存击穿
 		lockKey := fmt.Sprintf("lock:%d", vid)
-		lockCtx, lockCancel := context.WithTimeout(ctx, 50*time.Millisecond)
-		token, locked, lockErr := s.cache.Lock(lockCtx, lockKey, 2*time.Second)
+		lockCtx, lockCancel := context.WithTimeout(ctx, videoLockWaitTimeout)
+		token, locked, lockErr := s.cache.Lock(lockCtx, lockKey, videoLockTTL)
 		lockCancel()
 
 		if lockErr == nil && locked {
 			// 拿到锁，查询数据库并更新缓存
 			logger.Debug("video cache lock acquired, querying database", logger.Uint("video_id", vid))
 			defer func() { // 注册延迟释放锁
-				// 使用带短超时的独立 ctx，避免 Redis 抖动时 Unlock 长时间阻塞请求返回
-				unlockCtx, unlockCancel := context.WithTimeout(context.WithoutCancel(ctx), 200*time.Millisecond)
+				// 解锁不能被上游请求取消打断：沿用上游 ctx 的值（trace 等），仅剥离 cancel，
+				// 并追加短超时兜底，避免 Redis 抖动时 Unlock 长时间阻塞请求返回。
+				unlockCtx, unlockCancel := context.WithTimeout(context.WithoutCancel(ctx), videoUnlockTimeout)
 				defer unlockCancel()
 				if err := s.cache.Unlock(unlockCtx, lockKey, token); err != nil {
 					logger.Error("unlock failed", logger.String("key", lockKey), logger.Err(err))
@@ -283,11 +299,11 @@ func (s *VideoService) getDetail(ctx context.Context, vid uint) (*model.Video, e
 			return video, nil
 		}
 		//抢锁失败，轮询等待缓存构建完成
-		for i := 0; i < 5; i++ {
+		for i := 0; i < videoLockPollAttempts; i++ {
 			select {
 			case <-ctx.Done(): // 上下文超时或取消
 				return nil, ctx.Err()
-			case <-time.After(20 * time.Millisecond): // 短暂等待后重试
+			case <-time.After(videoLockPollInterval): // 短暂等待后重试
 			}
 			// 尝试再次读取缓存
 			if v, ok := s.getCached(ctx, cacheKey); ok {
@@ -313,8 +329,8 @@ func (s *VideoService) getDetail(ctx context.Context, vid uint) (*model.Video, e
 // VideoList 获取视频列表，使用 (created_at, id) 复合游标分页。
 func (s *VideoService) VideoList(ctx context.Context, authorID uint, userID uint, cursor dto.FeedCursor, pageSize int) (*dto.VideoListResponse, error) {
 	// 参数保护，限制最大条数，防止恶意拉取大量数据
-	if pageSize <= 0 || pageSize > 20 {
-		pageSize = 20
+	if pageSize <= 0 || pageSize > defaultVideoPageSize {
+		pageSize = defaultVideoPageSize
 	}
 
 	lastCreatedAt, lastVid, _, err := parseTimeFeedCursor(cursor)

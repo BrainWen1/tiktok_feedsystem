@@ -6,7 +6,6 @@ import (
 	"errors"
 	"strings"
 	"sync"
-	"time"
 
 	"feedsystem/internal/infra/cache"
 	"feedsystem/internal/repo"
@@ -82,9 +81,9 @@ func StartCommentConsumer(ctx context.Context, cmq *CommentMQ, commentRepo *repo
 }
 
 // handleCommentMessage 处理单条评论事件。
-// 每条消息使用独立的 2s 超时上下文；WithoutCancel 保证优雅关闭时不中断在途处理。
+// 每条消息使用独立的超时上下文；WithoutCancel 保证优雅关闭时不中断在途处理。
 func handleCommentMessage(parent context.Context, ch *amqp.Channel, msg amqp.Delivery, commentRepo *repo.CommentRepo, redisCache *cache.RedisCache) {
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), 2*time.Second)
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), messageHandleTimeout)
 	defer cancel()
 
 	logger.Debug("received comment event", logger.String("body", string(msg.Body)))

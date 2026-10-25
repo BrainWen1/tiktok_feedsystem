@@ -434,8 +434,9 @@ func (s *UserService) UpdateProfile(ctx context.Context, userID uint, req dto.Up
 	return s.GetProfile(ctx, userID)
 }
 
-// UploadAvatar 上传用户头像
-func (s *UserService) UploadAvatar(ctx context.Context, userID uint, fh *multipart.FileHeader) (string, error) {
+// UploadAvatar 上传用户头像。
+// 上传落盘为本地文件 IO，暂不感知取消；ctx 保留在首位以保持 service 入参风格统一。
+func (s *UserService) UploadAvatar(_ context.Context, userID uint, fh *multipart.FileHeader) (string, error) {
 	// 统一复用 utils/file 中的大小、后缀与真实 MIME 校验及落盘逻辑
 	return file.SaveUpload(fh, userID, file.AvatarUploadSpec)
 }

@@ -20,7 +20,9 @@ const (
 	// 因此重投路径显式 republish 并累加该头，才能让 MaxRetryCount 真正生效。
 	RetryCountHeader = "x-retry-count"
 
-	maxRetryBackoff = 2 * time.Second // 单次退避上限，避免阻塞消费循环过久
+	maxRetryBackoff     = 2 * time.Second        // 单次退避上限，避免阻塞消费循环过久
+	retryBackoffBase    = 200 * time.Millisecond // 指数退避基数
+	retryPublishTimeout = 3 * time.Second        // 重投消息的发布超时
 )
 
 // DeclareDLX 声明死信交换机和对应的死信队列
@@ -137,7 +139,8 @@ func requeueWithBackoff(ch *amqp.Channel, msg amqp.Delivery, retry int) error {
 	}
 	headers[RetryCountHeader] = int32(retry + 1)
 
-	pubCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	// 重投发生在消费协程内，与上游请求无关，使用带超时的独立 ctx 兜底
+	pubCtx, cancel := context.WithTimeout(context.Background(), retryPublishTimeout)
 	defer cancel()
 
 	return ch.PublishWithContext(pubCtx, msg.Exchange, msg.RoutingKey, false, false, amqp.Publishing{
@@ -151,7 +154,7 @@ func requeueWithBackoff(ch *amqp.Channel, msg amqp.Delivery, retry int) error {
 
 // retryBackoff 计算简单指数退避：200ms、400ms、800ms，最多 2s
 func retryBackoff(retry int) time.Duration {
-	delay := time.Duration(1<<uint(retry)) * 200 * time.Millisecond
+	delay := time.Duration(1<<uint(retry)) * retryBackoffBase
 	if delay > maxRetryBackoff {
 		return maxRetryBackoff
 	}

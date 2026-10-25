@@ -87,9 +87,9 @@ func StartLikeConsumer(ctx context.Context, lmq *LikeMQ, likeRepo *repo.LikeRepo
 }
 
 // handleLikeMessage 处理单条点赞事件。
-// 每条消息使用独立的 2s 超时上下文；WithoutCancel 保证优雅关闭时不中断在途处理。
+// 每条消息使用独立的超时上下文；WithoutCancel 保证优雅关闭时不中断在途处理。
 func handleLikeMessage(parent context.Context, ch *amqp.Channel, msg amqp.Delivery, likeRepo *repo.LikeRepo, redisCache *cache.RedisCache) {
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), 2*time.Second)
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), messageHandleTimeout)
 	defer cancel()
 
 	logger.Debug("received like event", logger.String("body", string(msg.Body)))

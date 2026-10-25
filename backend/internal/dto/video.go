@@ -1,5 +1,7 @@
 package dto
 
+import "time"
+
 // 发布视频请求
 type PublishVideoRequest struct {
 	Title       string   `json:"title"`
@@ -22,6 +24,15 @@ type DeleteVideoRequest struct {
 // 按作者ID列出视频请求
 type ListByAuthorIDRequest struct {
 	AuthorID uint `json:"author_id"`
+}
+
+// VideoListRequest 按作者列出视频的 query 入参，分页使用 (created_at, video_id) 复合游标。
+type VideoListRequest struct {
+	AuthorID            uint      `form:"author_id" binding:"required"`
+	PageNum             int       `form:"page_num" binding:"omitempty,min=1"` // 兼容旧客户端，实际分页使用 cursor
+	PageSize            int       `form:"page_size" binding:"omitempty,min=1"`
+	CursorLastVid       string    `form:"cursor.last_vid"`
+	CursorLastCreatedAt time.Time `form:"cursor.last_created_at"`
 }
 
 // 获取视频详情请求

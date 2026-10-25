@@ -16,6 +16,9 @@ import (
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
+// messageHandleTimeout 单条消息的最大处理耗时，超时后取消本次处理并按失败重投。
+const messageHandleTimeout = 2 * time.Second
+
 // ErrMQDisabled MQ已禁用时的降级错误，调用方据此走数据库兜底
 var ErrMQDisabled = errors.New("mq is disabled")
 

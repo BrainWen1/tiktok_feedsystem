@@ -13,6 +13,12 @@ import (
 	"time"
 )
 
+// 点赞视频列表分页参数。
+const (
+	defaultLikedVideosPageSize = 20
+	maxLikedVideosPageSize     = 30
+)
+
 // VideoDetailer 只暴露 LikeService 需要的最小视频详情能力。
 // 这里不要直接依赖完整的 VideoService，避免和 VideoService 形成初始化循环。
 type VideoDetailer interface {
@@ -112,8 +118,8 @@ func (s *LikeService) ListLikedVideos(ctx context.Context, targetUserID uint, vi
 		return nil, errors.New("video detail service is not initialized")
 	}
 
-	if pageSize == 0 || pageSize > 30 {
-		pageSize = 20
+	if pageSize == 0 || pageSize > maxLikedVideosPageSize {
+		pageSize = defaultLikedVideosPageSize
 	}
 
 	lastVid, hasCursor, err := parseFeedCursorVid(cursor.LastVid)

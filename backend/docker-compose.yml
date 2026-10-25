@@ -1,8 +1,12 @@
+# 本地开发环境专用编排文件。
+# 下列默认密码/账号仅用于本机开发调试，生产环境必须通过环境变量覆盖，
+# 禁止直接使用默认值部署到任何可被外部访问的环境。
 services:
   mysql:
     image: mysql:8.0
     restart: always
     environment:
+      # 默认密码仅用于开发环境，生产必须通过 MYSQL_ROOT_PASSWORD 覆盖
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-123456}
       MYSQL_DATABASE: ${MYSQL_DATABASE:-feedsystem}
       TZ: "Asia/Shanghai"
@@ -25,6 +29,7 @@ services:
     image: redis:7-alpine
     restart: always
     environment:
+      # 默认密码仅用于开发环境，生产必须通过 REDIS_PASSWORD 覆盖
       REDIS_PASSWORD: ${REDIS_PASSWORD:-123456}
     command: ["redis-server", "--appendonly", "yes"]
     ports:
@@ -44,6 +49,7 @@ services:
       - "5673:5672"
       - "15673:15672"
     environment:
+      # 默认账号密码仅用于开发环境，生产必须通过 RABBITMQ_USER / RABBITMQ_PASS 覆盖
       RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-admin}
       RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASS:-password123}
     volumes:

@@ -22,7 +22,8 @@ const (
 	socialBloggersKey  = "social:bloggers:uid:"     // 关注列表缓存的key模板
 	socialFollowersKey = "social:followers:uid:"    // 粉丝列表缓存的key模板
 
-	socialCacheWriteConcurrency = 8 // 缓存回写 goroutine 的全局并发上限
+	socialCacheWriteConcurrency = 8               // 缓存回写 goroutine 的全局并发上限
+	socialCacheWriteTimeout     = 3 * time.Second // 异步回写缓存的超时时间
 
 	// socialEmptyZSetMember 空关注/粉丝列表的占位成员。
 	// Redis 无法保存空 ZSet（成员全部删除后 key 会消失），用非法的 userID=0 作为占位，
@@ -425,7 +426,8 @@ func (s *SocialService) asyncRewriteSocialZSet(key string, zList []redis.Z) {
 			socialCacheWriteInflight.Delete(key)
 		}()
 
-		cacheCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		// 异步回写与请求生命周期解耦，使用独立超时 ctx 控制最坏耗时
+		cacheCtx, cancel := context.WithTimeout(context.Background(), socialCacheWriteTimeout)
 		defer cancel()
 
 		// 空列表也会写入占位成员，缓存“该用户没有关注/粉丝”这一结果，避免 0 值反复穿透数据库

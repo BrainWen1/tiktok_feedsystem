@@ -59,7 +59,7 @@ func (am *AuthMiddleware) Auth() gin.HandlerFunc {
 		}
 
 		// 检查token是否在黑名单中
-		isBlacklisted, err := am.cache.IsTokenInBlacklist(ctx, token)
+		isBlacklisted, err := am.cache.IsTokenInBlacklist(ctx.Request.Context(), token)
 		if err != nil {
 			logger.Error("check token blacklist failed", logger.Err(err))
 			response.FailAuthResponse(ctx, "服务器错误")
