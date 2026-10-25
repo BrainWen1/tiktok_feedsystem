@@ -5,8 +5,8 @@ import "time"
 // FeedListReq 通用游标分页入参，5个list接口复用
 type FeedListReq struct {
 	Limit  int        `form:"limit"`
-	Tag    string     `form:"tag"`     // listByTag 专用，其他接口忽略
-	Cursor FeedCursor `form:"cursor."` // 复合游标，5个list接口复用，cursor.会让gin自动解析成嵌套结构体
+	Tag    string     `form:"tag"` // listByTag 专用，其他接口忽略
+	Cursor FeedCursor // 复合游标，内层字段通过带 cursor. 前缀的 form tag 绑定，如 cursor.last_vid
 }
 
 // FeedItemResp feed对外输出VO，聚合完成后的视频条目
@@ -37,9 +37,11 @@ type FeedListResp struct {
 }
 
 // FeedCursor 复合游标，用于分页，包含多维度的游标信息，每个接口各取所需
+// gin 的 query 绑定按字段自身的 form tag 取值，不会拼接嵌套结构体前缀，
+// 因此内层字段必须显式声明 cursor. 前缀，才能绑定 cursor.last_vid 等参数
 type FeedCursor struct {
-	LastVid        string    `json:"last_vid"`
-	LastPopularity int64     `json:"last_popularity"`
-	LastCreatedAt  time.Time `json:"last_created_at"`
-	LastLikesCount int64     `json:"last_likes_count"`
+	LastVid        string    `json:"last_vid" form:"cursor.last_vid"`
+	LastPopularity int64     `json:"last_popularity" form:"cursor.last_popularity"`
+	LastCreatedAt  time.Time `json:"last_created_at" form:"cursor.last_created_at"`
+	LastLikesCount int64     `json:"last_likes_count" form:"cursor.last_likes_count"`
 }

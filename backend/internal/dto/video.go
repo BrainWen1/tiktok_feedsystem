@@ -54,8 +54,9 @@ type VideoListResponse struct {
 }
 
 // ListLikedVideosRequest 列出用户点赞过的视频请求
+// 分页参数限制上限，避免 page_num 过大导致 offset 溢出或超大偏移查询
 type ListLikedVideosRequest struct {
-	UserID   uint `json:"user_id" binding:"required" min:"1"`
-	PageNum  int  `json:"page_num" binding:"required" min:"1"`
-	PageSize int  `json:"page_size" binding:"required" min:"1" max:"30"`
+	UserID   uint `json:"user_id" binding:"required,min=1,max=4294967295"`
+	PageNum  int  `json:"page_num" binding:"required,min=1,max=100000"`
+	PageSize int  `json:"page_size" binding:"required,min=1,max=30"`
 }
