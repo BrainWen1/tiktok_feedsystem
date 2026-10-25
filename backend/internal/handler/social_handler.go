@@ -29,10 +29,8 @@ func (h *SocialHandler) Follow(ctx *gin.Context) {
 	}
 
 	// 获取 userID
-	userID, _, err := getUserFromCtx(ctx)
-	if err != nil {
-		logger.Error("get user from context failed", logger.Err(err))
-		response.FailAuthResponse(ctx, "未登录或登录已过期")
+	userID, ok := requireUserID(ctx)
+	if !ok {
 		return
 	}
 
@@ -57,10 +55,8 @@ func (h *SocialHandler) Unfollow(ctx *gin.Context) {
 	}
 
 	// 获取 userID
-	userID, _, err := getUserFromCtx(ctx)
-	if err != nil {
-		logger.Error("get user from context failed", logger.Err(err))
-		response.FailAuthResponse(ctx, "未登录或登录已过期")
+	userID, ok := requireUserID(ctx)
+	if !ok {
 		return
 	}
 
@@ -77,10 +73,8 @@ func (h *SocialHandler) Unfollow(ctx *gin.Context) {
 // GetBloggers 获取用户的关注列表
 func (h *SocialHandler) GetBloggers(ctx *gin.Context) {
 	// 获取查询参数
-	var getBloggersReq dto.GetBloggersRequest
-	if err := ctx.ShouldBindQuery(&getBloggersReq); err != nil {
-		logger.Warn("bind social query parameters failed", logger.Err(err))
-		response.FailResponse(ctx, "请求参数错误")
+	getBloggersReq, ok := bindQuery[dto.GetBloggersRequest](ctx, "bind social query parameters failed")
+	if !ok {
 		return
 	}
 
@@ -100,23 +94,14 @@ func (h *SocialHandler) GetBloggers(ctx *gin.Context) {
 		return
 	}
 
-	payload := gin.H{
-		"bloggers": bloggers,
-		"total":    total,
-	}
-	if nextCursor != nil {
-		payload["next_cursor"] = nextCursor
-	}
-	response.SuccessResponse(ctx, payload)
+	response.SuccessResponse(ctx, buildSocialListPayload("bloggers", bloggers, total, nextCursor))
 }
 
 // GetFollowers 获取用户的粉丝列表
 func (h *SocialHandler) GetFollowers(ctx *gin.Context) {
 	// 获取查询参数
-	var getFollowersReq dto.GetFollowersRequest
-	if err := ctx.ShouldBindQuery(&getFollowersReq); err != nil {
-		logger.Warn("bind social query parameters failed", logger.Err(err))
-		response.FailResponse(ctx, "请求参数错误")
+	getFollowersReq, ok := bindQuery[dto.GetFollowersRequest](ctx, "bind social query parameters failed")
+	if !ok {
 		return
 	}
 
@@ -136,31 +121,20 @@ func (h *SocialHandler) GetFollowers(ctx *gin.Context) {
 		return
 	}
 
-	payload := gin.H{
-		"followers": followers,
-		"total":     total,
-	}
-	if nextCursor != nil {
-		payload["next_cursor"] = nextCursor
-	}
-	response.SuccessResponse(ctx, payload)
+	response.SuccessResponse(ctx, buildSocialListPayload("followers", followers, total, nextCursor))
 }
 
 // IsFollow 获取两者关注关系
 func (h *SocialHandler) IsFollow(ctx *gin.Context) {
 	// 获取查询参数
-	var req dto.IsFollowRequest
-	if err := ctx.ShouldBindQuery(&req); err != nil {
-		logger.Warn("bind social query parameters failed", logger.Err(err))
-		response.FailResponse(ctx, "请求参数错误")
+	req, ok := bindQuery[dto.IsFollowRequest](ctx, "bind social query parameters failed")
+	if !ok {
 		return
 	}
 
 	// 获取 userID
-	userID, _, err := getUserFromCtx(ctx)
-	if err != nil {
-		logger.Error("get user from context failed", logger.Err(err))
-		response.FailAuthResponse(ctx, "未登录或登录已过期")
+	userID, ok := requireUserID(ctx)
+	if !ok {
 		return
 	}
 
@@ -181,10 +155,8 @@ func (h *SocialHandler) IsFollow(ctx *gin.Context) {
 // GetCounts 获取关注和粉丝数量
 func (h *SocialHandler) GetCounts(ctx *gin.Context) {
 	// 获取查询参数
-	var req dto.GetCountsRequest
-	if err := ctx.ShouldBindQuery(&req); err != nil {
-		logger.Warn("bind social query parameters failed", logger.Err(err))
-		response.FailResponse(ctx, "请求参数错误")
+	req, ok := bindQuery[dto.GetCountsRequest](ctx, "bind social query parameters failed")
+	if !ok {
 		return
 	}
 

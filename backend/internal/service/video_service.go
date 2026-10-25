@@ -1,9 +1,9 @@
 package service
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"feedsystem/internal/dto"
 	"feedsystem/internal/infra/cache"
 	"feedsystem/internal/model"
@@ -11,22 +11,10 @@ import (
 	"feedsystem/internal/utils/file"
 	"feedsystem/internal/utils/logger"
 	"fmt"
-	"io"
 	"mime/multipart"
-	"net/http"
-	"os"
-	"path"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
-)
-
-const (
-	maxUploadSize = 100 << 20 // MaxUploadSize 最大上传文件大小，单位字节
-
-	// sniffLen http.DetectContentType 需要的最大嗅探字节数
-	sniffLen = 512
 )
 
 // 折中的耦合方案，后期解耦把部分用户信息写到video表里，配合mq做异步更新
@@ -43,202 +31,14 @@ func NewVideoService(videoRepo *repo.VideoRepo, userService *UserService, cache 
 
 // UploadVideo 处理视频上传逻辑
 func (s *VideoService) UploadVideo(ctx context.Context, userID uint, fh *multipart.FileHeader) (string, error) {
-	const maxSize = maxUploadSize // 100MB
-	// 检查文件大小
-	if fh.Size <= 0 || fh.Size > maxSize {
-		logger.Warn("upload video size out of bounds", logger.Uint("user_id", userID), logger.Int64("size", fh.Size))
-		return "", fmt.Errorf("%w: size=%d", ErrInvalidFileSize, fh.Size)
-	}
-
-	// 检查文件扩展名是否合法
-	ext := strings.ToLower(filepath.Ext(fh.Filename)) // 获取文件扩展名并转换为小写
-	switch ext {
-	case ".mp4", ".avi", ".mov", ".mkv":
-	default:
-		logger.Warn("invalid video file type", logger.String("ext", ext))
-		return "", fmt.Errorf("%w: ext=%s", ErrInvalidFileType, ext)
-	}
-
-	// 创建视频存储目录
-	dir := filepath.Join(".run", "upload", "videos", strconv.FormatUint(uint64(userID), 10)) // 拼接目录路径
-	if err := os.MkdirAll(dir, 0o755); err != nil {                                          // 创建目录，如果目录已存在则不会报错
-		logger.Error("create video directory failed", logger.Err(err))
-		return "", fmt.Errorf("failed to create directory: %w", err)
-	}
-
-	// 生成随机文件名
-	filename, err := file.RandHex(16) // 生成16字节的随机十六进制字符串作为文件名
-	if err != nil {
-		logger.Error("generate video filename failed", logger.Err(err))
-		return "", fmt.Errorf("failed to generate random filename: %w", err)
-	}
-	filename = filename + ext // 拼接完整文件名
-
-	// 拼接完整文件路径
-	absPath := filepath.Join(dir, filename)
-
-	// 保存上传的文件到指定路径，由于service层不能绑定gin.Context，所以这里使用io.Copy来保存文件
-	// 打开上传的文件
-	srcFile, err := fh.Open()
-	if err != nil {
-		return "", fmt.Errorf("open upload file failed: %w", err)
-	}
-	defer srcFile.Close() // 注册延迟关闭文件句柄
-
-	// 以文件内容嗅探 MIME，避免仅依赖扩展名被伪造后缀绕过
-	mimeType, body, err := detectUploadMIME(srcFile)
-	if err != nil {
-		return "", fmt.Errorf("detect uploaded video type failed: %w", err)
-	}
-	if !uploadMIMEMatchesExt(ext, mimeType) {
-		logger.Warn("invalid video content type", logger.String("ext", ext), logger.String("mime", mimeType))
-		return "", fmt.Errorf("%w: ext=%s content=%s", ErrInvalidFileType, ext, mimeType)
-	}
-
-	// 创建本地目标文件
-	dstFile, err := os.Create(absPath)
-	if err != nil {
-		return "", fmt.Errorf("create target file failed: %w", err)
-	}
-
-	// 拷贝流写入磁盘；失败时关闭并清理半截文件，避免残留
-	_, copyErr := io.Copy(dstFile, body)
-	closeErr := dstFile.Close()
-	if copyErr != nil {
-		if rmErr := os.Remove(absPath); rmErr != nil && !os.IsNotExist(rmErr) {
-			logger.Error("remove partial video file failed", logger.String("path", absPath), logger.Err(rmErr))
-		}
-		return "", fmt.Errorf("copy file content failed: %w", copyErr)
-	}
-	if closeErr != nil {
-		if rmErr := os.Remove(absPath); rmErr != nil && !os.IsNotExist(rmErr) {
-			logger.Error("remove incomplete video file failed", logger.String("path", absPath), logger.Err(rmErr))
-		}
-		return "", fmt.Errorf("close target file failed: %w", closeErr)
-	}
-
-	// 返回相对路径，供handler层拼接成http可访问URL
-	urlPath := path.Join("/upload", "videos", strconv.FormatUint(uint64(userID), 10), filename)
-
-	return urlPath, nil
-}
-
-// detectUploadMIME 读取文件头用于内容嗅探，并返回可继续读取完整内容的 Reader。
-// 调用方应基于嗅探结果做类型判断，而不是只看文件扩展名。
-func detectUploadMIME(src io.Reader) (string, io.Reader, error) {
-	head := make([]byte, sniffLen)
-	n, err := io.ReadFull(src, head)
-	if err != nil && err != io.ErrUnexpectedEOF && err != io.EOF {
-		return "", nil, fmt.Errorf("read upload header failed: %w", err)
-	}
-	head = head[:n]
-	return http.DetectContentType(head), io.MultiReader(bytes.NewReader(head), src), nil
-}
-
-// uploadMIMEMatchesExt 校验真实内容类型与文件后缀是否匹配。
-// 仅靠 http.DetectContentType 的前缀判断不足以阻止“改名绕过”，
-// 这里按后缀限定允许的内容类型；.mkv 与 webm 共用 EBML 头，嗅探结果可能是 video/webm。
-func uploadMIMEMatchesExt(ext, mimeType string) bool {
-	switch ext {
-	case ".jpg", ".jpeg":
-		return mimeType == "image/jpeg"
-	case ".png":
-		return mimeType == "image/png"
-	case ".webp":
-		return mimeType == "image/webp"
-	case ".mp4":
-		return mimeType == "video/mp4"
-	case ".mov":
-		// Go 的 MIME 嗅探没有 quicktime 签名，部分 .mov 会被识别为 application/octet-stream
-		return mimeType == "video/quicktime" || mimeType == "video/mp4" || mimeType == "application/octet-stream"
-	case ".avi":
-		return mimeType == "video/avi" || mimeType == "video/x-msvideo"
-	case ".mkv":
-		return mimeType == "video/webm" || mimeType == "video/x-matroska" || mimeType == "application/octet-stream"
-	default:
-		return false
-	}
+	// 统一复用 utils/file 中的大小、后缀与真实 MIME 校验及落盘逻辑
+	return file.SaveUpload(fh, userID, file.VideoUploadSpec)
 }
 
 // UploadCover 处理视频封面上传逻辑
 func (s *VideoService) UploadCover(ctx context.Context, userID uint, fh *multipart.FileHeader) (string, error) {
-	const maxSize = 10 << 20 // 最大文件大小为10MB
-	if fh.Size <= 0 || fh.Size > maxSize {
-		logger.Warn("invalid cover file size", logger.Int64("size", fh.Size))
-		return "", fmt.Errorf("%w: size=%d", ErrInvalidFileSize, fh.Size)
-	}
-
-	// 检查文件扩展名是否合法
-	ext := strings.ToLower(filepath.Ext(fh.Filename)) // 获取文件扩展名并转换为小写
-	switch ext {
-	case ".jpg", ".jpeg", ".png", ".webp":
-	default:
-		logger.Warn("invalid cover file type", logger.String("ext", ext))
-		return "", fmt.Errorf("%w: ext=%s", ErrInvalidFileType, ext)
-	}
-
-	// 创建用户头像存储目录
-	dir := filepath.Join(".run", "upload", "covers", strconv.FormatUint(uint64(userID), 10)) // 拼接目录路径
-	if err := os.MkdirAll(dir, 0o755); err != nil {                                          // 创建目录，如果目录已存在则不会报错
-		logger.Error("create cover directory failed", logger.Err(err))
-		return "", fmt.Errorf("failed to create directory: %w", err)
-	}
-
-	// 生成随机文件名
-	filename, err := file.RandHex(16) // 生成16字节的随机十六进制字符串作为文件名
-	if err != nil {
-		logger.Error("generate cover filename failed", logger.Err(err))
-		return "", fmt.Errorf("failed to generate random filename: %w", err)
-	}
-	filename = filename + ext // 拼接完整文件名
-
-	// 拼接完整文件路径
-	absPath := filepath.Join(dir, filename)
-
-	// 保存上传的文件到指定路径，由于service层不能绑定gin.Context，所以这里使用io.Copy来保存文件
-	// 打开上传的文件
-	srcFile, err := fh.Open()
-	if err != nil {
-		return "", fmt.Errorf("open upload file failed: %w", err)
-	}
-	defer srcFile.Close() // 注册延迟关闭文件句柄
-
-	// 以文件内容嗅探 MIME，避免仅依赖扩展名被伪造后缀绕过
-	mimeType, body, err := detectUploadMIME(srcFile)
-	if err != nil {
-		return "", fmt.Errorf("detect uploaded cover type failed: %w", err)
-	}
-	if !uploadMIMEMatchesExt(ext, mimeType) {
-		logger.Warn("invalid cover content type", logger.String("ext", ext), logger.String("mime", mimeType))
-		return "", fmt.Errorf("%w: ext=%s content=%s", ErrInvalidFileType, ext, mimeType)
-	}
-
-	// 创建本地目标文件
-	dstFile, err := os.Create(absPath)
-	if err != nil {
-		return "", fmt.Errorf("create target file failed: %w", err)
-	}
-
-	// 拷贝流写入磁盘；失败时关闭并清理半截文件，避免残留
-	_, copyErr := io.Copy(dstFile, body)
-	closeErr := dstFile.Close()
-	if copyErr != nil {
-		if rmErr := os.Remove(absPath); rmErr != nil && !os.IsNotExist(rmErr) {
-			logger.Error("remove partial cover file failed", logger.String("path", absPath), logger.Err(rmErr))
-		}
-		return "", fmt.Errorf("copy file content failed: %w", copyErr)
-	}
-	if closeErr != nil {
-		if rmErr := os.Remove(absPath); rmErr != nil && !os.IsNotExist(rmErr) {
-			logger.Error("remove incomplete cover file failed", logger.String("path", absPath), logger.Err(rmErr))
-		}
-		return "", fmt.Errorf("close target file failed: %w", closeErr)
-	}
-
-	// 返回相对路径，供handler层拼接成http可访问URL
-	urlPath := path.Join("/upload", "covers", strconv.FormatUint(uint64(userID), 10), filename)
-
-	return urlPath, nil
+	// 统一复用 utils/file 中的大小、后缀与真实 MIME 校验及落盘逻辑
+	return file.SaveUpload(fh, userID, file.CoverUploadSpec)
 }
 
 const (
@@ -309,12 +109,12 @@ func (s *VideoService) VideoDetail(ctx context.Context, videoID uint, userID uin
 	// 调用带Redis缓存+分布式锁的底层方法，拿到公共视频数据
 	video, err := s.getDetail(ctx, videoID)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("get video %d detail: %w", videoID, err)
 	}
 	// 通过视频里的AuthorID查询作者信息
 	author, err := s.UserService.FindByID(ctx, video.AuthorID)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("get author %d for video %d: %w", video.AuthorID, videoID, err)
 	}
 
 	// 组装返回DTO
@@ -398,9 +198,12 @@ func (s *VideoService) getCached(ctx context.Context, cacheKey string) (*model.V
 	// 设置一个短超时，避免Redis阻塞过久
 	opCtx, cancel := context.WithTimeout(ctx, 50*time.Millisecond)
 	defer cancel()
-	// 尝试从Redis获取缓存
+	// 尝试从Redis获取缓存；未命中属于正常路径，其余错误记录告警后回源数据库
 	val, err := s.cache.Get(opCtx, cacheKey)
 	if err != nil {
+		if !errors.Is(err, cache.ErrCacheMiss) {
+			logger.Warn("get video cache failed", logger.String("key", cacheKey), logger.Err(err))
+		}
 		return nil, false
 	}
 	// 反序列化缓存数据
@@ -419,7 +222,7 @@ func (s *VideoService) setCached(ctx context.Context, cacheKey string, video *mo
 	b, err := json.Marshal(video)
 	if err != nil {
 		logger.Error("marshal video for cache failed", logger.Err(err))
-		return err
+		return fmt.Errorf("marshal video for cache: %w", err)
 	}
 	opCtx, cancel := context.WithTimeout(ctx, 50*time.Millisecond)
 	defer cancel()
@@ -427,7 +230,7 @@ func (s *VideoService) setCached(ctx context.Context, cacheKey string, video *mo
 	err = s.cache.Set(opCtx, cacheKey, b, 10*time.Minute)
 	if err != nil {
 		logger.Error("set video cache failed", logger.Err(err))
-		return err
+		return fmt.Errorf("set video cache key %s: %w", cacheKey, err)
 	}
 	return nil
 }
@@ -469,7 +272,7 @@ func (s *VideoService) getDetail(ctx context.Context, vid uint) (*model.Video, e
 			// 缓存仍然未命中，查询数据库
 			video, err := s.VideoRepo.FindByID(ctx, vid)
 			if err != nil {
-				return nil, err
+				return nil, fmt.Errorf("query video %d: %w", vid, err)
 			}
 			logger.Debug("video fetched from database, updating cache", logger.Uint("video_id", vid))
 			// 将查询到的视频数据写入缓存；写缓存失败只告警，不能影响本次数据库读取结果
@@ -496,7 +299,7 @@ func (s *VideoService) getDetail(ctx context.Context, vid uint) (*model.Video, e
 	logger.Warn("cache wait timeout, fallback to DB", logger.Uint("video_id", vid))
 	video, err := s.VideoRepo.FindByID(ctx, vid)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("query video %d: %w", vid, err)
 	}
 	if s.cache.IsEnabled() {
 		// 缓存只是加速层，写入失败保留数据库读取结果，仅记录告警
@@ -522,7 +325,7 @@ func (s *VideoService) VideoList(ctx context.Context, authorID uint, userID uint
 	// 查询视频列表
 	videos, total, err := s.VideoRepo.VideoList(ctx, authorID, lastCreatedAt, lastVid, pageSize)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("list videos for author %d: %w", authorID, err)
 	}
 	if len(videos) == 0 {
 		return &dto.VideoListResponse{Total: total, Videos: []dto.VideoDetailResponse{}}, nil
@@ -530,7 +333,7 @@ func (s *VideoService) VideoList(ctx context.Context, authorID uint, userID uint
 	// 只查询一次作者信息，避免N+1
 	author, err := s.UserService.FindByID(ctx, authorID)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("get author %d for video list: %w", authorID, err)
 	}
 	authorDTO := dto.AuthorBrief{
 		UserID:    author.ID,

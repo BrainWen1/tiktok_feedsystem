@@ -136,7 +136,7 @@ func (s *CommentService) DeleteComment(ctx context.Context, userID, commentID ui
 	comment, err := s.CommentRepo.FindByID(ctx, commentID)
 	if err != nil {
 		logger.Error("find comment failed", logger.Uint("comment_id", commentID), logger.Err(err))
-		return errors.New("comment not found")
+		return fmt.Errorf("find comment %d: %w", commentID, err)
 	}
 
 	// 检查用户是否有权限删除评论
@@ -145,8 +145,8 @@ func (s *CommentService) DeleteComment(ctx context.Context, userID, commentID ui
 		// 获取视频信息
 		video, err := s.videoService.getDetail(ctx, comment.VideoID)
 		if err != nil {
-			logger.Error("get video detail failed", logger.Err(err))
-			return errors.New("failed to get video detail")
+			logger.Error("get video detail failed", logger.Uint("video_id", comment.VideoID), logger.Err(err))
+			return fmt.Errorf("get video %d detail for comment %d: %w", comment.VideoID, commentID, err)
 		}
 		// 2. 视频作者
 		if video.AuthorID != userID {
@@ -160,8 +160,10 @@ func (s *CommentService) DeleteComment(ctx context.Context, userID, commentID ui
 	if err != nil {
 		logger.Error("publish comment event to MQ failed", logger.Err(err))
 		// MQ投递失败，降级方案：同步直接写数据库
-		err = s.CommentRepo.DeleteComment(ctx, commentID)
-		return err
+		if deleteErr := s.CommentRepo.DeleteComment(ctx, commentID); deleteErr != nil {
+			return fmt.Errorf("delete comment %d fallback: %w", commentID, deleteErr)
+		}
+		return nil
 	}
 
 	// MQ投递成功，返回nil，后台慢慢消费入库
@@ -177,8 +179,11 @@ func (s *CommentService) GetCommentCount(ctx context.Context, vid uint) (int64, 
 // 避免 feed 一次请求对每个视频都产生一次 SET。
 func (s *CommentService) getCommentCount(ctx context.Context, vid uint, refreshTTL bool) (int64, error) {
 	key := cache.CommentVideoCntKey(vid)
-	// 尝试读取redis
+	// 尝试读取redis；未命中属于正常路径，其余异常记录日志后回源数据库
 	val, err := s.cache.Get(ctx, key)
+	if err != nil && !errors.Is(err, cache.ErrCacheMiss) {
+		logger.Warn("get comment count cache failed", logger.Uint("video_id", vid), logger.Err(err))
+	}
 	if err == nil && val != "" {
 		count, parseErr := strconv.ParseInt(val, 10, 64)
 		if parseErr == nil {
@@ -213,13 +218,13 @@ func (s *CommentService) ListComments(ctx context.Context, userID uint, req dto.
 	// 游标分页查询评论
 	comments, err := s.CommentRepo.ListByVideoCursor(ctx, req.VideoID, req.LastTime, req.LastID, req.PageSize)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("list comments for video %d: %w", req.VideoID, err)
 	}
 
 	// 获取评论总数
 	total, err := s.GetCommentCount(ctx, req.VideoID)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("get comment count for video %d: %w", req.VideoID, err)
 	}
 
 	// 组装返回DTO，填充作者信息、是否点赞（复用你之前的点赞缓存逻辑）

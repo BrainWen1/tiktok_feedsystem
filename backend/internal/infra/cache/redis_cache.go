@@ -73,9 +73,13 @@ func (r *RedisCache) Get(ctx context.Context, key string) (string, error) {
 	}
 	val, err := r.client.Get(ctx, key).Result()
 	if err != nil {
-		return "", err
+		// key 不存在属于正常未命中，统一转换为 ErrCacheMiss，避免调用方依赖错误字符串
+		if errors.Is(err, redis.Nil) {
+			return "", ErrCacheMiss
+		}
+		return "", fmt.Errorf("get cache key %s: %w", key, err)
 	}
-	return val, err
+	return val, nil
 }
 
 // GetDel 原子读取并删除key，用于一次性凭证（refresh token轮换），避免Get+Delete并发竞争
@@ -160,15 +164,13 @@ func (r *RedisCache) IsTokenInBlacklist(ctx context.Context, token string) (bool
 	}
 	// 尝试从Redis的黑名单中获取token
 	val, err := r.Get(ctx, BlacklistTokenKey(token))
-	// Redis返回缓存未命中
+	// Redis返回缓存未命中，说明token不在黑名单中
 	if err != nil {
-		// 不在黑名单中
-		if err.Error() == "redis: nil" {
+		if errors.Is(err, ErrCacheMiss) || errors.Is(err, redis.Nil) {
 			return false, nil
 		}
-		// 其他错误
 		logger.Error("check token in blacklist failed", logger.Err(err))
-		return false, err
+		return false, fmt.Errorf("check token blacklist: %w", err)
 	}
 	// 如果Redis返回的值是"blacklisted"，说明token在黑名单中
 	return val == "blacklisted", nil
@@ -469,7 +471,7 @@ func (c *RedisCache) ZScore(ctx context.Context, key, member string) (float64, e
 			return 0, ErrCacheMiss
 		}
 		logger.Error("get zset score failed", logger.String("key", key), logger.String("member", member), logger.Err(err))
-		return 0, err
+		return 0, fmt.Errorf("get zset score key %s member %s: %w", key, member, err)
 	}
 	return score, nil
 }
@@ -483,13 +485,13 @@ func (c *RedisCache) ZIsMember(ctx context.Context, key string, member interface
 	memberStr := fmt.Sprintf("%v", member)
 
 	_, err := c.client.ZRank(ctx, key, memberStr).Result()
-	if err == redis.Nil {
+	if errors.Is(err, redis.Nil) {
 		// 查不到，不存在
 		return false, nil
 	}
 	if err != nil {
 		logger.Error("zrank check failed", logger.String("key", key), logger.Any("member", member), logger.Err(err))
-		return false, err
+		return false, fmt.Errorf("check zset member for key %s: %w", key, err)
 	}
 	// 没报错，说明查到了，存在
 	return true, nil

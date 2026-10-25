@@ -46,7 +46,7 @@ func (s *LikeService) LikeVideo(ctx context.Context, userID, vid uint) error {
 	// 前置查询：拦截重复点击，减少无效MQ消息
 	isLiked, err := s.likeRepo.IsLiked(ctx, userID, vid)
 	if err != nil {
-		return err
+		return fmt.Errorf("check like status for user %d video %d: %w", userID, vid, err)
 	}
 	if isLiked {
 		return errors.New("video already liked by user")
@@ -57,8 +57,10 @@ func (s *LikeService) LikeVideo(ctx context.Context, userID, vid uint) error {
 	if err != nil {
 		logger.Error("publish like event to MQ failed", logger.Err(err))
 		// MQ投递失败，降级方案：同步直接写数据库
-		err = s.likeRepo.CreateLike(ctx, userID, vid)
-		return err
+		if createErr := s.likeRepo.CreateLike(ctx, userID, vid); createErr != nil {
+			return fmt.Errorf("create like fallback for user %d video %d: %w", userID, vid, createErr)
+		}
+		return nil
 	}
 
 	// MQ投递成功，返回nil，后台慢慢消费入库
@@ -74,7 +76,7 @@ func (s *LikeService) UnlikeVideo(ctx context.Context, userID, vid uint) error {
 	// 前置查询：拦截重复点击，减少无效MQ消息
 	isLiked, err := s.likeRepo.IsLiked(ctx, userID, vid)
 	if err != nil {
-		return err
+		return fmt.Errorf("check like status for user %d video %d: %w", userID, vid, err)
 	}
 	if !isLiked {
 		return errors.New("video not liked by user")
@@ -85,8 +87,10 @@ func (s *LikeService) UnlikeVideo(ctx context.Context, userID, vid uint) error {
 	if err != nil {
 		logger.Error("publish unlike event to MQ failed", logger.Err(err))
 		// MQ投递失败，降级方案：同步直接写数据库
-		err = s.likeRepo.DeleteLike(ctx, userID, vid)
-		return err
+		if deleteErr := s.likeRepo.DeleteLike(ctx, userID, vid); deleteErr != nil {
+			return fmt.Errorf("delete like fallback for user %d video %d: %w", userID, vid, deleteErr)
+		}
+		return nil
 	}
 
 	// MQ投递成功，返回nil，后台慢慢消费入库
@@ -96,7 +100,10 @@ func (s *LikeService) UnlikeVideo(ctx context.Context, userID, vid uint) error {
 // IsLiked 检查用户是否点赞了视频
 func (s *LikeService) IsLiked(ctx context.Context, userID, vid uint) (dto.IsLikedResponse, error) {
 	isLiked, err := s.likeRepo.IsLiked(ctx, userID, vid)
-	return dto.IsLikedResponse{IsLiked: isLiked}, err
+	if err != nil {
+		return dto.IsLikedResponse{}, fmt.Errorf("check like status for user %d video %d: %w", userID, vid, err)
+	}
+	return dto.IsLikedResponse{IsLiked: isLiked}, nil
 }
 
 // ListLikedVideos 列出用户点赞过的视频，使用 (created_at, video_id) 复合游标分页。
@@ -124,7 +131,7 @@ func (s *LikeService) ListLikedVideos(ctx context.Context, targetUserID uint, vi
 	// 根据 targetUserID 查询用户点赞过的记录（含点赞时间，用于生成下一页游标）
 	likes, total, err := s.likeRepo.FindLikedVideoPage(ctx, targetUserID, lastCreatedAt, lastVid, int(pageSize))
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("find liked videos for user %d: %w", targetUserID, err)
 	}
 
 	// 根据vids查询视频详情，并组装返回结果

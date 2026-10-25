@@ -28,6 +28,7 @@ func (h *UserHandler) Register(ctx *gin.Context) {
 	// 解析请求参数
 	var req dto.RegisterRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
+		logger.Warn("bind register request failed", logger.Err(err))
 		response.FailResponse(ctx, "Invalid request parameters")
 		return
 	}
@@ -75,6 +76,7 @@ func (h *UserHandler) Login(ctx *gin.Context) {
 	// 解析请求参数
 	var req dto.LoginRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
+		logger.Warn("bind login request failed", logger.Err(err))
 		response.FailResponse(ctx, "Invalid request parameters")
 		return
 	}
@@ -105,6 +107,7 @@ func (h *UserHandler) RefreshToken(ctx *gin.Context) {
 	// 解析请求参数
 	var req dto.RefreshRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
+		logger.Warn("bind refresh request failed", logger.Err(err))
 		response.FailResponse(ctx, "Invalid request parameters")
 		return
 	}
@@ -400,6 +403,7 @@ func (h *UserHandler) FindByID(ctx *gin.Context) {
 	// 解析请求参数
 	var req dto.FindByIDRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
+		logger.Warn("bind find by id request failed", logger.Err(err))
 		response.FailResponse(ctx, "Invalid request parameters")
 		return
 	}
@@ -420,6 +424,7 @@ func (h *UserHandler) FindByUsername(ctx *gin.Context) {
 	// 解析请求参数
 	var req dto.FindByUsernameRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
+		logger.Warn("bind find by username request failed", logger.Err(err))
 		response.FailResponse(ctx, "Invalid request parameters")
 		return
 	}

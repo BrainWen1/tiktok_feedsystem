@@ -83,7 +83,10 @@ func LoadConfig() error {
 	redisDB := 0
 	if redisDBStr != "" {
 		val, e := strconv.Atoi(redisDBStr)
-		if e == nil {
+		if e != nil {
+			// 配置非法时回退默认值，但必须留下日志，避免静默吞掉解析错误
+			logger.Warn("invalid REDIS_DB, using default", logger.String("value", redisDBStr), logger.Int("default", redisDB), logger.Err(e))
+		} else {
 			redisDB = val
 		}
 	}
@@ -93,7 +96,9 @@ func LoadConfig() error {
 	jwtExpHour := 24 // 默认24小时
 	if jwtExpStr != "" {
 		val, e := strconv.Atoi(jwtExpStr)
-		if e == nil {
+		if e != nil {
+			logger.Warn("invalid JWT_EXPIRE_HOUR, using default", logger.String("value", jwtExpStr), logger.Int("default", jwtExpHour), logger.Err(e))
+		} else {
 			jwtExpHour = val
 		}
 	}
@@ -103,7 +108,9 @@ func LoadConfig() error {
 	mqPort := 5672 // 默认5672
 	if mqPortStr != "" {
 		val, e := strconv.Atoi(mqPortStr)
-		if e == nil {
+		if e != nil {
+			logger.Warn("invalid MQ_PORT, using default", logger.String("value", mqPortStr), logger.Int("default", mqPort), logger.Err(e))
+		} else {
 			mqPort = val
 		}
 	}

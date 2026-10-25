@@ -104,7 +104,7 @@ func handleLikeMessage(parent context.Context, ch *amqp.Channel, msg amqp.Delive
 	// 用 Redis 缓存消息ID做幂等：先检查是否已处理，未处理才落库，处理完成后写入消息ID并设置过期时间
 	key := cache.LikeEventIDKey(event.EventID)
 	val, err := redisCache.Get(ctx, key)
-	if err != nil && err.Error() != "redis: nil" {
+	if err != nil && !errors.Is(err, cache.ErrCacheMiss) {
 		logger.Error("redis get error", logger.Err(err))
 		RetryOrDeadLetter(ch, msg, err) // Redis异常，退避重试，超过上限转死信
 		return

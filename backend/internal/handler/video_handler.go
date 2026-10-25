@@ -128,6 +128,7 @@ func (h *VideoHandler) VideoDetail(ctx *gin.Context) {
 	videoIDStr := ctx.Param("id")
 	videoID, err := strconv.ParseUint(videoIDStr, 10, 64)
 	if err != nil || videoID == 0 {
+		logger.Warn("invalid video id", logger.String("video_id", videoIDStr), logger.Err(err))
 		response.FailResponse(ctx, "视频ID不合法")
 		return
 	}
@@ -138,6 +139,7 @@ func (h *VideoHandler) VideoDetail(ctx *gin.Context) {
 	// 调用service处理
 	detail, err := h.VideoService.VideoDetail(ctx, uint(videoID), userID)
 	if err != nil {
+		logger.Error("get video detail failed", logger.Uint("video_id", uint(videoID)), logger.Uint("user_id", userID), logger.Err(err))
 		response.FailResponse(ctx, "视频不存在")
 		return
 	}

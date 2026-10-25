@@ -11,11 +11,7 @@ import (
 	"feedsystem/internal/utils/jwt"
 	"feedsystem/internal/utils/logger"
 	"fmt"
-	"io"
 	"mime/multipart"
-	"os"
-	"path"
-	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -47,10 +43,10 @@ var (
 	ErrPasswordTooLong = errors.New("password exceeds 72 bytes")
 	// ErrPasswordWeak 密码强度不足
 	ErrPasswordWeak = errors.New("password is too weak")
-	// ErrInvalidFileSize 上传文件大小不合法
-	ErrInvalidFileSize = errors.New("invalid file size")
-	// ErrInvalidFileType 上传文件后缀或真实内容类型不合法
-	ErrInvalidFileType = errors.New("invalid file type")
+	// ErrInvalidFileSize 上传文件大小不合法，复用 utils/file 中的统一定义
+	ErrInvalidFileSize = file.ErrInvalidFileSize
+	// ErrInvalidFileType 上传文件后缀或真实内容类型不合法，复用 utils/file 中的统一定义
+	ErrInvalidFileType = file.ErrInvalidFileType
 	// ErrInvalidAvatarURL 头像地址不是本服务静态资源路径
 	ErrInvalidAvatarURL = errors.New("invalid avatar url")
 	// ErrNoFieldsToUpdate 更新资料时没有任何可更新字段
@@ -186,12 +182,12 @@ func (s *UserService) Login(ctx context.Context, username, password string) (acc
 	// 生成访问令牌和刷新令牌
 	accessToken, err = jwt.GenerateToken(user.ID, user.UserName)
 	if err != nil {
-		return "", "", err
+		return "", "", fmt.Errorf("generate access token for user %d: %w", user.ID, err)
 	}
 
 	refreshToken, err = jwt.GenerateRefreshToken(user.ID)
 	if err != nil {
-		return "", "", err
+		return "", "", fmt.Errorf("generate refresh token for user %d: %w", user.ID, err)
 	}
 
 	// 缓存禁用时无法持久化refresh token，仅返回令牌，不阻断登录主流程
@@ -285,12 +281,12 @@ func (s *UserService) RefreshToken(ctx context.Context, refreshToken string, old
 	// 生成新的访问令牌和刷新令牌
 	newAccessToken, err = jwt.GenerateToken(user.ID, user.UserName)
 	if err != nil {
-		return "", "", 0, "", err
+		return "", "", 0, "", fmt.Errorf("generate new access token for user %d: %w", user.ID, err)
 	}
 
 	newRefreshToken, err = jwt.GenerateRefreshToken(user.ID)
 	if err != nil {
-		return "", "", 0, "", err
+		return "", "", 0, "", fmt.Errorf("generate new refresh token for user %d: %w", user.ID, err)
 	}
 
 	// 将新refreshToken写入Redis，单个 token 独立 TTL
@@ -342,7 +338,7 @@ func (s *UserService) Logout(ctx context.Context, userID uint, refreshToken, acc
 	err = s.cache.Delete(ctx, redisKey)
 	if err != nil {
 		logger.Error("delete refresh token from redis failed", logger.Err(err))
-		return fmt.Errorf("failed to delete refresh token")
+		return fmt.Errorf("delete refresh token for user %d: %w", userID, err)
 	}
 	err = s.cache.RemoveUserRefreshSetItem(ctx, userID, refreshToken) // 从用户的refresh token集合中移除旧的refresh token
 	if err != nil {
@@ -360,7 +356,7 @@ func (s *UserService) Logout(ctx context.Context, userID uint, refreshToken, acc
 	err = s.cache.AddTokenToBlacklist(ctx, accessToken, ttl)
 	if err != nil {
 		logger.Error("add access token to blacklist failed", logger.Err(err))
-		return fmt.Errorf("failed to blacklist access token")
+		return fmt.Errorf("blacklist access token for user %d: %w", userID, err)
 	}
 
 	return nil
@@ -371,8 +367,8 @@ func (s *UserService) GetProfile(ctx context.Context, userID uint) (*dto.Profile
 	// 根据用户ID查询数据库
 	user, err := s.UserRepo.FindByID(ctx, userID)
 	if err != nil {
-		logger.Error("get user profile failed", logger.Err(err))
-		return nil, err
+		logger.Error("get user profile failed", logger.Uint("user_id", userID), logger.Err(err))
+		return nil, fmt.Errorf("get user profile %d: %w", userID, err)
 	}
 
 	// 组装脱敏返回
@@ -440,79 +436,8 @@ func (s *UserService) UpdateProfile(ctx context.Context, userID uint, req dto.Up
 
 // UploadAvatar 上传用户头像
 func (s *UserService) UploadAvatar(ctx context.Context, userID uint, fh *multipart.FileHeader) (string, error) {
-	const maxSize = 10 << 20 // 设置最大文件大小为10MB
-	if fh.Size <= 0 || fh.Size > maxSize {
-		logger.Warn("invalid avatar file size", logger.Int64("size", fh.Size))
-		return "", fmt.Errorf("%w: size=%d", ErrInvalidFileSize, fh.Size)
-	}
-
-	// 检查文件扩展名是否合法
-	ext := strings.ToLower(filepath.Ext(fh.Filename)) // 获取文件扩展名并转换为小写
-	switch ext {
-	case ".jpg", ".jpeg", ".png", ".webp":
-	default:
-		logger.Warn("invalid avatar file type", logger.String("ext", ext))
-		return "", fmt.Errorf("%w: ext=%s", ErrInvalidFileType, ext)
-	}
-
-	// 创建用户头像存储目录
-	dir := filepath.Join(".run", "upload", "avatars", strconv.FormatUint(uint64(userID), 10)) // 拼接目录路径
-	if err := os.MkdirAll(dir, 0o755); err != nil {                                           // 创建目录，如果目录已存在则不会报错
-		logger.Error("create avatar directory failed", logger.Err(err))
-		return "", fmt.Errorf("failed to create directory: %w", err)
-	}
-
-	// 生成随机文件名
-	filename, err := file.RandHex(16) // 生成16字节的随机十六进制字符串作为文件名
-	if err != nil {
-		logger.Error("generate avatar filename failed", logger.Err(err))
-		return "", fmt.Errorf("failed to generate random filename: %w", err)
-	}
-	filename = filename + ext // 拼接完整文件名
-
-	// 拼接完整文件路径
-	absPath := filepath.Join(dir, filename)
-
-	// 保存上传的文件到指定路径，由于service层不能绑定gin.Context，所以这里使用io.Copy来保存文件
-	// 打开上传的文件
-	srcFile, err := fh.Open()
-	if err != nil {
-		return "", fmt.Errorf("open upload file failed: %w", err)
-	}
-	defer srcFile.Close() // 注册延迟关闭文件句柄
-
-	// 读取文件头嗅探真实 MIME，并与后缀交叉校验，防止伪造 .png 后缀上传任意内容
-	mimeType, body, err := detectUploadMIME(srcFile)
-	if err != nil {
-		return "", fmt.Errorf("detect uploaded avatar type failed: %w", err)
-	}
-	if !uploadMIMEMatchesExt(ext, mimeType) {
-		logger.Warn("invalid avatar content type", logger.String("ext", ext), logger.String("mime", mimeType))
-		return "", fmt.Errorf("%w: ext=%s content=%s", ErrInvalidFileType, ext, mimeType)
-	}
-
-	// 创建本地目标文件
-	dstFile, err := os.Create(absPath)
-	if err != nil {
-		return "", fmt.Errorf("create target file failed: %w", err)
-	}
-
-	// 拷贝流写入磁盘；失败时清理半截文件，避免残留
-	_, copyErr := io.Copy(dstFile, body)
-	closeErr := dstFile.Close()
-	if copyErr != nil {
-		_ = os.Remove(absPath)
-		return "", fmt.Errorf("copy file content failed: %w", copyErr)
-	}
-	if closeErr != nil {
-		_ = os.Remove(absPath)
-		return "", fmt.Errorf("close target file failed: %w", closeErr)
-	}
-
-	// 返回相对路径，供handler层拼接成http可访问URL
-	urlPath := path.Join("/upload", "avatars", strconv.FormatUint(uint64(userID), 10), filename)
-
-	return urlPath, nil
+	// 统一复用 utils/file 中的大小、后缀与真实 MIME 校验及落盘逻辑
+	return file.SaveUpload(fh, userID, file.AvatarUploadSpec)
 }
 
 // ChangePassword 修改用户密码
@@ -525,8 +450,8 @@ func (s *UserService) ChangePassword(ctx context.Context, userID uint, oldPasswo
 	// 查找用户
 	user, err := s.UserRepo.FindByID(ctx, userID)
 	if err != nil {
-		logger.Error("find user in change password failed", logger.Err(err))
-		return fmt.Errorf("user not found")
+		logger.Error("find user in change password failed", logger.Uint("user_id", userID), logger.Err(err))
+		return fmt.Errorf("find user %d for change password: %w", userID, err)
 	}
 
 	// 验证旧密码
@@ -539,14 +464,14 @@ func (s *UserService) ChangePassword(ctx context.Context, userID uint, oldPasswo
 	hashedNewPassword, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
 	if err != nil {
 		logger.Error("hash new password failed", logger.Err(err))
-		return fmt.Errorf("failed to hash new password")
+		return fmt.Errorf("hash new password for user %d: %w", userID, err)
 	}
 
 	// 更新密码
 	err = s.UserRepo.UpdatePassword(ctx, userID, string(hashedNewPassword))
 	if err != nil {
-		logger.Error("update password failed", logger.Err(err))
-		return fmt.Errorf("failed to update password")
+		logger.Error("update password failed", logger.Uint("user_id", userID), logger.Err(err))
+		return fmt.Errorf("update password for user %d: %w", userID, err)
 	}
 
 	// 缓存禁用时无法写入黑名单/清理refresh token，跳过缓存操作，密码已在数据库更新完成
@@ -567,8 +492,8 @@ func (s *UserService) ChangePassword(ctx context.Context, userID uint, oldPasswo
 	if ttl > 0 { // 如果剩余有效期大于0，才加入黑名单
 		err = s.cache.AddTokenToBlacklist(ctx, accessToken, ttl)
 		if err != nil {
-			logger.Error("add access token to blacklist failed", logger.Err(err))
-			return fmt.Errorf("failed to blacklist access token: %w", err)
+			logger.Error("add access token to blacklist failed", logger.Uint("user_id", userID), logger.Err(err))
+			return fmt.Errorf("blacklist access token for user %d: %w", userID, err)
 		}
 	}
 
@@ -580,7 +505,7 @@ func (s *UserService) FindByID(ctx context.Context, userID uint) (*dto.ProfileRe
 	user, err := s.UserRepo.FindByID(ctx, userID)
 	if err != nil {
 		logger.Error("find user by ID failed", logger.Uint("user_id", userID), logger.Err(err))
-		return nil, fmt.Errorf("user not found")
+		return nil, fmt.Errorf("find user %d: %w", userID, err)
 	}
 
 	return &dto.ProfileResponse{
@@ -600,7 +525,7 @@ func (s *UserService) FindByUsername(ctx context.Context, username string) (*dto
 	user, err := s.UserRepo.FindByUsername(ctx, username)
 	if err != nil {
 		logger.Error("find user by username failed", logger.String("username", username), logger.Err(err))
-		return nil, fmt.Errorf("user not found")
+		return nil, fmt.Errorf("find user by username %q: %w", username, err)
 	}
 
 	return &dto.ProfileResponse{

@@ -5,6 +5,7 @@ import (
 	"feedsystem/internal/dto"
 	"feedsystem/internal/model"
 	"feedsystem/internal/repo"
+	"feedsystem/internal/utils/logger"
 	"fmt"
 	"strconv"
 	"time"
@@ -82,6 +83,7 @@ func parseTimeFeedCursor(cursor dto.FeedCursor) (time.Time, uint, bool, error) {
 func (s *FeedService) buildAuthorInfoMap(ctx context.Context, authorIDs []uint) map[uint]authorInfo {
 	authorMap := make(map[uint]authorInfo)
 	if s.userService == nil {
+		logger.Warn("user service unavailable, feed author info will be empty")
 		return authorMap
 	}
 
@@ -92,6 +94,8 @@ func (s *FeedService) buildAuthorInfoMap(ctx context.Context, authorIDs []uint) 
 
 		author, err := s.userService.FindByID(ctx, authorID)
 		if err != nil {
+			// 单个作者信息缺失不影响整条 feed 读取，降级为空作者字段
+			logger.Warn("get feed author info failed", logger.Uint("author_id", authorID), logger.Err(err))
 			continue
 		}
 		authorMap[authorID] = authorInfo{
@@ -138,21 +142,21 @@ func (s *FeedService) assembleFeedItems(ctx context.Context, loginUserID uint, r
 		var err error
 		isLikeMap, err = s.likeService.BatchGetIsLike(ctx, loginUserID, vidList)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("batch get like status for user %d: %w", loginUserID, err)
 		}
 		isFollowMap, err = s.socialService.BatchIsFollow(ctx, loginUserID, authorUserIDList)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("batch get follow status for user %d: %w", loginUserID, err)
 		}
 	}
 	// 计数，不管游客还是登录，都要拿计数展示
 	likeCntMap, err := s.likeService.BatchGetLikeCount(ctx, vidList)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("batch get like count: %w", err)
 	}
 	commentCntMap, err = s.commentService.BatchGetCommentCount(ctx, vidList)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("batch get comment count: %w", err)
 	}
 
 	// 组装VO
@@ -207,11 +211,11 @@ func (s *FeedService) ListLatest(ctx context.Context, loginUserID uint, cursor d
 	}
 	rawVideos, err := s.feedRepo.ListLatest(ctx, lastCreatedAt, lastVid, limit)
 	if err != nil {
-		return dto.FeedListResp{}, err
+		return dto.FeedListResp{}, fmt.Errorf("list latest feeds: %w", err)
 	}
 	list, err := s.assembleFeedItems(ctx, loginUserID, rawVideos)
 	if err != nil {
-		return dto.FeedListResp{}, err
+		return dto.FeedListResp{}, fmt.Errorf("assemble latest feed items: %w", err)
 	}
 	return buildVideoListResp(list), nil
 }
@@ -225,7 +229,7 @@ func (s *FeedService) ListByFollowing(ctx context.Context, loginUserID uint, cur
 
 	followUserIDList, err := s.socialService.GetMyFollowUserIDList(ctx, loginUserID)
 	if err != nil {
-		return dto.FeedListResp{}, err
+		return dto.FeedListResp{}, fmt.Errorf("get following user list for user %d: %w", loginUserID, err)
 	}
 	if len(followUserIDList) == 0 {
 		return dto.FeedListResp{}, nil
@@ -233,12 +237,12 @@ func (s *FeedService) ListByFollowing(ctx context.Context, loginUserID uint, cur
 
 	rawVideos, err := s.feedRepo.ListByFollowing(ctx, followUserIDList, lastCreatedAt, lastVid, limit)
 	if err != nil {
-		return dto.FeedListResp{}, err
+		return dto.FeedListResp{}, fmt.Errorf("list following feeds: %w", err)
 	}
 
 	list, err := s.assembleFeedItems(ctx, loginUserID, rawVideos)
 	if err != nil {
-		return dto.FeedListResp{}, err
+		return dto.FeedListResp{}, fmt.Errorf("assemble following feed items: %w", err)
 	}
 
 	return buildVideoListResp(list), nil
@@ -257,12 +261,12 @@ func (s *FeedService) ListByPopularity(ctx context.Context, loginUserID uint, cu
 
 	rawVideos, err := s.feedRepo.ListByPopularity(ctx, lastPopularity, lastVid, limit)
 	if err != nil {
-		return dto.FeedListResp{}, err
+		return dto.FeedListResp{}, fmt.Errorf("list popular feeds: %w", err)
 	}
 
 	list, err := s.assembleFeedItems(ctx, loginUserID, rawVideos)
 	if err != nil {
-		return dto.FeedListResp{}, err
+		return dto.FeedListResp{}, fmt.Errorf("assemble popular feed items: %w", err)
 	}
 
 	return buildVideoListResp(list), nil
@@ -281,12 +285,12 @@ func (s *FeedService) ListByLikesCount(ctx context.Context, loginUserID uint, cu
 
 	rawVideos, err := s.feedRepo.ListByLikesCount(ctx, lastLikesCount, lastVid, limit)
 	if err != nil {
-		return dto.FeedListResp{}, err
+		return dto.FeedListResp{}, fmt.Errorf("list feeds by likes count: %w", err)
 	}
 
 	list, err := s.assembleFeedItems(ctx, loginUserID, rawVideos)
 	if err != nil {
-		return dto.FeedListResp{}, err
+		return dto.FeedListResp{}, fmt.Errorf("assemble likes count feed items: %w", err)
 	}
 
 	return buildVideoListResp(list), nil
@@ -304,12 +308,12 @@ func (s *FeedService) ListByTag(ctx context.Context, loginUserID uint, tag strin
 
 	rawVideos, err := s.feedRepo.ListByTag(ctx, tag, lastCreatedAt, lastVid, limit)
 	if err != nil {
-		return dto.FeedListResp{}, err
+		return dto.FeedListResp{}, fmt.Errorf("list feeds by tag %q: %w", tag, err)
 	}
 
 	list, err := s.assembleFeedItems(ctx, loginUserID, rawVideos)
 	if err != nil {
-		return dto.FeedListResp{}, err
+		return dto.FeedListResp{}, fmt.Errorf("assemble tag feed items for tag %q: %w", tag, err)
 	}
 
 	return buildVideoListResp(list), nil
