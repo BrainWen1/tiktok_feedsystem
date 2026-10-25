@@ -109,6 +109,12 @@ func (s *UserService) Login(ctx context.Context, username, password string) (acc
 	// 	return "", "", err
 	// }
 
+	// 缓存禁用时无法持久化refresh token，仅返回令牌，不阻断登录主流程
+	if !s.cache.IsEnabled() {
+		log.Printf("WARN: cache disabled, refresh token not persisted, userID=%d", user.ID)
+		return accessToken, refreshToken, nil
+	}
+
 	// 改用Redis缓存保存刷新令牌
 	// key 格式 refresh_token:{refreshToken字符串}，value存userID，TTL7天
 	redisKey := fmt.Sprintf("refresh_token:%s", refreshToken)
@@ -131,6 +137,11 @@ func (s *UserService) Login(ctx context.Context, username, password string) (acc
 func (s *UserService) RefreshToken(ctx context.Context, refreshToken string, OldAccessToken string) (newAccessToken string, newRefreshToken string, uid uint, uname string, err error) {
 	if refreshToken == "" {
 		return "", "", 0, "", fmt.Errorf("refresh token is empty")
+	}
+	// refresh token仅存储于Redis，缓存禁用时无法校验，返回明确错误而不是误判为令牌失效
+	if !s.cache.IsEnabled() {
+		log.Printf("ERROR: cache disabled, cannot validate refresh token")
+		return "", "", 0, "", fmt.Errorf("refresh token service unavailable: cache disabled")
 	}
 
 	redisKey := fmt.Sprintf("refresh_token:%s", refreshToken)
@@ -241,6 +252,12 @@ func (s *UserService) Logout(ctx context.Context, userID uint, refreshToken, acc
 	// 由于我们在Redis中使用的key是 refresh_token:{refreshToken字符串}，而没有直接存储userID到key中
 	// 所以我们无法直接通过userID删除所有相关的refresh token
 	// 因此，我们需要在用户登出时，前端传递当前的refresh token，服务端根据这个token删除对应的缓存
+
+	// 缓存禁用时无法校验与撤销refresh token，跳过缓存操作，登出本身不返回错误
+	if !s.cache.IsEnabled() {
+		log.Printf("WARN: cache disabled, skip refresh token revocation on logout, userID=%d", userID)
+		return nil
+	}
 
 	// 获取refresh token对应的userID，与access token中解析出的userID进行比对，确保是同一个用户在登出
 	redisKey := fmt.Sprintf("refresh_token:%s", refreshToken)
@@ -440,6 +457,12 @@ func (s *UserService) ChangePassword(ctx context.Context, userID uint, oldPasswo
 	if err != nil {
 		log.Printf("Error updating password in ChangePassword: %v", err)
 		return fmt.Errorf("failed to update password")
+	}
+
+	// 缓存禁用时无法写入黑名单/清理refresh token，跳过缓存操作，密码已在数据库更新完成
+	if !s.cache.IsEnabled() {
+		log.Printf("WARN: cache disabled, skip token revocation after password change, userID=%d", userID)
+		return nil
 	}
 
 	// 拉黑access token

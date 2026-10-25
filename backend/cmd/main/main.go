@@ -77,17 +77,16 @@ func main() {
 
 	// Redis
 	cache := cache.NewRedisCache(config.AppConfig.Redis_addr, config.AppConfig.Redis_password, config.AppConfig.Redis_db)
+	defer cache.Close() // 注册关闭Redis连接的延迟调用
 
 	pingCtx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond) // 设置超时时间为300毫秒
 	defer cancel()                                                                     // 确保在函数退出时取消上下文，以释放资源
 
 	if err := cache.Ping(pingCtx); err != nil { // 检查Redis连接是否正常
-		log.Printf("Redis not available (cache disabled): %v", err)
-		_ = cache.Close()
-		cache = nil
-		return
+		// Redis不可用时降级运行：禁用缓存，业务走纯数据库，不阻断服务启动
+		log.Printf("ERROR: Redis not available, cache disabled, fallback to database: %v", err)
+		cache.Disable()
 	} else {
-		defer cache.Close() // 注册关闭Redis连接的延迟调用
 		log.Printf("Redis connected (cache enabled)")
 	}
 

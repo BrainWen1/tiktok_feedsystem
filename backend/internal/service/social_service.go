@@ -642,6 +642,17 @@ func (s *SocialService) BatchIsFollow(ctx context.Context, loginUid uint, author
 	if loginUid == 0 || len(authorUidList) == 0 {
 		return resMap, nil
 	}
+	// 缓存禁用时直接按数据库关注关系查询
+	if !s.cache.IsEnabled() {
+		for _, auid := range authorUidList {
+			isFollowing, err := s.SocialRepo.IsFollowing(ctx, loginUid, auid)
+			if err != nil {
+				return nil, fmt.Errorf("failed to query follow relation from db for user %d target %d: %w", loginUid, auid, err)
+			}
+			resMap[auid] = isFollowing
+		}
+		return resMap, nil
+	}
 	key := fmt.Sprintf("%s%d", socialBloggersKey, loginUid)
 	for _, auid := range authorUidList {
 		isMember, err := s.cache.ZIsMember(ctx, key, strconv.FormatUint(uint64(auid), 10))

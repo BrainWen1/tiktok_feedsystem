@@ -327,7 +327,8 @@ func (s *VideoService) setCached(ctx context.Context, cacheKey string, video *mo
 func (s *VideoService) getDetail(ctx context.Context, vid uint) (*model.Video, error) {
 	cacheKey := fmt.Sprintf("video_detail:%d", vid) // Redis缓存key
 
-	if s.cache != nil {
+	// 缓存禁用时跳过缓存与分布式锁，直接走数据库
+	if s.cache.IsEnabled() {
 		//第一次读取缓存
 		if v, ok := s.getCached(ctx, cacheKey); ok {
 			log.Printf("Cache hit for video %d", vid) // [日志] 缓存命中
@@ -387,7 +388,7 @@ func (s *VideoService) getDetail(ctx context.Context, vid uint) (*model.Video, e
 	if err != nil {
 		return nil, err
 	}
-	if s.cache != nil {
+	if s.cache.IsEnabled() {
 		err = s.setCached(ctx, cacheKey, video)
 		if err != nil {
 			return nil, err

@@ -9,6 +9,7 @@ import (
 	"feedsystem/internal/repo"
 	"fmt"
 	"log"
+	"strconv"
 )
 
 const (
@@ -138,6 +139,21 @@ func (s *LikeService) BatchGetIsLike(ctx context.Context, loginUid uint, vidList
 	if loginUid == 0 || len(vidList) == 0 {
 		return resMap, nil
 	}
+	// 缓存禁用时直接按数据库点赞记录查询
+	if !s.cache.IsEnabled() {
+		for _, vid := range vidList {
+			vidNum, err := strconv.ParseUint(vid, 10, 64)
+			if err != nil {
+				return nil, fmt.Errorf("invalid video id %q: %w", vid, err)
+			}
+			isLiked, err := s.likeRepo.IsLiked(ctx, loginUid, uint(vidNum))
+			if err != nil {
+				return nil, fmt.Errorf("failed to query like status from db for user %d video %d: %w", loginUid, vidNum, err)
+			}
+			resMap[vid] = isLiked
+		}
+		return resMap, nil
+	}
 
 	// 缓存优先，批量查redis zset like:video:{vid} 或者 like:user:{uid}
 	// 创建一个包含所有需要检查的key的切片
@@ -161,6 +177,21 @@ func (s *LikeService) BatchGetIsLike(ctx context.Context, loginUid uint, vidList
 func (s *LikeService) BatchGetLikeCount(ctx context.Context, vidList []string) (map[string]int64, error) {
 	countMap := make(map[string]int64)
 	if len(vidList) == 0 {
+		return countMap, nil
+	}
+	// 缓存禁用时直接按数据库点赞表统计
+	if !s.cache.IsEnabled() {
+		for _, vid := range vidList {
+			vidNum, err := strconv.ParseUint(vid, 10, 64)
+			if err != nil {
+				return nil, fmt.Errorf("invalid video id %q: %w", vid, err)
+			}
+			cnt, err := s.likeRepo.CountByVideo(ctx, uint(vidNum))
+			if err != nil {
+				return nil, fmt.Errorf("failed to count likes from db for video %d: %w", vidNum, err)
+			}
+			countMap[vid] = cnt
+		}
 		return countMap, nil
 	}
 	for _, vid := range vidList {

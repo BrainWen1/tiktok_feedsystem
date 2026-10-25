@@ -39,6 +39,16 @@ func (r *LikeRepo) IsLiked(ctx context.Context, uid, vid uint) (bool, error) {
 	return count > 0, nil
 }
 
+// CountByVideo 统计视频的点赞总数，供缓存禁用时降级查询
+func (r *LikeRepo) CountByVideo(ctx context.Context, vid uint) (int64, error) {
+	var count int64
+	err := r.db.WithContext(ctx).Model(&model.Like{}).Where("video_id = ?", vid).Count(&count).Error
+	if err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
 // FindVidsByUserID 根据用户id和分页信息查询用户点赞过的视频id列表
 func (r *LikeRepo) FindVidsByUserID(ctx context.Context, uid, page_num, page_size uint) ([]uint, int64, error) {
 	var videoIDs []uint

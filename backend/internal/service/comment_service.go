@@ -181,6 +181,21 @@ func (s *CommentService) BatchGetCommentCount(ctx context.Context, vidList []str
 	if len(vidList) == 0 {
 		return countMap, nil
 	}
+	// 缓存禁用时直接按数据库评论表统计
+	if !s.cache.IsEnabled() {
+		for _, vid := range vidList {
+			vidNum, err := strconv.ParseUint(vid, 10, 64)
+			if err != nil {
+				return nil, fmt.Errorf("invalid video id %q: %w", vid, err)
+			}
+			cnt, err := s.CommentRepo.CountByVideo(ctx, uint(vidNum))
+			if err != nil {
+				return nil, fmt.Errorf("failed to count comments from db for video %d: %w", vidNum, err)
+			}
+			countMap[vid] = cnt
+		}
+		return countMap, nil
+	}
 	for _, vid := range vidList {
 		cnt, err := cache.ConvInt64(s.cache.Get(ctx, fmt.Sprintf("comment:video:cnt:%s", vid)))
 		if err != nil {
