@@ -3,8 +3,8 @@ package main
 import (
 	"context"
 	"errors"
-	"log"
 	"net/http"
+	"os"
 	"os/signal"
 	"syscall"
 	"time"
@@ -16,6 +16,7 @@ import (
 	"feedsystem/internal/infra/mq"
 	"feedsystem/internal/model"
 	"feedsystem/internal/router"
+	"feedsystem/internal/utils/logger"
 
 	"github.com/joho/godotenv"
 )
@@ -26,21 +27,27 @@ const (
 )
 
 func main() {
+	// 日志必须在加载配置、启动任何 goroutine 之前初始化，避免启动期日志丢失
+	if err := logger.Init(os.Getenv("LOG_LEVEL")); err != nil {
+		logger.Warn("invalid log level, fallback to info", logger.Err(err))
+	}
+	defer logger.Sync()
+
 	// 加载 .env（本地开发）
 	if err := godotenv.Load(); err != nil {
-		log.Println(".env not found; continuing")
+		logger.Info(".env not found; continuing")
 	}
 
 	// 加载配置
 	err := config.LoadConfig()
 	if err != nil {
-		log.Fatalf("Failed to load config: %v", err)
+		logger.Fatal("failed to load config", logger.Err(err))
 	}
 
 	// 使用配置连接数据库、Redis等服务
 	db, err := database.ConnectDB(config.AppConfig.DB_dsn)
 	if err != nil {
-		log.Fatalf("Failed to connect to database: %v", err)
+		logger.Fatal("failed to connect to database", logger.Err(err))
 	}
 
 	database.AutoMigrate(db, &model.User{}, &model.Video{}, &model.Like{}, &model.Comment{}, &model.Social{}, &model.VideoTag{}) // 自动迁移数据库表结构
@@ -56,19 +63,19 @@ func main() {
 
 	if err := redisCache.Ping(pingCtx); err != nil { // 检查Redis连接是否正常
 		// Redis不可用时降级运行：禁用缓存，业务走纯数据库，不阻断服务启动
-		log.Printf("ERROR: Redis not available, cache disabled, fallback to database: %v", err)
+		logger.Error("redis not available, cache disabled, fallback to database", logger.Err(err))
 		redisCache.Disable()
 	} else {
-		log.Printf("Redis connected (cache enabled)")
+		logger.Info("redis connected", logger.Bool("cache_enabled", true))
 	}
 
 	// RabbitMQ
 	rmq, err := mq.NewRabbitMQ()
 	if err != nil {
 		// MQ不可用时降级运行：NewRabbitMQ已返回禁用的合法实例，投递由service层回退数据库
-		log.Printf("WARN: RabbitMQ unavailable, mq disabled, service continues: %v", err)
+		logger.Warn("rabbitmq unavailable, mq disabled, service continues", logger.Err(err))
 	} else {
-		log.Printf("RabbitMQ connected")
+		logger.Info("rabbitmq connected")
 	}
 	defer rmq.Close() // 禁用实例的Close为空操作，统一延迟关闭
 
@@ -94,7 +101,7 @@ func main() {
 
 	serverErr := make(chan error, 1)
 	go func() {
-		log.Printf("Server is running on %s", serverAddr)
+		logger.Info("server is running", logger.String("addr", serverAddr))
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			serverErr <- err
 		}
@@ -102,18 +109,18 @@ func main() {
 
 	select {
 	case err := <-serverErr:
-		log.Printf("Server error: %v", err)
+		logger.Error("server error", logger.Err(err))
 	case <-ctx.Done():
-		log.Println("Shutdown signal received, shutting down server...")
+		logger.Info("shutdown signal received, shutting down server")
 	}
 
 	// 停止接收新请求，等待在途请求完成；超时后强制关闭
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer shutdownCancel()
 	if err := srv.Shutdown(shutdownCtx); err != nil {
-		log.Printf("Server graceful shutdown failed: %v", err)
+		logger.Error("server graceful shutdown failed", logger.Err(err))
 	} else {
-		log.Println("Server stopped gracefully")
+		logger.Info("server stopped gracefully")
 	}
 	// main 返回后按 LIFO 顺序执行 defer：关闭 MQ -> Redis -> DB
 }

@@ -3,10 +3,11 @@ package mq
 import (
 	"context"
 	"errors"
-	"feedsystem/internal/model"
-	"log"
 	"sync/atomic"
 	"time"
+
+	"feedsystem/internal/model"
+	"feedsystem/internal/utils/logger"
 
 	amqp "github.com/rabbitmq/amqp091-go"
 )
@@ -56,7 +57,7 @@ type CommentEvent struct {
 func NewCommentMQ(base *RabbitMQ) (*CommentMQ, error) {
 	c := &CommentMQ{}
 	if base == nil || !base.IsEnabled() {
-		log.Printf("WARN: RabbitMQ disabled, CommentMQ disabled")
+		logger.Warn("rabbitmq disabled, CommentMQ disabled")
 		c.Disable()
 		return c, ErrMQDisabled
 	}
@@ -64,14 +65,14 @@ func NewCommentMQ(base *RabbitMQ) (*CommentMQ, error) {
 	// 创建一个新的 channel
 	ch, err := base.NewChannel()
 	if err != nil {
-		log.Printf("ERROR: failed to create channel for CommentMQ, CommentMQ disabled: %v", err)
+		logger.Error("create channel for CommentMQ failed, CommentMQ disabled", logger.Err(err))
 		c.Disable()
 		return c, err
 	}
 	// 声明交换机和队列，并绑定它们
 	if err := DeclareTopic(ch, commentExchange, commentQueue, commentBindingKey); err != nil {
 		ch.Close()
-		log.Printf("ERROR: failed to declare exchange/queue for CommentMQ, CommentMQ disabled: %v", err)
+		logger.Error("declare exchange/queue for CommentMQ failed, CommentMQ disabled", logger.Err(err))
 		c.Disable()
 		return c, err
 	}

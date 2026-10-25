@@ -4,8 +4,8 @@ import (
 	"feedsystem/internal/dto"
 	"feedsystem/internal/handler/middleware"
 	"feedsystem/internal/service"
+	"feedsystem/internal/utils/logger"
 	"feedsystem/internal/utils/response"
-	"log"
 
 	"github.com/gin-gonic/gin"
 )
@@ -23,18 +23,18 @@ func (h *FeedHandler) FeedListLatest(c *gin.Context) {
 	// 解析请求参数
 	var req dto.FeedListReq
 	if err := c.ShouldBindQuery(&req); err != nil {
-		log.Printf("Failed to bind query parameters: %v", err)
+		logger.Warn("bind feed query failed", logger.Err(err))
 		response.FailResponse(c, "请求参数错误")
 		return
 	}
 
 	// 获取登录用户ID，如果未登录则为0
-	loginUid := middleware.TryGetUID(c)
+	loginUserID := middleware.TryGetUserID(c)
 
 	// 调用服务层获取视频列表
-	list, err := h.feedSvc.ListLatest(c.Request.Context(), loginUid, req.Cursor, req.Limit)
+	list, err := h.feedSvc.ListLatest(c.Request.Context(), loginUserID, req.Cursor, req.Limit)
 	if err != nil {
-		log.Printf("Failed to fetch latest feeds: %v", err)
+		logger.Error("fetch latest feeds failed", logger.Uint("login_user_id", loginUserID), logger.Err(err))
 		response.ServerErrorResponse(c, "获取视频流失败，请稍后重试")
 		return
 	}
@@ -46,18 +46,18 @@ func (h *FeedHandler) FeedListByFollowing(c *gin.Context) {
 	// 解析请求参数
 	var req dto.FeedListReq
 	if err := c.ShouldBindQuery(&req); err != nil {
-		log.Printf("Failed to bind query parameters: %v", err)
+		logger.Warn("bind feed query failed", logger.Err(err))
 		response.FailResponse(c, "请求参数错误")
 		return
 	}
 
 	// 获取登录用户ID，如果未登录则为0
-	loginUid := middleware.TryGetUID(c)
+	loginUserID := middleware.TryGetUserID(c)
 
 	// 调用服务层获取视频列表
-	list, err := h.feedSvc.ListByFollowing(c.Request.Context(), loginUid, req.Cursor, req.Limit)
+	list, err := h.feedSvc.ListByFollowing(c.Request.Context(), loginUserID, req.Cursor, req.Limit)
 	if err != nil {
-		log.Printf("Failed to fetch following feeds: %v", err)
+		logger.Error("fetch following feeds failed", logger.Uint("login_user_id", loginUserID), logger.Err(err))
 		response.ServerErrorResponse(c, "获取关注视频流失败，请稍后重试")
 		return
 	}
@@ -69,18 +69,18 @@ func (h *FeedHandler) FeedListByPopularity(c *gin.Context) {
 	// 解析请求参数
 	var req dto.FeedListReq
 	if err := c.ShouldBindQuery(&req); err != nil {
-		log.Printf("Failed to bind query parameters: %v", err)
+		logger.Warn("bind feed query failed", logger.Err(err))
 		response.FailResponse(c, "请求参数错误")
 		return
 	}
 
 	// 获取登录用户ID，如果未登录则为0
-	loginUid := middleware.TryGetUID(c)
+	loginUserID := middleware.TryGetUserID(c)
 
 	// 调用服务层获取视频列表
-	list, err := h.feedSvc.ListByPopularity(c.Request.Context(), loginUid, req.Cursor, req.Limit)
+	list, err := h.feedSvc.ListByPopularity(c.Request.Context(), loginUserID, req.Cursor, req.Limit)
 	if err != nil {
-		log.Printf("Failed to fetch popular feeds: %v", err)
+		logger.Error("fetch popular feeds failed", logger.Uint("login_user_id", loginUserID), logger.Err(err))
 		response.ServerErrorResponse(c, "获取热门视频流失败，请稍后重试")
 		return
 	}
@@ -92,18 +92,18 @@ func (h *FeedHandler) FeedListLikesCount(c *gin.Context) {
 	// 解析请求参数
 	var req dto.FeedListReq
 	if err := c.ShouldBindQuery(&req); err != nil {
-		log.Printf("Failed to bind query parameters: %v", err)
+		logger.Warn("bind feed query failed", logger.Err(err))
 		response.FailResponse(c, "请求参数错误")
 		return
 	}
 
 	// 获取登录用户ID，如果未登录则为0
-	loginUid := middleware.TryGetUID(c)
+	loginUserID := middleware.TryGetUserID(c)
 
 	// 调用服务层获取视频列表
-	list, err := h.feedSvc.ListByLikesCount(c.Request.Context(), loginUid, req.Cursor, req.Limit)
+	list, err := h.feedSvc.ListByLikesCount(c.Request.Context(), loginUserID, req.Cursor, req.Limit)
 	if err != nil {
-		log.Printf("Failed to fetch likes count feeds: %v", err)
+		logger.Error("fetch likes count feeds failed", logger.Uint("login_user_id", loginUserID), logger.Err(err))
 		response.ServerErrorResponse(c, "获取点赞榜单失败，请稍后重试")
 		return
 	}
@@ -115,18 +115,18 @@ func (h *FeedHandler) FeedListByTag(c *gin.Context) {
 	// 解析请求参数
 	var req dto.FeedListReq
 	if err := c.ShouldBindQuery(&req); err != nil {
-		log.Printf("Failed to bind query parameters: %v", err)
+		logger.Warn("bind feed query failed", logger.Err(err))
 		response.FailResponse(c, "请求参数错误")
 		return
 	}
 
 	// 获取登录用户ID，如果未登录则为0
-	loginUid := middleware.TryGetUID(c)
+	loginUserID := middleware.TryGetUserID(c)
 
 	// 调用服务层获取视频列表
-	list, err := h.feedSvc.ListByTag(c.Request.Context(), loginUid, req.Tag, req.Cursor, req.Limit)
+	list, err := h.feedSvc.ListByTag(c.Request.Context(), loginUserID, req.Tag, req.Cursor, req.Limit)
 	if err != nil {
-		log.Printf("Failed to fetch feeds by tag: %v", err)
+		logger.Error("fetch feeds by tag failed", logger.Uint("login_user_id", loginUserID), logger.String("tag", req.Tag), logger.Err(err))
 		response.ServerErrorResponse(c, "获取标签视频流失败，请稍后重试")
 		return
 	}

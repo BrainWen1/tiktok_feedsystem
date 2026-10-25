@@ -6,11 +6,12 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"feedsystem/internal/config"
-	"log"
 	"strconv"
 	"sync/atomic"
 	"time"
+
+	"feedsystem/internal/config"
+	"feedsystem/internal/utils/logger"
 
 	amqp "github.com/rabbitmq/amqp091-go"
 )
@@ -50,14 +51,14 @@ func NewRabbitMQ() (*RabbitMQ, error) {
 	// 组装 AMQP URL
 	url := "amqp://" + cfg.MQ_Username + ":" + cfg.MQ_Password + "@" + cfg.MQ_Host + ":" + strconv.Itoa(cfg.MQ_Port) + "/"
 	// 屏蔽敏感信息，防止日志泄露：不打印含账号密码的AMQP URL
-	log.Printf("Connecting to RabbitMQ: %s:%d", cfg.MQ_Host, cfg.MQ_Port)
+	logger.Info("connecting to rabbitmq", logger.String("host", cfg.MQ_Host), logger.Int("port", cfg.MQ_Port))
 
 	r := &RabbitMQ{}
 	r.Enable() // 默认启用，连接失败后再禁用
 	// 建立连接
 	conn, err := amqp.Dial(url)
 	if err != nil {
-		log.Printf("ERROR: RabbitMQ connect failed, mq disabled: %v", err)
+		logger.Error("rabbitmq connect failed, mq disabled", logger.Err(err))
 		r.Disable()
 		return r, err // 返回禁用实例，调用方可继续启动服务
 	}
@@ -134,7 +135,7 @@ func DeclareTopic(ch *amqp.Channel, exchange string, queue string, bindingKey st
 	}
 	// 声明死信交换机和队列
 	if err := DeclareDLX(ch, queue); err != nil {
-		log.Printf("DLX declare failed for %s: %v", queue, err)
+		logger.Warn("declare DLX failed", logger.String("queue", queue), logger.Err(err))
 	}
 	return nil
 }

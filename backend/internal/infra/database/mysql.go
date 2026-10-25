@@ -4,8 +4,9 @@ package database
 
 import (
 	"fmt"
-	"log"
 	"time"
+
+	"feedsystem/internal/utils/logger"
 
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
@@ -21,7 +22,7 @@ func ConnectDB(dsn string) (*gorm.DB, error) {
 	})
 
 	if err != nil {
-		log.Fatalf("failed to connect database: %v", err)
+		logger.Fatal("failed to connect database", logger.Err(err))
 	}
 
 	if err = configConnPool(db); err != nil {
@@ -59,7 +60,7 @@ func configConnPool(gormDB *gorm.DB) error {
 func AutoMigrate(db *gorm.DB, models ...interface{}) {
 	err := db.AutoMigrate(models...)
 	if err != nil {
-		log.Fatalf("failed to auto migrate: %v", err)
+		logger.Fatal("failed to auto migrate", logger.Err(err))
 	}
 }
 
@@ -71,10 +72,10 @@ func CloseDB() {
 
 	sqlDB, err := db.DB()
 	if err != nil {
-		log.Fatalf("failed to get sqlDB: %v", err)
+		logger.Fatal("failed to get sqlDB", logger.Err(err))
 	}
 	err = sqlDB.Close()
 	if err != nil {
-		log.Fatalf("failed to close database: %v", err)
+		logger.Fatal("failed to close database", logger.Err(err))
 	}
 }

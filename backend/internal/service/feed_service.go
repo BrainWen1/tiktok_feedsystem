@@ -41,11 +41,6 @@ func NewFeedService(
 	}
 }
 
-// intToString
-func intToString(num uint) string {
-	return fmt.Sprintf("%d", num)
-}
-
 func normalizeFeedLimit(limit int) int {
 	if limit <= 0 || limit > defaultFeedLimit {
 		return defaultFeedLimit
@@ -109,43 +104,43 @@ func (s *FeedService) buildAuthorInfoMap(ctx context.Context, authorIDs []uint) 
 }
 
 // assembleFeedItems 【公共复用函数】原始model.Video切片 → 组装 []dto.FeedItemResp
-// loginUid = 0 代表游客，直接is_like=false is_follow=false，跳过批量查询
-func (s *FeedService) assembleFeedItems(ctx context.Context, loginUid uint, rawVideos []model.Video) ([]dto.FeedItemResp, error) {
+// loginUserID = 0 代表游客，直接is_like=false is_follow=false，跳过批量查询
+func (s *FeedService) assembleFeedItems(ctx context.Context, loginUserID uint, rawVideos []model.Video) ([]dto.FeedItemResp, error) {
 	if len(rawVideos) == 0 {
 		return []dto.FeedItemResp{}, nil
 	}
 
 	var vidList []string
-	authorUidSet := make(map[uint]struct{})
+	authorUserIDSet := make(map[uint]struct{})
 
 	for _, v := range rawVideos {
-		vidList = append(vidList, intToString(v.ID))
-		authorUidSet[v.AuthorID] = struct{}{}
+		vidList = append(vidList, fmt.Sprintf("%d", v.ID))
+		authorUserIDSet[v.AuthorID] = struct{}{}
 	}
 
-	authorUidList := make([]uint, 0, len(authorUidSet))
-	for authorID := range authorUidSet {
-		authorUidList = append(authorUidList, authorID)
+	authorUserIDList := make([]uint, 0, len(authorUserIDSet))
+	for authorID := range authorUserIDSet {
+		authorUserIDList = append(authorUserIDList, authorID)
 	}
-	authorInfoMap := s.buildAuthorInfoMap(ctx, authorUidList)
+	authorInfoMap := s.buildAuthorInfoMap(ctx, authorUserIDList)
 
 	var isLikeMap map[string]bool
 	var isFollowMap map[uint]bool
 	var likeCntMap map[string]int64
 	var commentCntMap map[string]int64
 
-	if loginUid == 0 {
+	if loginUserID == 0 {
 		// 游客：短路，不走批量查询
 		isLikeMap = make(map[string]bool)
 		isFollowMap = make(map[uint]bool)
 	} else {
 		// 登录用户：批量查询状态
 		var err error
-		isLikeMap, err = s.likeService.BatchGetIsLike(ctx, loginUid, vidList)
+		isLikeMap, err = s.likeService.BatchGetIsLike(ctx, loginUserID, vidList)
 		if err != nil {
 			return nil, err
 		}
-		isFollowMap, err = s.socialService.BatchIsFollow(ctx, loginUid, authorUidList)
+		isFollowMap, err = s.socialService.BatchIsFollow(ctx, loginUserID, authorUserIDList)
 		if err != nil {
 			return nil, err
 		}
@@ -165,20 +160,20 @@ func (s *FeedService) assembleFeedItems(ctx context.Context, loginUid uint, rawV
 	for _, v := range rawVideos {
 		author := authorInfoMap[v.AuthorID]
 		respList = append(respList, dto.FeedItemResp{
-			Vid:         intToString(v.ID),
-			Title:       v.Title,
-			Desc:        v.Description,
-			VideoUrl:    v.VideoURL,
-			CoverUrl:    v.CoverURL,
-			AuthorUid:   v.AuthorID,
-			AuthorName:  author.name,
-			AvatarUrl:   author.avatar,
-			LikesCnt:    likeCntMap[intToString(v.ID)],
-			CommentsCnt: commentCntMap[intToString(v.ID)],
-			Popularity:  v.Popularity,
-			IsLike:      isLikeMap[intToString(v.ID)],
-			IsFollow:    isFollowMap[v.AuthorID],
-			CreatedAt:   v.CreatedAt,
+			Vid:          fmt.Sprintf("%d", v.ID),
+			Title:        v.Title,
+			Desc:         v.Description,
+			VideoURL:     v.VideoURL,
+			CoverURL:     v.CoverURL,
+			AuthorUserID: v.AuthorID,
+			AuthorName:   author.name,
+			AvatarURL:    author.avatar,
+			LikesCnt:     likeCntMap[fmt.Sprintf("%d", v.ID)],
+			CommentsCnt:  commentCntMap[fmt.Sprintf("%d", v.ID)],
+			Popularity:   v.Popularity,
+			IsLike:       isLikeMap[fmt.Sprintf("%d", v.ID)],
+			IsFollow:     isFollowMap[v.AuthorID],
+			CreatedAt:    v.CreatedAt,
 		})
 	}
 	return respList, nil
@@ -204,7 +199,7 @@ func buildVideoListResp(videos []dto.FeedItemResp) dto.FeedListResp {
 
 // ---------- 5个业务方法骨架 ----------
 
-func (s *FeedService) ListLatest(ctx context.Context, loginUid uint, cursor dto.FeedCursor, limit int) (dto.FeedListResp, error) {
+func (s *FeedService) ListLatest(ctx context.Context, loginUserID uint, cursor dto.FeedCursor, limit int) (dto.FeedListResp, error) {
 	limit = normalizeFeedLimit(limit)
 	lastCreatedAt, lastVid, _, err := parseTimeFeedCursor(cursor)
 	if err != nil {
@@ -214,34 +209,34 @@ func (s *FeedService) ListLatest(ctx context.Context, loginUid uint, cursor dto.
 	if err != nil {
 		return dto.FeedListResp{}, err
 	}
-	list, err := s.assembleFeedItems(ctx, loginUid, rawVideos)
+	list, err := s.assembleFeedItems(ctx, loginUserID, rawVideos)
 	if err != nil {
 		return dto.FeedListResp{}, err
 	}
 	return buildVideoListResp(list), nil
 }
 
-func (s *FeedService) ListByFollowing(ctx context.Context, loginUid uint, cursor dto.FeedCursor, limit int) (dto.FeedListResp, error) {
+func (s *FeedService) ListByFollowing(ctx context.Context, loginUserID uint, cursor dto.FeedCursor, limit int) (dto.FeedListResp, error) {
 	limit = normalizeFeedLimit(limit)
 	lastCreatedAt, lastVid, _, err := parseTimeFeedCursor(cursor)
 	if err != nil {
 		return dto.FeedListResp{}, err
 	}
 
-	followUidList, err := s.socialService.GetMyFollowUidList(ctx, loginUid)
+	followUserIDList, err := s.socialService.GetMyFollowUserIDList(ctx, loginUserID)
 	if err != nil {
 		return dto.FeedListResp{}, err
 	}
-	if len(followUidList) == 0 {
+	if len(followUserIDList) == 0 {
 		return dto.FeedListResp{}, nil
 	}
 
-	rawVideos, err := s.feedRepo.ListByFollowing(ctx, followUidList, lastCreatedAt, lastVid, limit)
+	rawVideos, err := s.feedRepo.ListByFollowing(ctx, followUserIDList, lastCreatedAt, lastVid, limit)
 	if err != nil {
 		return dto.FeedListResp{}, err
 	}
 
-	list, err := s.assembleFeedItems(ctx, loginUid, rawVideos)
+	list, err := s.assembleFeedItems(ctx, loginUserID, rawVideos)
 	if err != nil {
 		return dto.FeedListResp{}, err
 	}
@@ -249,7 +244,7 @@ func (s *FeedService) ListByFollowing(ctx context.Context, loginUid uint, cursor
 	return buildVideoListResp(list), nil
 }
 
-func (s *FeedService) ListByPopularity(ctx context.Context, loginUid uint, cursor dto.FeedCursor, limit int) (dto.FeedListResp, error) {
+func (s *FeedService) ListByPopularity(ctx context.Context, loginUserID uint, cursor dto.FeedCursor, limit int) (dto.FeedListResp, error) {
 	limit = normalizeFeedLimit(limit)
 	lastVid, _, err := parseFeedCursorVid(cursor.LastVid)
 	if err != nil {
@@ -265,7 +260,7 @@ func (s *FeedService) ListByPopularity(ctx context.Context, loginUid uint, curso
 		return dto.FeedListResp{}, err
 	}
 
-	list, err := s.assembleFeedItems(ctx, loginUid, rawVideos)
+	list, err := s.assembleFeedItems(ctx, loginUserID, rawVideos)
 	if err != nil {
 		return dto.FeedListResp{}, err
 	}
@@ -273,7 +268,7 @@ func (s *FeedService) ListByPopularity(ctx context.Context, loginUid uint, curso
 	return buildVideoListResp(list), nil
 }
 
-func (s *FeedService) ListByLikesCount(ctx context.Context, loginUid uint, cursor dto.FeedCursor, limit int) (dto.FeedListResp, error) {
+func (s *FeedService) ListByLikesCount(ctx context.Context, loginUserID uint, cursor dto.FeedCursor, limit int) (dto.FeedListResp, error) {
 	limit = normalizeFeedLimit(limit)
 	lastVid, _, err := parseFeedCursorVid(cursor.LastVid)
 	if err != nil {
@@ -289,7 +284,7 @@ func (s *FeedService) ListByLikesCount(ctx context.Context, loginUid uint, curso
 		return dto.FeedListResp{}, err
 	}
 
-	list, err := s.assembleFeedItems(ctx, loginUid, rawVideos)
+	list, err := s.assembleFeedItems(ctx, loginUserID, rawVideos)
 	if err != nil {
 		return dto.FeedListResp{}, err
 	}
@@ -297,7 +292,7 @@ func (s *FeedService) ListByLikesCount(ctx context.Context, loginUid uint, curso
 	return buildVideoListResp(list), nil
 }
 
-func (s *FeedService) ListByTag(ctx context.Context, loginUid uint, tag string, cursor dto.FeedCursor, limit int) (dto.FeedListResp, error) {
+func (s *FeedService) ListByTag(ctx context.Context, loginUserID uint, tag string, cursor dto.FeedCursor, limit int) (dto.FeedListResp, error) {
 	limit = normalizeFeedLimit(limit)
 	lastCreatedAt, lastVid, _, err := parseTimeFeedCursor(cursor)
 	if err != nil {
@@ -312,7 +307,7 @@ func (s *FeedService) ListByTag(ctx context.Context, loginUid uint, tag string, 
 		return dto.FeedListResp{}, err
 	}
 
-	list, err := s.assembleFeedItems(ctx, loginUid, rawVideos)
+	list, err := s.assembleFeedItems(ctx, loginUserID, rawVideos)
 	if err != nil {
 		return dto.FeedListResp{}, err
 	}

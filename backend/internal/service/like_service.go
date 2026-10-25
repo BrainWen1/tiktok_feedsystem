@@ -7,8 +7,8 @@ import (
 	"feedsystem/internal/infra/cache"
 	"feedsystem/internal/infra/mq"
 	"feedsystem/internal/repo"
+	"feedsystem/internal/utils/logger"
 	"fmt"
-	"log"
 	"strconv"
 	"time"
 )
@@ -16,7 +16,7 @@ import (
 // VideoDetailer 只暴露 LikeService 需要的最小视频详情能力。
 // 这里不要直接依赖完整的 VideoService，避免和 VideoService 形成初始化循环。
 type VideoDetailer interface {
-	VideoDetail(ctx context.Context, videoID uint, uid uint) (*dto.VideoDetailResponse, error)
+	VideoDetail(ctx context.Context, videoID uint, userID uint) (*dto.VideoDetailResponse, error)
 }
 
 type LikeService struct {
@@ -38,13 +38,13 @@ func (s *LikeService) SetVideoDetailer(videoDetailer VideoDetailer) {
 }
 
 // LikeVideo 点赞视频
-func (s *LikeService) LikeVideo(ctx context.Context, uid, vid uint) error {
-	if uid == 0 || vid == 0 {
-		log.Printf("Invalid uid or vid: uid=%d, vid=%d", uid, vid)
+func (s *LikeService) LikeVideo(ctx context.Context, userID, vid uint) error {
+	if userID == 0 || vid == 0 {
+		logger.Warn("invalid userID or vid", logger.Uint("user_id", userID), logger.Uint("video_id", vid))
 		return errors.New("uid and vid must be non-zero")
 	}
 	// 前置查询：拦截重复点击，减少无效MQ消息
-	isLiked, err := s.likeRepo.IsLiked(ctx, uid, vid)
+	isLiked, err := s.likeRepo.IsLiked(ctx, userID, vid)
 	if err != nil {
 		return err
 	}
@@ -53,11 +53,11 @@ func (s *LikeService) LikeVideo(ctx context.Context, uid, vid uint) error {
 	}
 
 	//组装消息
-	err = s.likeMQ.Like(ctx, uid, vid)
+	err = s.likeMQ.Like(ctx, userID, vid)
 	if err != nil {
-		log.Printf("Failed to publish like event to MQ: %v", err)
+		logger.Error("publish like event to MQ failed", logger.Err(err))
 		// MQ投递失败，降级方案：同步直接写数据库
-		err = s.likeRepo.CreateLike(ctx, uid, vid)
+		err = s.likeRepo.CreateLike(ctx, userID, vid)
 		return err
 	}
 
@@ -66,13 +66,13 @@ func (s *LikeService) LikeVideo(ctx context.Context, uid, vid uint) error {
 }
 
 // UnlikeVideo 取消点赞视频
-func (s *LikeService) UnlikeVideo(ctx context.Context, uid, vid uint) error {
-	if uid == 0 || vid == 0 {
-		log.Printf("Invalid uid or vid: uid=%d, vid=%d", uid, vid)
+func (s *LikeService) UnlikeVideo(ctx context.Context, userID, vid uint) error {
+	if userID == 0 || vid == 0 {
+		logger.Warn("invalid userID or vid", logger.Uint("user_id", userID), logger.Uint("video_id", vid))
 		return errors.New("uid and vid must be non-zero")
 	}
 	// 前置查询：拦截重复点击，减少无效MQ消息
-	isLiked, err := s.likeRepo.IsLiked(ctx, uid, vid)
+	isLiked, err := s.likeRepo.IsLiked(ctx, userID, vid)
 	if err != nil {
 		return err
 	}
@@ -81,11 +81,11 @@ func (s *LikeService) UnlikeVideo(ctx context.Context, uid, vid uint) error {
 	}
 
 	//组装消息
-	err = s.likeMQ.Unlike(ctx, uid, vid)
+	err = s.likeMQ.Unlike(ctx, userID, vid)
 	if err != nil {
-		log.Printf("Failed to publish unlike event to MQ: %v", err)
+		logger.Error("publish unlike event to MQ failed", logger.Err(err))
 		// MQ投递失败，降级方案：同步直接写数据库
-		err = s.likeRepo.DeleteLike(ctx, uid, vid)
+		err = s.likeRepo.DeleteLike(ctx, userID, vid)
 		return err
 	}
 
@@ -94,13 +94,13 @@ func (s *LikeService) UnlikeVideo(ctx context.Context, uid, vid uint) error {
 }
 
 // IsLiked 检查用户是否点赞了视频
-func (s *LikeService) IsLiked(ctx context.Context, uid, vid uint) (dto.IsLikedResponse, error) {
-	isLiked, err := s.likeRepo.IsLiked(ctx, uid, vid)
+func (s *LikeService) IsLiked(ctx context.Context, userID, vid uint) (dto.IsLikedResponse, error) {
+	isLiked, err := s.likeRepo.IsLiked(ctx, userID, vid)
 	return dto.IsLikedResponse{IsLiked: isLiked}, err
 }
 
 // ListLikedVideos 列出用户点赞过的视频，使用 (created_at, video_id) 复合游标分页。
-func (s *LikeService) ListLikedVideos(ctx context.Context, targetUid uint, visitorUid uint, cursor dto.FeedCursor, pageSize uint) (*dto.VideoListResponse, error) {
+func (s *LikeService) ListLikedVideos(ctx context.Context, targetUserID uint, visitorUserID uint, cursor dto.FeedCursor, pageSize uint) (*dto.VideoListResponse, error) {
 	if s.videoDetailer == nil {
 		return nil, errors.New("video detail service is not initialized")
 	}
@@ -121,8 +121,8 @@ func (s *LikeService) ListLikedVideos(ctx context.Context, targetUid uint, visit
 		lastCreatedAt = cursor.LastCreatedAt
 	}
 
-	// 根据 targetUid 查询用户点赞过的记录（含点赞时间，用于生成下一页游标）
-	likes, total, err := s.likeRepo.FindLikedVideoPage(ctx, targetUid, lastCreatedAt, lastVid, int(pageSize))
+	// 根据 targetUserID 查询用户点赞过的记录（含点赞时间，用于生成下一页游标）
+	likes, total, err := s.likeRepo.FindLikedVideoPage(ctx, targetUserID, lastCreatedAt, lastVid, int(pageSize))
 	if err != nil {
 		return nil, err
 	}
@@ -130,9 +130,9 @@ func (s *LikeService) ListLikedVideos(ctx context.Context, targetUid uint, visit
 	// 根据vids查询视频详情，并组装返回结果
 	resList := make([]dto.VideoDetailResponse, 0, len(likes)) // 预分配容量，避免多次扩容
 	for _, like := range likes {
-		videoDetail, err := s.videoDetailer.VideoDetail(ctx, like.VideoID, visitorUid)
+		videoDetail, err := s.videoDetailer.VideoDetail(ctx, like.VideoID, visitorUserID)
 		if err != nil {
-			log.Printf("get video detail fail vid=%d", like.VideoID)
+			logger.Error("get video detail failed", logger.Uint("video_id", like.VideoID), logger.Err(err))
 			continue
 		}
 		// dto.VideoListResponse 里保存的是值类型，所以这里要解引用后再放入切片。
@@ -154,11 +154,11 @@ func (s *LikeService) ListLikedVideos(ctx context.Context, targetUid uint, visit
 	return resp, nil
 }
 
-// BatchGetIsLike 批量查询：loginUid 是否点赞 vidList 里的视频
+// BatchGetIsLike 批量查询：loginUserID 是否点赞 vidList 里的视频
 // 返回 map[vid]bool
-func (s *LikeService) BatchGetIsLike(ctx context.Context, loginUid uint, vidList []string) (map[string]bool, error) {
+func (s *LikeService) BatchGetIsLike(ctx context.Context, loginUserID uint, vidList []string) (map[string]bool, error) {
 	resMap := make(map[string]bool)
-	if loginUid == 0 || len(vidList) == 0 {
+	if loginUserID == 0 || len(vidList) == 0 {
 		return resMap, nil
 	}
 	// 缓存禁用时直接按数据库点赞记录查询
@@ -168,25 +168,25 @@ func (s *LikeService) BatchGetIsLike(ctx context.Context, loginUid uint, vidList
 			if err != nil {
 				return nil, fmt.Errorf("invalid video id %q: %w", vid, err)
 			}
-			isLiked, err := s.likeRepo.IsLiked(ctx, loginUid, uint(vidNum))
+			isLiked, err := s.likeRepo.IsLiked(ctx, loginUserID, uint(vidNum))
 			if err != nil {
-				return nil, fmt.Errorf("failed to query like status from db for user %d video %d: %w", loginUid, vidNum, err)
+				return nil, fmt.Errorf("failed to query like status from db for user %d video %d: %w", loginUserID, vidNum, err)
 			}
 			resMap[vid] = isLiked
 		}
 		return resMap, nil
 	}
 
-	// 缓存优先：like:user:{uid} 固定为 Set，member 是 video id，
+	// 缓存优先：like:user:{userID} 固定为 Set，member 是 video id，
 	// 与消费端 SADD / SREM 写入的数据结构完全一致（P0-9）。
-	key := cache.LikeUserSetKey(loginUid)
+	key := cache.LikeUserSetKey(loginUserID)
 	members := make([]interface{}, 0, len(vidList))
 	for _, vid := range vidList {
 		members = append(members, vid)
 	}
 	isLikedList, err := s.cache.MIsMemberOfSet(ctx, key, members)
 	if err != nil {
-		return nil, fmt.Errorf("failed to batch check like status in cache for user %d: %w", loginUid, err)
+		return nil, fmt.Errorf("failed to batch check like status in cache for user %d: %w", loginUserID, err)
 	}
 	for i, vid := range vidList {
 		resMap[vid] = isLikedList[i]

@@ -9,32 +9,34 @@ import (
 	"gorm.io/gorm"
 )
 
+// LikeRepo 点赞仓库，只负责点赞表的原始 SQL 读写。
 type LikeRepo struct {
 	db *gorm.DB
 }
 
+// NewLikeRepo 创建点赞仓库
 func NewLikeRepo(db *gorm.DB) *LikeRepo {
 	return &LikeRepo{db: db}
 }
 
 // CreateLike 创建点赞记录
-func (r *LikeRepo) CreateLike(ctx context.Context, uid, vid uint) error {
+func (r *LikeRepo) CreateLike(ctx context.Context, userID, vid uint) error {
 	like := &model.Like{
-		UserID:  uid,
+		UserID:  userID,
 		VideoID: vid,
 	}
 	return r.db.WithContext(ctx).Create(like).Error
 }
 
 // DeleteLike 删除点赞记录
-func (r *LikeRepo) DeleteLike(ctx context.Context, uid, vid uint) error {
-	return r.db.WithContext(ctx).Where("user_id = ? AND video_id = ?", uid, vid).Delete(&model.Like{}).Error
+func (r *LikeRepo) DeleteLike(ctx context.Context, userID, vid uint) error {
+	return r.db.WithContext(ctx).Where("user_id = ? AND video_id = ?", userID, vid).Delete(&model.Like{}).Error
 }
 
 // IsLiked 检查用户是否点赞了视频
-func (r *LikeRepo) IsLiked(ctx context.Context, uid, vid uint) (bool, error) {
+func (r *LikeRepo) IsLiked(ctx context.Context, userID, vid uint) (bool, error) {
 	var count int64
-	err := r.db.WithContext(ctx).Model(&model.Like{}).Where("user_id = ? AND video_id = ?", uid, vid).Count(&count).Error
+	err := r.db.WithContext(ctx).Model(&model.Like{}).Where("user_id = ? AND video_id = ?", userID, vid).Count(&count).Error
 	if err != nil {
 		return false, err
 	}
@@ -65,21 +67,21 @@ func (r *LikeRepo) FindUserIDsByVideo(ctx context.Context, vid uint) ([]uint, er
 
 // FindLikedVideoPage 按点赞时间 + 视频ID复合游标分页查询用户点赞记录。
 // 返回完整 Like 记录，service 层据此同时拿到 video_id 和 created_at 生成下一页游标。
-func (r *LikeRepo) FindLikedVideoPage(ctx context.Context, uid uint, lastCreatedAt time.Time, lastVid uint, pageSize int) ([]model.Like, int64, error) {
+func (r *LikeRepo) FindLikedVideoPage(ctx context.Context, userID uint, lastCreatedAt time.Time, lastVid uint, pageSize int) ([]model.Like, int64, error) {
 	var likes []model.Like
 	var total int64
 
-	if uid == 0 {
+	if userID == 0 {
 		return nil, 0, fmt.Errorf("find liked videos: empty user id: %w", ErrInvalidArgument)
 	}
 
 	if err := r.db.WithContext(ctx).Model(&model.Like{}).
-		Where("user_id = ?", uid).
+		Where("user_id = ?", userID).
 		Count(&total).Error; err != nil {
 		return nil, 0, err
 	}
 
-	q := r.db.WithContext(ctx).Model(&model.Like{}).Where("user_id = ?", uid)
+	q := r.db.WithContext(ctx).Model(&model.Like{}).Where("user_id = ?", userID)
 	if lastVid != 0 {
 		q = q.Where("(created_at, video_id) < (?, ?)", lastCreatedAt, lastVid)
 	}

@@ -11,14 +11,14 @@ type FeedListReq struct {
 
 // FeedItemResp feed对外输出VO，聚合完成后的视频条目
 type FeedItemResp struct {
-	Vid        string `json:"vid"`
-	Title      string `json:"title"`
-	Desc       string `json:"desc"`
-	VideoUrl   string `json:"video_url"`
-	CoverUrl   string `json:"cover_url"`
-	AuthorUid  uint   `json:"author_uid"`
-	AuthorName string `json:"author_name"`
-	AvatarUrl  string `json:"avatar_url"`
+	Vid          string `json:"vid"`
+	Title        string `json:"title"`
+	Desc         string `json:"desc"`
+	VideoURL     string `json:"video_url"`
+	CoverURL     string `json:"cover_url"`
+	AuthorUserID uint   `json:"author_uid"`
+	AuthorName   string `json:"author_name"`
+	AvatarURL    string `json:"avatar_url"`
 
 	LikesCnt    int64 `json:"likes_cnt"`    // 点赞总数
 	CommentsCnt int64 `json:"comments_cnt"` // 评论总数
@@ -41,7 +41,7 @@ type FeedListResp struct {
 // 因此内层字段必须显式声明 cursor. 前缀，才能绑定 cursor.last_vid 等参数
 type FeedCursor struct {
 	LastVid        string    `json:"last_vid,omitempty" form:"cursor.last_vid"`
-	LastUid        string    `json:"last_uid,omitempty" form:"cursor.last_uid"` // 关注/粉丝列表使用，与 last_vid 语义一致，均为业务主键
+	LastUserID     string    `json:"last_uid,omitempty" form:"cursor.last_uid"` // 关注/粉丝列表使用，与 last_vid 语义一致，均为业务主键
 	LastPopularity int64     `json:"last_popularity" form:"cursor.last_popularity"`
 	LastCreatedAt  time.Time `json:"last_created_at" form:"cursor.last_created_at"`
 	LastLikesCount int64     `json:"last_likes_count" form:"cursor.last_likes_count"`

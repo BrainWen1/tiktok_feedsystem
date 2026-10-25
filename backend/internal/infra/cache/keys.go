@@ -52,13 +52,13 @@ const (
 )
 
 // LikeUserSetKey 返回用户点赞视频集合的 Redis key，全链路统一使用 Set 结构。
-func LikeUserSetKey(uid uint) string {
-	return fmt.Sprintf("%s%d", likeUserSetPrefix, uid)
+func LikeUserSetKey(userID uint) string {
+	return fmt.Sprintf("%s%d", likeUserSetPrefix, userID)
 }
 
 // LikePlaceholderKey 返回“用户未点赞该视频”的空占位 Redis key。
-func LikePlaceholderKey(uid, vid uint) string {
-	return fmt.Sprintf("%s%d:%d", likePlaceholderPrefix, uid, vid)
+func LikePlaceholderKey(userID, vid uint) string {
+	return fmt.Sprintf("%s%d:%d", likePlaceholderPrefix, userID, vid)
 }
 
 // LikeVideoZSetKey 返回视频点赞明细 ZSet 的 Redis key，member=user id，ZCard=点赞数。
@@ -82,8 +82,8 @@ func RefreshTokenKey(token string) string {
 }
 
 // RefreshSetKey 返回用户 refresh token 索引集合的 Redis key。
-func RefreshSetKey(uid uint) string {
-	return fmt.Sprintf("%s%d", refreshSetPrefix, uid)
+func RefreshSetKey(userID uint) string {
+	return fmt.Sprintf("%s%d", refreshSetPrefix, userID)
 }
 
 // BlacklistTokenKey 返回 Access Token 黑名单的 Redis key。

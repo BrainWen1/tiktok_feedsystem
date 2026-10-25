@@ -5,8 +5,8 @@ import (
 	"feedsystem/internal/dto"
 	"feedsystem/internal/handler/middleware"
 	"feedsystem/internal/service"
+	"feedsystem/internal/utils/logger"
 	"feedsystem/internal/utils/response"
-	"log"
 	"strconv"
 	"time"
 
@@ -26,7 +26,7 @@ func (h *VideoHandler) UploadVideo(ctx *gin.Context) {
 	// 获取用户ID
 	userID, _, err := getUserFromCtx(ctx)
 	if err != nil {
-		log.Printf("Failed to get user from context: %v", err)
+		logger.Error("get user from context failed", logger.Err(err))
 		response.FailAuthResponse(ctx, "未登录或登录已过期")
 		return
 	}
@@ -34,15 +34,15 @@ func (h *VideoHandler) UploadVideo(ctx *gin.Context) {
 	// 从表单中获取视频文件
 	fh, err := ctx.FormFile("file")
 	if err != nil {
-		log.Printf("Failed to get file from form: %v", err)
+		logger.Warn("get upload file from form failed", logger.Uint("user_id", userID), logger.Err(err))
 		response.FailResponse(ctx, "文件上传参数错误")
 		return
 	}
 
 	// 调用 VideoService 的 Upload 方法处理视频上传
-	videoUrl, err := h.VideoService.UploadVideo(ctx.Request.Context(), userID, fh)
+	videoURL, err := h.VideoService.UploadVideo(ctx.Request.Context(), userID, fh)
 	if err != nil {
-		log.Printf("Failed to upload video: %v", err)
+		logger.Error("upload video failed", logger.Uint("user_id", userID), logger.Err(err))
 		switch {
 		case errors.Is(err, service.ErrInvalidFileSize):
 			response.FailResponse(ctx, "文件大小不符合要求")
@@ -54,7 +54,7 @@ func (h *VideoHandler) UploadVideo(ctx *gin.Context) {
 		return
 	}
 
-	response.SuccessResponse(ctx, gin.H{"video_url": videoUrl})
+	response.SuccessResponse(ctx, gin.H{"video_url": videoURL})
 }
 
 // UploadCover 视频封面上传接口
@@ -62,7 +62,7 @@ func (h *VideoHandler) UploadCover(ctx *gin.Context) {
 	// 获取用户ID
 	userID, _, err := getUserFromCtx(ctx)
 	if err != nil {
-		log.Printf("Failed to get user from context: %v", err)
+		logger.Error("get user from context failed", logger.Err(err))
 		response.FailAuthResponse(ctx, "未登录或登录已过期")
 		return
 	}
@@ -70,15 +70,15 @@ func (h *VideoHandler) UploadCover(ctx *gin.Context) {
 	// 从表单中获取封面文件
 	fh, err := ctx.FormFile("file")
 	if err != nil {
-		log.Printf("Failed to get file from form: %v", err)
+		logger.Warn("get upload file from form failed", logger.Uint("user_id", userID), logger.Err(err))
 		response.FailResponse(ctx, "文件上传参数错误")
 		return
 	}
 
 	// 调用 VideoService 的 UploadCover 方法处理封面上传
-	coverUrl, err := h.VideoService.UploadCover(ctx.Request.Context(), userID, fh)
+	coverURL, err := h.VideoService.UploadCover(ctx.Request.Context(), userID, fh)
 	if err != nil {
-		log.Printf("Failed to upload cover: %v", err)
+		logger.Error("upload cover failed", logger.Uint("user_id", userID), logger.Err(err))
 		switch {
 		case errors.Is(err, service.ErrInvalidFileSize):
 			response.FailResponse(ctx, "文件大小不符合要求")
@@ -90,7 +90,7 @@ func (h *VideoHandler) UploadCover(ctx *gin.Context) {
 		return
 	}
 
-	response.SuccessResponse(ctx, gin.H{"cover_url": coverUrl})
+	response.SuccessResponse(ctx, gin.H{"cover_url": coverURL})
 }
 
 // PublishVideo 发布视频接口
@@ -98,7 +98,7 @@ func (h *VideoHandler) PublishVideo(ctx *gin.Context) {
 	// 获取用户ID
 	userID, _, err := getUserFromCtx(ctx)
 	if err != nil {
-		log.Printf("Failed to get user from context: %v", err)
+		logger.Error("get user from context failed", logger.Err(err))
 		response.FailAuthResponse(ctx, "未登录或登录已过期")
 		return
 	}
@@ -106,7 +106,7 @@ func (h *VideoHandler) PublishVideo(ctx *gin.Context) {
 	// 解析请求参数
 	var req dto.PublishVideoRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
-		log.Printf("Failed to bind request JSON: %v", err)
+		logger.Warn("bind publish video request failed", logger.Uint("user_id", userID), logger.Err(err))
 		response.FailResponse(ctx, "请求参数错误")
 		return
 	}
@@ -114,7 +114,7 @@ func (h *VideoHandler) PublishVideo(ctx *gin.Context) {
 	// 调用服务层实现
 	videoID, err := h.VideoService.PublishVideo(ctx.Request.Context(), userID, req.Title, req.Description, req.VideoURL, req.CoverURL, req.Tags)
 	if err != nil {
-		log.Printf("Failed to publish video: %v", err)
+		logger.Error("publish video failed", logger.Uint("user_id", userID), logger.Err(err))
 		response.ServerErrorResponse(ctx, "视频发布失败，请稍后重试")
 		return
 	}
@@ -132,11 +132,11 @@ func (h *VideoHandler) VideoDetail(ctx *gin.Context) {
 		return
 	}
 
-	// 尝试获取用户id，解析失败不报错，游客继续访问
-	uid, err := middleware.TryGetUID(ctx), nil
+	// 尝试获取用户ID，解析失败不报错，游客继续访问
+	userID := middleware.TryGetUserID(ctx)
 
 	// 调用service处理
-	detail, err := h.VideoService.VideoDetail(ctx, uint(videoID), uid)
+	detail, err := h.VideoService.VideoDetail(ctx, uint(videoID), userID)
 	if err != nil {
 		response.FailResponse(ctx, "视频不存在")
 		return
@@ -146,8 +146,8 @@ func (h *VideoHandler) VideoDetail(ctx *gin.Context) {
 
 // VideoList 获取视频列表，软鉴权
 func (h *VideoHandler) VideoList(ctx *gin.Context) {
-	//软鉴权
-	uid := middleware.TryGetUID(ctx)
+	// 软鉴权
+	userID := middleware.TryGetUserID(ctx)
 
 	//从url query拿参数
 	// 分页参数：page_num 仅为兼容旧客户端保留，实际使用 cursor 复合游标
@@ -159,7 +159,7 @@ func (h *VideoHandler) VideoList(ctx *gin.Context) {
 		CursorLastCreatedAt time.Time `form:"cursor.last_created_at"`
 	}
 	if err := ctx.ShouldBindQuery(&req); err != nil {
-		log.Printf("Invalid query parameters: %v", err)
+		logger.Warn("bind video list query failed", logger.Uint("author_id", req.AuthorID), logger.Err(err))
 		response.FailResponse(ctx, "请求参数错误")
 		return
 	}
@@ -170,9 +170,9 @@ func (h *VideoHandler) VideoList(ctx *gin.Context) {
 	}
 
 	// 调用service处理
-	resp, err := h.VideoService.VideoList(ctx.Request.Context(), req.AuthorID, uid, cursor, req.PageSize)
+	resp, err := h.VideoService.VideoList(ctx.Request.Context(), req.AuthorID, userID, cursor, req.PageSize)
 	if err != nil {
-		log.Printf("Failed to list videos: %v", err)
+		logger.Error("list videos failed", logger.Uint("author_id", req.AuthorID), logger.Err(err))
 		response.ServerErrorResponse(ctx, "获取视频列表失败，请稍后重试")
 		return
 	}

@@ -4,9 +4,9 @@ import (
 	"feedsystem/internal/dto"
 	"feedsystem/internal/handler/middleware"
 	"feedsystem/internal/service"
+	"feedsystem/internal/utils/logger"
 	"feedsystem/internal/utils/response"
 	"fmt"
-	"log"
 
 	"github.com/gin-gonic/gin"
 )
@@ -21,24 +21,24 @@ func NewLikeHandler(likeService *service.LikeService) *LikeHandler {
 
 // LikeVideo 点赞视频
 func (h *LikeHandler) LikeVideo(ctx *gin.Context) {
-	// 获取uid和vid
-	uid, _, err := getUserFromCtx(ctx)
+	// 获取 userID 和 vid
+	userID, _, err := getUserFromCtx(ctx)
 	if err != nil {
-		log.Printf("Failed to get user from context: %v", err)
+		logger.Error("get user from context failed", logger.Err(err))
 		response.FailResponse(ctx, "Failed to get user from context")
 		return
 	}
 
 	var req dto.LikeRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
-		log.Printf("Failed to bind JSON: %v", err)
+		logger.Warn("bind like request failed", logger.Uint("user_id", userID), logger.Err(err))
 		response.FailResponse(ctx, "Invalid request data")
 		return
 	}
 
 	// 调用服务层的LikeVideo方法
-	if err := h.LikeService.LikeVideo(ctx, uid, req.VideoID); err != nil {
-		log.Printf("Failed to like video: %v", err)
+	if err := h.LikeService.LikeVideo(ctx, userID, req.VideoID); err != nil {
+		logger.Error("like video failed", logger.Uint("user_id", userID), logger.Uint("video_id", req.VideoID), logger.Err(err))
 		response.FailResponse(ctx, fmt.Sprintf("Failed to like video: %v", err))
 		return
 	}
@@ -48,24 +48,24 @@ func (h *LikeHandler) LikeVideo(ctx *gin.Context) {
 
 // UnlikeVideo 取消点赞视频
 func (h *LikeHandler) UnlikeVideo(ctx *gin.Context) {
-	// 获取uid和vid
-	uid, _, err := getUserFromCtx(ctx)
+	// 获取 userID 和 vid
+	userID, _, err := getUserFromCtx(ctx)
 	if err != nil {
-		log.Printf("Failed to get user from context: %v", err)
+		logger.Error("get user from context failed", logger.Err(err))
 		response.FailResponse(ctx, "Failed to get user from context")
 		return
 	}
 
 	var req dto.LikeRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
-		log.Printf("Failed to bind JSON: %v", err)
+		logger.Warn("bind like request failed", logger.Uint("user_id", userID), logger.Err(err))
 		response.FailResponse(ctx, "Invalid request data")
 		return
 	}
 
 	// 调用服务层的UnlikeVideo方法
-	if err := h.LikeService.UnlikeVideo(ctx, uid, req.VideoID); err != nil {
-		log.Printf("Failed to unlike video: %v", err)
+	if err := h.LikeService.UnlikeVideo(ctx, userID, req.VideoID); err != nil {
+		logger.Error("unlike video failed", logger.Uint("user_id", userID), logger.Uint("video_id", req.VideoID), logger.Err(err))
 		response.FailResponse(ctx, fmt.Sprintf("Failed to unlike video: %v", err))
 		return
 	}
@@ -75,25 +75,25 @@ func (h *LikeHandler) UnlikeVideo(ctx *gin.Context) {
 
 // IsLiked 检查用户是否点赞了视频
 func (h *LikeHandler) IsLiked(ctx *gin.Context) {
-	// 获取uid和vid
-	uid, _, err := getUserFromCtx(ctx)
+	// 获取 userID 和 vid
+	userID, _, err := getUserFromCtx(ctx)
 	if err != nil {
-		log.Printf("Failed to get user from context: %v", err)
+		logger.Error("get user from context failed", logger.Err(err))
 		response.FailResponse(ctx, "Failed to get user from context")
 		return
 	}
 
 	var req dto.LikeRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
-		log.Printf("Failed to bind JSON: %v", err)
+		logger.Warn("bind like request failed", logger.Uint("user_id", userID), logger.Err(err))
 		response.FailResponse(ctx, "Invalid request data")
 		return
 	}
 
 	// 调用服务层的IsLiked方法
-	isLiked, err := h.LikeService.IsLiked(ctx, uid, req.VideoID)
+	isLiked, err := h.LikeService.IsLiked(ctx, userID, req.VideoID)
 	if err != nil {
-		log.Printf("Failed to check if video is liked: %v", err)
+		logger.Error("check video liked failed", logger.Uint("user_id", userID), logger.Uint("video_id", req.VideoID), logger.Err(err))
 		response.FailResponse(ctx, "Failed to check if video is liked")
 		return
 	}
@@ -106,19 +106,19 @@ func (h *LikeHandler) ListLikedVideos(ctx *gin.Context) {
 	// 解析请求参数
 	var req dto.ListLikedVideosRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
-		log.Printf("Failed to bind query parameters: %v", err)
+		logger.Warn("bind list liked videos request failed", logger.Err(err))
 		response.FailResponse(ctx, fmt.Sprintf("Invalid request parameters: %v", err))
 		return
 	}
 
-	// 获取当前用户的uid，如果未登录则为0
-	uid := middleware.TryGetUID(ctx)
-	log.Printf("ListLikedVideos called by uid=%d for targetUid=%d", uid, req.UserID)
+	// 获取当前用户的 userID，如果未登录则为0
+	userID := middleware.TryGetUserID(ctx)
+	logger.Debug("list liked videos called", logger.Uint("login_user_id", userID), logger.Uint("target_user_id", req.UserID))
 
 	// 调用服务层的ListLikedVideos方法
-	resp, err := h.LikeService.ListLikedVideos(ctx.Request.Context(), req.UserID, uid, req.Cursor, uint(req.PageSize))
+	resp, err := h.LikeService.ListLikedVideos(ctx.Request.Context(), req.UserID, userID, req.Cursor, uint(req.PageSize))
 	if err != nil {
-		log.Printf("Failed to list liked videos: %v", err)
+		logger.Error("list liked videos failed", logger.Uint("target_user_id", req.UserID), logger.Err(err))
 		response.FailResponse(ctx, fmt.Sprintf("Failed to list liked videos: %v", err))
 		return
 	}

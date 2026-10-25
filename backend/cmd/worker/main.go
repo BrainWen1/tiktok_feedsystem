@@ -3,7 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
-	"log"
+	"os"
 	"os/signal"
 	"sync"
 	"syscall"
@@ -15,6 +15,7 @@ import (
 	"feedsystem/internal/infra/mq"
 	"feedsystem/internal/model"
 	"feedsystem/internal/repo"
+	"feedsystem/internal/utils/logger"
 
 	"github.com/joho/godotenv"
 )
@@ -23,16 +24,22 @@ import (
 const shutdownTimeout = 5 * time.Second
 
 func main() {
+	// 日志必须在启动消费者 goroutine 之前初始化，避免启动期日志丢失
+	if err := logger.Init(os.Getenv("LOG_LEVEL")); err != nil {
+		logger.Warn("invalid log level, fallback to info", logger.Err(err))
+	}
+	defer logger.Sync()
+
 	// run 返回后再 Fatal，保证 run 内注册的 defer（关闭 DB/Redis/MQ）一定执行
 	if err := run(); err != nil {
-		log.Fatalf("Worker exit: %v", err)
+		logger.Fatal("worker exit", logger.Err(err))
 	}
 }
 
 func run() error {
 	// 加载 .env（本地开发）
 	if err := godotenv.Load(); err != nil {
-		log.Println(".env not found; continuing")
+		logger.Info(".env not found; continuing")
 	}
 
 	// 加载配置
@@ -82,7 +89,7 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("redis unavailable: %w", err)
 	}
-	log.Println("Redis connected")
+	logger.Info("redis connected")
 
 	// 信号监听：SIGINT/SIGTERM 触发优雅退出
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -101,9 +108,9 @@ func run() error {
 		return fmt.Errorf("start comment consumer: %w", err)
 	}
 
-	log.Println("Worker is running for like and comment events...")
+	logger.Info("worker is running for like and comment events")
 	<-ctx.Done()
-	log.Println("Shutdown signal received, stopping consumers...")
+	logger.Info("shutdown signal received, stopping consumers")
 
 	// 等待在途消息处理完成，超时后强制退出
 	done := make(chan struct{})
@@ -113,9 +120,9 @@ func run() error {
 	}()
 	select {
 	case <-done:
-		log.Println("Consumers stopped gracefully")
+		logger.Info("consumers stopped gracefully")
 	case <-time.After(shutdownTimeout):
-		log.Println("WARN: consumer shutdown timed out")
+		logger.Warn("consumer shutdown timed out")
 	}
 	// run 返回后按 LIFO 顺序执行 defer：关闭 MQ -> Redis -> DB
 	return nil

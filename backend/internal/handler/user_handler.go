@@ -5,8 +5,8 @@ import (
 	"feedsystem/internal/dto"
 	"feedsystem/internal/service"
 	"feedsystem/internal/utils/jwt"
+	"feedsystem/internal/utils/logger"
 	"feedsystem/internal/utils/response"
-	"log"
 
 	"github.com/gin-gonic/gin"
 )
@@ -35,7 +35,7 @@ func (h *UserHandler) Register(ctx *gin.Context) {
 	// 判断用户名和密码是否为空
 	if req.Username == "" || req.Password == "" {
 		// 屏蔽敏感信息，防止日志泄露
-		log.Printf("Username or password is empty: username='%s', password='[REDACTED]'", req.Username)
+		logger.Warn("username or password is empty", logger.String("username", req.Username))
 		response.FailResponse(ctx, "用户名和密码不能为空")
 		return
 	}
@@ -44,7 +44,7 @@ func (h *UserHandler) Register(ctx *gin.Context) {
 	user, err := h.UserService.Register(ctx.Request.Context(), req.Username, req.Password)
 	if err != nil {
 		// 原始错误仅写服务端日志，前端只返回统一业务码与友好提示
-		log.Printf("Error registering user in UserHandler: %v", err)
+		logger.Error("register user failed", logger.String("username", req.Username), logger.Err(err))
 		switch {
 		case errors.Is(err, service.ErrUsernameInvalid):
 			response.FailResponse(ctx, "用户名长度需为3-32位，且只能包含字母、数字和下划线")
@@ -82,7 +82,7 @@ func (h *UserHandler) Login(ctx *gin.Context) {
 	// 调用服务层进行登录
 	accessToken, refreshToken, err := h.UserService.Login(ctx.Request.Context(), req.Username, req.Password)
 	if err != nil {
-		log.Printf("Error logging in user in UserHandler: %v", err)
+		logger.Error("login user failed", logger.String("username", req.Username), logger.Err(err))
 		// 账号不存在与密码错误返回完全一致的提示，防止账号枚举
 		if errors.Is(err, service.ErrInvalidCredentials) {
 			response.FailAuthResponse(ctx, "用户名或密码错误")
@@ -110,9 +110,9 @@ func (h *UserHandler) RefreshToken(ctx *gin.Context) {
 	}
 
 	// 调用服务层刷新令牌
-	newAccessToken, newRefreshToken, uid, uname, err := h.UserService.RefreshToken(ctx.Request.Context(), req.RefreshToken, req.OldAccessToken)
+	newAccessToken, newRefreshToken, userID, userName, err := h.UserService.RefreshToken(ctx.Request.Context(), req.RefreshToken, req.OldAccessToken)
 	if err != nil {
-		log.Printf("Error refreshing token in UserHandler: %v", err)
+		logger.Error("refresh token failed", logger.Err(err))
 		// refresh token无效属于鉴权失败返回401，服务不可用返回500
 		if errors.Is(err, service.ErrInvalidRefreshToken) {
 			response.FailAuthResponse(ctx, "refresh token无效或已过期")
@@ -130,8 +130,8 @@ func (h *UserHandler) RefreshToken(ctx *gin.Context) {
 	response.SuccessResponse(ctx, gin.H{
 		"access_token":  newAccessToken,
 		"refresh_token": newRefreshToken,
-		"user_id":       uid,
-		"username":      uname,
+		"user_id":       userID,
+		"username":      userName,
 	})
 }
 
@@ -143,7 +143,7 @@ func getUserFromCtx(c *gin.Context) (uint, string, error) {
 		return 0, "", errors.New("userID not found in context")
 	}
 
-	uid, ok := userID.(uint) // 如果类型断言失败，返回错误
+	userIDUint, ok := userID.(uint) // 如果类型断言失败，返回错误
 	if !ok {
 		return 0, "", errors.New("userID in context is not of type uint")
 	}
@@ -154,12 +154,12 @@ func getUserFromCtx(c *gin.Context) (uint, string, error) {
 		return 0, "", errors.New("username not found in context")
 	}
 
-	uname, ok := username.(string)
+	userName, ok := username.(string)
 	if !ok {
 		return 0, "", errors.New("username in context is not of type string")
 	}
 
-	return uid, uname, nil
+	return userIDUint, userName, nil
 }
 
 // Logout 用户登出
@@ -167,7 +167,7 @@ func (h *UserHandler) Logout(ctx *gin.Context) {
 	// 解析请求参数
 	var req dto.LogoutRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
-		log.Printf("Error parsing logout request in UserHandler: %v", err)
+		logger.Warn("parse logout request failed", logger.Err(err))
 		response.FailResponse(ctx, "Invalid request parameters")
 		return
 	}
@@ -175,7 +175,7 @@ func (h *UserHandler) Logout(ctx *gin.Context) {
 	// 从上下文中获取用户ID
 	userID, username, err := getUserFromCtx(ctx)
 	if err != nil {
-		log.Printf("Error getting user from context in UserHandler: %v", err)
+		logger.Error("get user from context failed", logger.Err(err))
 		response.FailAuthResponse(ctx, "未登录或登录已过期")
 		return
 	}
@@ -183,14 +183,14 @@ func (h *UserHandler) Logout(ctx *gin.Context) {
 	// 获取原始 access token
 	accessToken, err := jwt.ExtractBearerToken(ctx)
 	if err != nil {
-		log.Printf("Error extracting access token in UserHandler: %v", err)
+		logger.Warn("extract access token failed", logger.Err(err))
 		response.FailAuthResponse(ctx, "未登录或登录已过期")
 		return
 	}
 	// 获取 access token 剩余有效期
 	remainingExpire, err := jwt.GetTokenRemainingExpire(accessToken)
 	if err != nil {
-		log.Printf("Error getting token remaining expire in UserHandler: %v", err)
+		logger.Warn("get token remaining expire failed", logger.Err(err))
 		response.FailAuthResponse(ctx, "无效的token")
 		return
 	}
@@ -198,7 +198,7 @@ func (h *UserHandler) Logout(ctx *gin.Context) {
 	// 调用服务层进行登出
 	err = h.UserService.Logout(ctx.Request.Context(), userID, req.RefreshToken, accessToken, remainingExpire)
 	if err != nil {
-		log.Printf("Error logging out user in UserHandler: %v", err)
+		logger.Error("logout user failed", logger.Uint("user_id", userID), logger.Err(err))
 		if errors.Is(err, service.ErrInvalidRefreshToken) {
 			response.FailAuthResponse(ctx, "refresh token无效或已过期")
 			return
@@ -219,7 +219,7 @@ func (h *UserHandler) GetProfile(ctx *gin.Context) {
 	// 从上下文中获取用户ID和用户名
 	userID, _, err := getUserFromCtx(ctx)
 	if err != nil {
-		log.Printf("Error getting user from context in UserHandler: %v", err)
+		logger.Error("get user from context failed", logger.Err(err))
 		response.FailAuthResponse(ctx, "未登录或登录已过期")
 		return
 	}
@@ -227,7 +227,7 @@ func (h *UserHandler) GetProfile(ctx *gin.Context) {
 	// 调用服务层获取用户资料
 	profile, err := h.UserService.GetProfile(ctx.Request.Context(), userID)
 	if err != nil {
-		log.Printf("Error getting user profile in UserHandler: %v", err)
+		logger.Error("get user profile failed", logger.Uint("user_id", userID), logger.Err(err))
 		response.ServerErrorResponse(ctx, "获取用户资料失败，请稍后重试")
 		return
 	}
@@ -240,7 +240,7 @@ func (h *UserHandler) UpdateProfile(ctx *gin.Context) {
 	// 从上下文中获取用户ID和用户名
 	userID, _, err := getUserFromCtx(ctx)
 	if err != nil {
-		log.Printf("Error getting user from context in UserHandler: %v", err)
+		logger.Error("get user from context failed", logger.Err(err))
 		response.FailAuthResponse(ctx, "未登录或登录已过期")
 		return
 	}
@@ -248,7 +248,7 @@ func (h *UserHandler) UpdateProfile(ctx *gin.Context) {
 	// 解析请求参数
 	var req dto.UpdateProfileRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
-		log.Printf("Error parsing update profile request in UserHandler: %v", err)
+		logger.Warn("parse update profile request failed", logger.Uint("user_id", userID), logger.Err(err))
 		response.FailResponse(ctx, "Invalid request parameters")
 		return
 	}
@@ -256,7 +256,7 @@ func (h *UserHandler) UpdateProfile(ctx *gin.Context) {
 	// 调用服务层更新用户资料
 	updatedUser, err := h.UserService.UpdateProfile(ctx.Request.Context(), userID, req)
 	if err != nil {
-		log.Printf("Error updating user profile in UserHandler: %v", err)
+		logger.Error("update user profile failed", logger.Uint("user_id", userID), logger.Err(err))
 		switch {
 		case errors.Is(err, service.ErrUsernameInvalid):
 			response.FailResponse(ctx, "用户名长度需为3-32位，且只能包含字母、数字和下划线")
@@ -281,7 +281,7 @@ func (h *UserHandler) UploadAvatar(ctx *gin.Context) {
 	// 从上下文中获取用户ID
 	userID, _, err := getUserFromCtx(ctx)
 	if err != nil {
-		log.Printf("Failed to get user from context in UploadAvatar: %v", err)
+		logger.Error("get user from context failed", logger.Err(err))
 		response.FailAuthResponse(ctx, "未登录或登录已过期")
 		return
 	}
@@ -289,7 +289,7 @@ func (h *UserHandler) UploadAvatar(ctx *gin.Context) {
 	// 解析上传的文件
 	fh, err := ctx.FormFile("file") // 获取表单中key为"file"的文件
 	if err != nil {
-		log.Printf("Failed to get uploaded file in UploadAvatar: %v", err)
+		logger.Warn("get uploaded file failed", logger.Uint("user_id", userID), logger.Err(err))
 		response.FailResponse(ctx, "文件上传参数错误")
 		return
 	}
@@ -297,7 +297,7 @@ func (h *UserHandler) UploadAvatar(ctx *gin.Context) {
 	// 调用服务层处理头像上传
 	avatarURL, err := h.UserService.UploadAvatar(ctx.Request.Context(), userID, fh)
 	if err != nil {
-		log.Printf("Failed to upload avatar in UploadAvatar: %v", err)
+		logger.Error("upload avatar failed", logger.Uint("user_id", userID), logger.Err(err))
 		switch {
 		case errors.Is(err, service.ErrInvalidFileSize):
 			response.FailResponse(ctx, "文件大小不符合要求")
@@ -320,7 +320,7 @@ func (h *UserHandler) ChangePassword(ctx *gin.Context) {
 	// 从上下文中获取用户ID
 	userID, _, err := getUserFromCtx(ctx)
 	if err != nil {
-		log.Printf("Error getting user from context in ChangePassword: %v", err)
+		logger.Error("get user from context failed", logger.Err(err))
 		response.FailAuthResponse(ctx, "未登录或登录已过期")
 		return
 	}
@@ -328,7 +328,7 @@ func (h *UserHandler) ChangePassword(ctx *gin.Context) {
 	// 解析请求参数
 	var req dto.ChangePasswordRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
-		log.Printf("Error parsing change password request in ChangePassword: %v", err)
+		logger.Warn("parse change password request failed", logger.Uint("user_id", userID), logger.Err(err))
 		response.FailResponse(ctx, "Invalid request parameters")
 		return
 	}
@@ -336,21 +336,21 @@ func (h *UserHandler) ChangePassword(ctx *gin.Context) {
 	// 判断三个字段是否有留空
 	if req.OldPassword == "" || req.NewPassword == "" || req.ConfirmPassword == "" {
 		// 屏蔽敏感信息，防止日志泄露
-		log.Printf("Old password or new password or confirm password is empty: old='[REDACTED]', new='[REDACTED]', confirm='[REDACTED]'")
+		logger.Warn("old or new or confirm password is empty", logger.Uint("user_id", userID))
 		response.FailResponse(ctx, "Old password and new password and confirm password cannot be empty")
 		return
 	}
 	// 判断新密码和确认密码是否一致
 	if req.NewPassword != req.ConfirmPassword {
 		// 屏蔽敏感信息，防止日志泄露
-		log.Printf("New password and confirm password do not match: new='[REDACTED]', confirm='[REDACTED]'")
+		logger.Warn("new password and confirm password do not match", logger.Uint("user_id", userID))
 		response.FailResponse(ctx, "New password and confirm password do not match")
 		return
 	}
 	// 判断新密码是否与旧密码相同
 	if req.OldPassword == req.NewPassword {
 		// 屏蔽敏感信息，防止日志泄露
-		log.Printf("New password is the same as old password: old='[REDACTED]', new='[REDACTED]'")
+		logger.Warn("new password is the same as old password", logger.Uint("user_id", userID))
 		response.FailResponse(ctx, "New password cannot be the same as old password")
 		return
 	}
@@ -358,14 +358,14 @@ func (h *UserHandler) ChangePassword(ctx *gin.Context) {
 	// 获取access token用作service层的拉黑操作
 	accessToken, err := jwt.ExtractBearerToken(ctx)
 	if err != nil {
-		log.Printf("Error extracting access token in UserHandler: %v", err)
+		logger.Warn("extract access token failed", logger.Err(err))
 		response.FailAuthResponse(ctx, "未登录或登录已过期")
 		return
 	}
 	// 获取access token剩余有效期
 	remainingExpire, err := jwt.GetTokenRemainingExpire(accessToken)
 	if err != nil {
-		log.Printf("Error getting token remaining expire in UserHandler: %v", err)
+		logger.Warn("get token remaining expire failed", logger.Err(err))
 		response.FailAuthResponse(ctx, "无效的token")
 		return
 	}
@@ -373,7 +373,7 @@ func (h *UserHandler) ChangePassword(ctx *gin.Context) {
 	// 调用服务层修改密码
 	err = h.UserService.ChangePassword(ctx.Request.Context(), userID, req.OldPassword, req.NewPassword, accessToken, remainingExpire)
 	if err != nil {
-		log.Printf("Error changing password in ChangePassword: %v", err)
+		logger.Error("change password failed", logger.Uint("user_id", userID), logger.Err(err))
 		switch {
 		case errors.Is(err, service.ErrOldPasswordIncorrect):
 			response.FailResponse(ctx, "旧密码错误")
@@ -407,7 +407,7 @@ func (h *UserHandler) FindByID(ctx *gin.Context) {
 	// 调用服务层根据ID查找用户
 	user, err := h.UserService.FindByID(ctx.Request.Context(), req.UserID)
 	if err != nil {
-		log.Printf("Error finding user by ID in UserHandler: %v", err)
+		logger.Error("find user by ID failed", logger.Uint("user_id", req.UserID), logger.Err(err))
 		response.FailResponse(ctx, "用户不存在")
 		return
 	}
@@ -427,7 +427,7 @@ func (h *UserHandler) FindByUsername(ctx *gin.Context) {
 	// 调用服务层根据用户名查找用户
 	user, err := h.UserService.FindByUsername(ctx.Request.Context(), req.Username)
 	if err != nil {
-		log.Printf("Error finding user by username in UserHandler: %v", err)
+		logger.Error("find user by username failed", logger.String("username", req.Username), logger.Err(err))
 		response.FailResponse(ctx, "用户不存在")
 		return
 	}

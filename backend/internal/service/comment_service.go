@@ -8,8 +8,8 @@ import (
 	"feedsystem/internal/infra/mq"
 	"feedsystem/internal/model"
 	"feedsystem/internal/repo"
+	"feedsystem/internal/utils/logger"
 	"fmt"
-	"log"
 	"strconv"
 	"strings"
 	"unicode"
@@ -41,38 +41,38 @@ func NewCommentService(commentRepo *repo.CommentRepo, commentMQ *mq.CommentMQ, c
 
 // PublishComment 发布评论：先做内容与目标校验，再把合法评论投递到 MQ。
 // 非法评论在入口即被拒绝，不会进入 MQ 或数据库。
-func (s *CommentService) PublishComment(ctx context.Context, vid, uid, pid uint, username, content string) error {
-	if vid == 0 || uid == 0 {
-		log.Printf("Invalid parameters: vid=%d, uid=%d", vid, uid)
+func (s *CommentService) PublishComment(ctx context.Context, vid, userID, pid uint, username, content string) error {
+	if vid == 0 || userID == 0 {
+		logger.Warn("invalid parameters", logger.Uint("video_id", vid), logger.Uint("user_id", userID))
 		return errors.New("video ID and user ID must be non-zero")
 	}
 
 	// 去掉首尾空白后再校验和入库，避免纯空白评论
 	content = strings.TrimSpace(content)
 	if err := validateCommentContent(content); err != nil {
-		log.Printf("Invalid comment content: vid=%d uid=%d err=%v", vid, uid, err)
+		logger.Warn("invalid comment content", logger.Uint("video_id", vid), logger.Uint("user_id", userID), logger.Err(err))
 		return err
 	}
 	// 校验视频存在性以及二级评论的父评论归属
 	if err := s.validateCommentTarget(ctx, vid, pid); err != nil {
-		log.Printf("Invalid comment target: vid=%d uid=%d pid=%d err=%v", vid, uid, pid, err)
+		logger.Warn("invalid comment target", logger.Uint("video_id", vid), logger.Uint("user_id", userID), logger.Uint("parent_id", pid), logger.Err(err))
 		return err
 	}
 
 	//组装消息
 	comment := &model.Comment{
 		VideoID:  vid,
-		UserID:   uid,
+		UserID:   userID,
 		ParentID: pid,
 		UserName: username,
 		Content:  content,
 	}
 	err := s.CommentMQ.PublishComment(ctx, comment)
 	if err != nil {
-		log.Printf("Failed to publish publish-comment event to MQ: %v", err)
+		logger.Error("publish comment event to MQ failed", logger.Err(err))
 		// MQ投递失败，降级方案：同步直接写数据库
 		if createErr := s.CommentRepo.CreateComment(ctx, comment); createErr != nil {
-			return fmt.Errorf("create comment fallback for video %d user %d: %w", vid, uid, createErr)
+			return fmt.Errorf("create comment fallback for video %d user %d: %w", vid, userID, createErr)
 		}
 	}
 
@@ -126,31 +126,31 @@ func (s *CommentService) validateCommentTarget(ctx context.Context, vid, pid uin
 	return nil
 }
 
-func (s *CommentService) DeleteComment(ctx context.Context, uid, commentID uint) error {
-	if uid == 0 || commentID == 0 {
-		log.Printf("Invalid parameters: uid=%d, commentID=%d", uid, commentID)
+func (s *CommentService) DeleteComment(ctx context.Context, userID, commentID uint) error {
+	if userID == 0 || commentID == 0 {
+		logger.Warn("invalid parameters", logger.Uint("user_id", userID), logger.Uint("comment_id", commentID))
 		return errors.New("user ID and comment ID must be non-zero")
 	}
 
 	// 获取comment实例
 	comment, err := s.CommentRepo.FindByID(ctx, commentID)
 	if err != nil {
-		log.Printf("Failed to find comment with ID %d: %v", commentID, err)
+		logger.Error("find comment failed", logger.Uint("comment_id", commentID), logger.Err(err))
 		return errors.New("comment not found")
 	}
 
 	// 检查用户是否有权限删除评论
 	// 1. 评论发布者
-	if comment.UserID != uid {
+	if comment.UserID != userID {
 		// 获取视频信息
 		video, err := s.videoService.getDetail(ctx, comment.VideoID)
 		if err != nil {
-			log.Printf("Failed to get video detail: %v", err)
+			logger.Error("get video detail failed", logger.Err(err))
 			return errors.New("failed to get video detail")
 		}
 		// 2. 视频作者
-		if video.AuthorID != uid {
-			log.Printf("User %d is not authorized to delete comment %d", uid, commentID)
+		if video.AuthorID != userID {
+			logger.Warn("user is not authorized to delete comment", logger.Uint("user_id", userID), logger.Uint("comment_id", commentID))
 			return errors.New("user is not authorized to delete this comment")
 		}
 	}
@@ -158,7 +158,7 @@ func (s *CommentService) DeleteComment(ctx context.Context, uid, commentID uint)
 	//组装消息
 	err = s.CommentMQ.DeleteComment(ctx, comment)
 	if err != nil {
-		log.Printf("Failed to publish publish-comment event to MQ: %v", err)
+		logger.Error("publish comment event to MQ failed", logger.Err(err))
 		// MQ投递失败，降级方案：同步直接写数据库
 		err = s.CommentRepo.DeleteComment(ctx, commentID)
 		return err
@@ -185,31 +185,31 @@ func (s *CommentService) getCommentCount(ctx context.Context, vid uint, refreshT
 			// 成功读取到redis计数器，按需刷新TTL，避免热视频缓存过期
 			if refreshTTL {
 				if err := s.cache.Set(ctx, key, val, cache.CommentVideoCntTTL); err != nil {
-					log.Printf("Failed to refresh comment count TTL in cache for video %d: %v", vid, err)
+					logger.Error("refresh comment count TTL failed", logger.Uint("video_id", vid), logger.Err(err))
 				}
 			}
 			return count, nil
 		}
-		log.Printf("Invalid comment count cache value for video %d: %v", vid, parseErr)
+		logger.Warn("invalid comment count cache value", logger.Uint("video_id", vid), logger.Err(parseErr))
 	}
 
 	// redis异常/key不存在/缓存脏数据，回数据库count兜底
 	cnt, err := s.CommentRepo.CountByVideo(ctx, vid)
 	if err != nil {
-		log.Printf("Failed to count comments for video %d: %v", vid, err)
+		logger.Error("count comments failed", logger.Uint("video_id", vid), logger.Err(err))
 		return 0, fmt.Errorf("failed to count comments for video %d: %w", vid, err)
 	}
 
 	// 回填redis，冷视频自动失效，下次访问重新count
 	err = s.cache.Set(ctx, key, strconv.FormatInt(cnt, 10), cache.CommentVideoCntTTL)
 	if err != nil {
-		log.Printf("Failed to set comment count in cache for video %d: %v", vid, err)
+		logger.Error("set comment count cache failed", logger.Uint("video_id", vid), logger.Err(err))
 	}
 	return cnt, nil
 }
 
 // ListComment 游标分页查询评论列表
-func (s *CommentService) ListComments(ctx context.Context, uid uint, req dto.ListCommentsRequest) (*dto.ListCommentsResponse, error) {
+func (s *CommentService) ListComments(ctx context.Context, userID uint, req dto.ListCommentsRequest) (*dto.ListCommentsResponse, error) {
 	// 游标分页查询评论
 	comments, err := s.CommentRepo.ListByVideoCursor(ctx, req.VideoID, req.LastTime, req.LastID, req.PageSize)
 	if err != nil {
@@ -235,7 +235,7 @@ func (s *CommentService) ListComments(ctx context.Context, uid uint, req dto.Lis
 	}
 
 	for _, comment := range comments {
-		// 鸽：使用传入的uid查询是否点赞该评论
+		// 鸽：使用传入的userID查询是否点赞该评论
 
 		respList = append(respList, *comment)
 	}

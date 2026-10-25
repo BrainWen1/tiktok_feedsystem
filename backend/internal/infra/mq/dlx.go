@@ -4,8 +4,9 @@ package mq
 import (
 	"context"
 	"errors"
-	"log"
 	"time"
+
+	"feedsystem/internal/utils/logger"
 
 	amqp "github.com/rabbitmq/amqp091-go"
 )
@@ -56,7 +57,7 @@ func DeclareDLX(ch *amqp.Channel, queueName string) error {
 	if err := ch.QueueBind(dlxQueue, "#", DLXExchange, false, nil); err != nil {
 		return err
 	}
-	log.Printf("DLX ready: exchange=%s queue=%s", DLXExchange, dlxQueue)
+	logger.Info("DLX ready", logger.String("exchange", DLXExchange), logger.String("queue", dlxQueue))
 	return nil
 }
 
@@ -101,25 +102,25 @@ func GetRetryCount(d amqp.Delivery) int {
 func RetryOrDeadLetter(ch *amqp.Channel, msg amqp.Delivery, reason error) {
 	retry := GetRetryCount(msg)
 	if retry >= MaxRetryCount {
-		log.Printf("retry exhausted (%d/%d), move message to DLX: %v", retry, MaxRetryCount, reason)
+		logger.Error("retry exhausted, move message to DLX", logger.Int("retry", retry), logger.Int("max_retry", MaxRetryCount), logger.Err(reason))
 		if err := msg.Nack(false, false); err != nil {
-			log.Printf("nack to DLX failed: %v", err)
+			logger.Error("nack to DLX failed", logger.Err(err))
 		}
 		return
 	}
 
 	if err := requeueWithBackoff(ch, msg, retry); err != nil {
 		// 重投失败时退回 requeue，至少保证消息不丢；下轮仍会重新计数
-		log.Printf("republish for retry failed, fallback to requeue: %v", err)
+		logger.Error("republish for retry failed, fallback to requeue", logger.Err(err))
 		if nackErr := msg.Nack(false, true); nackErr != nil {
-			log.Printf("nack requeue failed: %v", nackErr)
+			logger.Error("nack requeue failed", logger.Err(nackErr))
 		}
 		return
 	}
 
-	log.Printf("message requeued for retry %d/%d: %v", retry+1, MaxRetryCount, reason)
+	logger.Warn("message requeued for retry", logger.Int("retry", retry+1), logger.Int("max_retry", MaxRetryCount), logger.Err(reason))
 	if err := msg.Ack(false); err != nil {
-		log.Printf("ack original message after republish failed: %v", err)
+		logger.Error("ack original message after republish failed", logger.Err(err))
 	}
 }
 

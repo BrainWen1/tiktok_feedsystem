@@ -4,13 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"log"
 	"strings"
 	"sync"
 	"time"
 
 	"feedsystem/internal/infra/cache"
 	"feedsystem/internal/repo"
+	"feedsystem/internal/utils/logger"
 
 	amqp "github.com/rabbitmq/amqp091-go"
 )
@@ -22,7 +22,7 @@ const commentConsumerTag = "comment-consumer"
 // ctx 取消后停止拉取新消息并等待在途消息处理完成；wg 用于通知调用方消费协程已退出。
 func StartCommentConsumer(ctx context.Context, cmq *CommentMQ, commentRepo *repo.CommentRepo, redisCache *cache.RedisCache, wg *sync.WaitGroup) error {
 	if !cmq.IsEnabled() {
-		log.Printf("WARN: CommentMQ disabled, skip comment consumer")
+		logger.Warn("CommentMQ disabled, skip comment consumer")
 		return ErrMQDisabled // MQ禁用时不启动消费循环
 	}
 	if cmq.ch == nil {
@@ -58,18 +58,18 @@ func StartCommentConsumer(ctx context.Context, cmq *CommentMQ, commentRepo *repo
 		// 优雅退出时停止投递，避免关闭阶段继续拉取新消息
 		defer func() {
 			if err := ch.Cancel(commentConsumerTag, false); err != nil {
-				log.Printf("cancel comment consumer failed: %v", err)
+				logger.Error("cancel comment consumer failed", logger.Err(err))
 			}
 		}()
 
 		for {
 			select {
 			case <-consumerCtx.Done():
-				log.Println("comment consumer stopped")
+				logger.Info("comment consumer stopped")
 				return
 			case msg, ok := <-msgs:
 				if !ok {
-					log.Println("comment consumer delivery channel closed")
+					logger.Warn("comment consumer delivery channel closed")
 					return
 				}
 				handleCommentMessage(consumerCtx, ch, msg, commentRepo, redisCache)
@@ -77,7 +77,7 @@ func StartCommentConsumer(ctx context.Context, cmq *CommentMQ, commentRepo *repo
 		}
 	}()
 
-	log.Println("comment consumer running...")
+	logger.Info("comment consumer running")
 	return nil
 }
 
@@ -87,26 +87,26 @@ func handleCommentMessage(parent context.Context, ch *amqp.Channel, msg amqp.Del
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), 2*time.Second)
 	defer cancel()
 
-	log.Printf("received comment event: %s", msg.Body)
+	logger.Debug("received comment event", logger.String("body", string(msg.Body)))
 	var event CommentEvent
 	// 解析消息体为CommentEvent结构体
 	if err := json.Unmarshal(msg.Body, &event); err != nil {
-		log.Println("parse comment event failed:", err)
+		logger.Error("parse comment event failed", logger.Err(err))
 		_ = msg.Ack(false) // 解析失败的消息直接ACK掉，避免无限重试
 		return
 	}
 
-	// Redis缓存消息ID，先检查是否已经处理过，没有的话再处理，处理完后将消息ID存入Redis，设置过期时间，避免重复消费
+	// 用 Redis 缓存消息ID做幂等：先检查是否已处理，未处理才落库，处理完成后写入消息ID并设置过期时间
 	key := cache.CommentEventIDKey(event.EventID)
 	val, err := redisCache.Get(ctx, key)
 	if err != nil && err.Error() != "redis: nil" {
-		log.Printf("redis get error: %v", err)
+		logger.Error("redis get error", logger.Err(err))
 		RetryOrDeadLetter(ch, msg, err) // Redis异常，退避重试，超过上限转死信
 		return
 	}
 	if val != "" {
 		// 如果Redis中存在该消息ID，说明已经处理过，直接ACK掉消息
-		log.Printf("comment event already processed: %s", event.EventID)
+		logger.Debug("comment event already processed", logger.String("event_id", event.EventID))
 		_ = msg.Ack(false)
 		return
 	}
@@ -119,7 +119,7 @@ func handleCommentMessage(parent context.Context, ch *amqp.Channel, msg amqp.Del
 	case "delete":
 		consumeErr = commentRepo.DeleteComment(ctx, event.Comment.ID)
 	default:
-		log.Printf("unknown comment event action: %s", event.Action)
+		logger.Warn("unknown comment event action", logger.String("action", event.Action))
 		_ = msg.Ack(false) // 未知的事件类型直接ACK掉，避免无限重试
 		return
 	}
@@ -132,7 +132,7 @@ func handleCommentMessage(parent context.Context, ch *amqp.Channel, msg amqp.Del
 		if strings.Contains(errStr, "Duplicate entry") ||
 			strings.Contains(errStr, "duplicate key") ||
 			strings.Contains(errStr, "UNIQUE") {
-			log.Printf("comment already exists, treat as success: user=%d video=%d, err=%v", event.Comment.UserID, event.Comment.VideoID, consumeErr)
+			logger.Debug("comment already exists, treat as success", logger.Uint("user_id", event.Comment.UserID), logger.Uint("video_id", event.Comment.VideoID), logger.Err(consumeErr))
 			_ = msg.Ack(false)
 
 			// 在这里尝试写入redis，即使第一次成功处理后redis写入失败，也可以在这里再次尝试写入，
@@ -140,7 +140,7 @@ func handleCommentMessage(parent context.Context, ch *amqp.Channel, msg amqp.Del
 			err = redisCache.Set(ctx, key, "1", cache.EventIDTTL) // 过期时间为24小时
 			if err != nil {
 				// 再次写入失败直接跳过，避免陷入死循环，后续重复消费会再次尝试写入redis
-				log.Printf("redis set error: %v", err)
+				logger.Error("redis set error", logger.Err(err))
 			}
 			// 重复消费说明该评论已在库中，按数据库真实计数回写，修复首次消费可能漏写缓存的问题
 			refreshCommentCountCache(ctx, redisCache, commentRepo, event.Comment.VideoID)
@@ -150,12 +150,12 @@ func handleCommentMessage(parent context.Context, ch *amqp.Channel, msg amqp.Del
 
 		// 永久错误：视频不存在或用户不存在，直接丢弃消息到死信队列
 		if strings.Contains(errStr, "video not found") || strings.Contains(errStr, "user not exist") {
-			log.Printf("permanent error, drop to DLX: %v", consumeErr)
+			logger.Error("permanent error, drop to DLX", logger.Err(consumeErr))
 			_ = msg.Nack(false, false) //不再放回原队列，进入死信队列
 			return
 		}
 		// 临时故障：数据库抖动、锁超时，退避重试，超过上限转死信
-		log.Printf("consume %s failed, retry, err=%v", event.Action, consumeErr)
+		logger.Warn("consume comment event failed, retry", logger.String("action", event.Action), logger.Err(consumeErr))
 		RetryOrDeadLetter(ch, msg, consumeErr)
 
 		return
@@ -164,7 +164,7 @@ func handleCommentMessage(parent context.Context, ch *amqp.Channel, msg amqp.Del
 	// 成功处理后，将消息ID存入Redis，设置过期时间，避免重复消费
 	if err := redisCache.Set(ctx, key, "1", cache.EventIDTTL); err != nil {
 		// Redis异常，但数据库操作已经成功；继续回写计数缓存，最后仍 ACK 避免重复消费
-		log.Printf("redis set event id error: %v", err)
+		logger.Error("redis set event id error", logger.Err(err))
 	}
 
 	// 评论新增/删除已落库，按数据库真实计数回写视频评论计数器。
@@ -183,10 +183,10 @@ func refreshCommentCountCache(ctx context.Context, redisCache *cache.RedisCache,
 	}
 	cnt, err := commentRepo.CountByVideo(ctx, vid)
 	if err != nil {
-		log.Printf("count comments for video %d failed: %v", vid, err)
+		logger.Error("count comments for video failed", logger.Uint("video_id", vid), logger.Err(err))
 		return
 	}
 	if err := redisCache.Set(ctx, cache.CommentVideoCntKey(vid), cnt, cache.CommentVideoCntTTL); err != nil {
-		log.Printf("set comment count cache for video %d failed: %v", vid, err)
+		logger.Error("set comment count cache for video failed", logger.Uint("video_id", vid), logger.Err(err))
 	}
 }

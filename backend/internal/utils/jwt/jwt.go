@@ -6,12 +6,12 @@ import (
 	"errors"
 	"feedsystem/internal/config"
 	"fmt"
-	"log"
 	"strings"
 	"time"
 
+	"feedsystem/internal/utils/logger"
+
 	"github.com/gin-gonic/gin"
-	"github.com/golang-jwt/jwt/v5"
 	JWT "github.com/golang-jwt/jwt/v5"
 )
 
@@ -74,7 +74,7 @@ func GenerateToken(userID uint, userName string) (string, error) {
 		},
 	}
 	// 创建 token
-	token := JWT.NewWithClaims(jwt.SigningMethodHS256, claims)
+	token := JWT.NewWithClaims(JWT.SigningMethodHS256, claims)
 	// 签名
 	return token.SignedString(jwtSecretKey)
 }
@@ -104,7 +104,7 @@ func ParseToken(tokenString string) (*Claims, error) {
 }
 
 // GenerateRefreshToken 生成刷新令牌
-func GenerateRefreshToken(user_id uint) (string, error) {
+func GenerateRefreshToken(userID uint) (string, error) {
 	// 生成一个随机的刷新令牌
 	b := make([]byte, 32)
 	if _, err := rand.Read(b); err != nil {
@@ -119,13 +119,13 @@ func ExtractBearerToken(ctx *gin.Context) (string, error) {
 	// 从请求头中获取 Authorization 字段
 	authHeader := ctx.GetHeader("Authorization")
 	if authHeader == "" {
-		log.Printf("Authorization header is empty")
+		logger.Debug("authorization header is empty")
 		return "", errors.New("authorization header is empty")
 	}
 	// 检查 Authorization 字段的格式是否正确并获取token，通常是 "Bearer <token>"
 	parts := strings.SplitN(authHeader, " ", 2)
 	if !(len(parts) == 2 && parts[0] == "Bearer") { // parts[0]:"Bearer"  parts[1]:token
-		log.Printf("Authorization header format is invalid: %s", authHeader)
+		logger.Warn("authorization header format is invalid")
 		return "", errors.New("authorization header format is invalid")
 	}
 	return parts[1], nil
@@ -145,18 +145,18 @@ func GetTokenRemainingExpire(tokenStr string) (int64, error) {
 		return jwtSecretKey, nil
 	}, JWT.WithValidMethods([]string{JWT.SigningMethodHS256.Alg()}))
 	if err != nil {
-		log.Printf("Error parsing token: %v", err)
+		logger.Warn("parse token failed", logger.Err(err))
 		return 0, fmt.Errorf("parse token: %w", err)
 	}
 	// 检查 token 是否有效
 	if !token.Valid {
-		log.Printf("Invalid token: %v", err)
+		logger.Warn("invalid token")
 		return 0, errors.New("invalid token")
 	}
 	// 断言 claims 类型
 	claims, ok := token.Claims.(JWT.MapClaims)
 	if !ok {
-		log.Printf("Error asserting token claims: %v", err)
+		logger.Warn("assert token claims failed")
 		return 0, errors.New("invalid token claims")
 	}
 	// 获取 exp 字段并计算剩余时间；先做类型断言，缺失或非法时返回错误而不是panic
@@ -173,7 +173,7 @@ func GetTokenRemainingExpire(tokenStr string) (int64, error) {
 	remain := exp - now
 	// 如果剩余时间小于0，说明token已经过期，返回错误
 	if remain < 0 {
-		log.Printf("Token has expired: exp=%d, now=%d", exp, now)
+		logger.Debug("token has expired", logger.Int64("exp", exp), logger.Int64("now", now))
 		return 0, errors.New("token has expired")
 	}
 	return remain, nil

@@ -9,9 +9,9 @@ import (
 	"feedsystem/internal/repo"
 	"feedsystem/internal/utils/file"
 	"feedsystem/internal/utils/jwt"
+	"feedsystem/internal/utils/logger"
 	"fmt"
 	"io"
-	"log"
 	"mime/multipart"
 	"os"
 	"path"
@@ -154,7 +154,7 @@ func (s *UserService) Register(ctx context.Context, username, password string) (
 	}
 	err = s.UserRepo.Register(ctx, user)
 	if err != nil {
-		log.Printf("Error registering user in UserService: %v", err)
+		logger.Error("register user failed", logger.Err(err))
 		return nil, fmt.Errorf("register user: %w", err)
 	}
 	return user, nil
@@ -171,7 +171,7 @@ func (s *UserService) Login(ctx context.Context, username, password string) (acc
 	user, err := s.UserRepo.FindByUsername(ctx, username)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			log.Printf("Login failed: user not found")
+			logger.Warn("login failed: user not found")
 			return "", "", ErrInvalidCredentials
 		}
 		return "", "", fmt.Errorf("find user for login: %w", err)
@@ -179,7 +179,7 @@ func (s *UserService) Login(ctx context.Context, username, password string) (acc
 
 	// 验证密码：失败时返回与账号不存在完全一致的错误
 	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(password)); err != nil {
-		log.Printf("Login failed: invalid password")
+		logger.Warn("login failed: invalid password")
 		return "", "", ErrInvalidCredentials
 	}
 
@@ -194,21 +194,9 @@ func (s *UserService) Login(ctx context.Context, username, password string) (acc
 		return "", "", err
 	}
 
-	// // 组装刷新令牌模型
-	// refreshTokenModel := &model.UserRefreshToken{
-	// 	UserID:    user.ID,
-	// 	TokenHash: refreshToken,
-	// 	ExpiresAt: time.Now().Add(7 * 24 * time.Hour), // refresh token 有效期为7天
-	// }
-	// // 保存刷新令牌到数据库
-	// err = s.UserRepo.CreateRefreshToken(ctx, refreshTokenModel)
-	// if err != nil {
-	// 	return "", "", err
-	// }
-
 	// 缓存禁用时无法持久化refresh token，仅返回令牌，不阻断登录主流程
 	if !s.cache.IsEnabled() {
-		log.Printf("WARN: cache disabled, refresh token not persisted, userID=%d", user.ID)
+		logger.Warn("cache disabled, refresh token not persisted", logger.Uint("user_id", user.ID))
 		return accessToken, refreshToken, nil
 	}
 
@@ -218,13 +206,13 @@ func (s *UserService) Login(ctx context.Context, username, password string) (acc
 	ttl := cache.RefreshTokenTTL
 	err = s.cache.Set(ctx, redisKey, user.ID, ttl)
 	if err != nil {
-		log.Printf("Error saving refresh token to Redis in UserService: %v", err)
+		logger.Error("save refresh token to redis failed", logger.Err(err))
 		return "", "", fmt.Errorf("save refresh token to redis failed: %w", err)
 	}
-	// 双向索引<userId, refreshToken>
+	// 双向索引<userID, refreshToken>
 	if setErr := s.cache.AddUserRefreshSet(ctx, user.ID, refreshToken, ttl); setErr != nil {
 		// 捕获内部真实错误，避免打印外层通常为 nil 的 err 导致日志误导
-		log.Printf("Error adding refresh token to user set in Redis in UserService: userID=%d err=%v", user.ID, setErr)
+		logger.Error("add refresh token to user set failed", logger.Uint("user_id", user.ID), logger.Err(setErr))
 		return "", "", fmt.Errorf("add refresh token to user set failed: %w", setErr)
 	}
 
@@ -232,13 +220,13 @@ func (s *UserService) Login(ctx context.Context, username, password string) (acc
 }
 
 // RefreshToken 刷新令牌
-func (s *UserService) RefreshToken(ctx context.Context, refreshToken string, OldAccessToken string) (newAccessToken string, newRefreshToken string, uid uint, uname string, err error) {
+func (s *UserService) RefreshToken(ctx context.Context, refreshToken string, oldAccessToken string) (newAccessToken string, newRefreshToken string, userID uint, userName string, err error) {
 	if refreshToken == "" {
 		return "", "", 0, "", ErrInvalidRefreshToken
 	}
 	// refresh token仅存储于Redis，缓存禁用时无法校验，返回明确错误而不是误判为令牌失效
 	if !s.cache.IsEnabled() {
-		log.Printf("ERROR: cache disabled, cannot validate refresh token")
+		logger.Error("cache disabled, cannot validate refresh token")
 		return "", "", 0, "", ErrRefreshTokenUnavailable
 	}
 
@@ -251,18 +239,18 @@ func (s *UserService) RefreshToken(ctx context.Context, refreshToken string, Old
 			return "", "", 0, "", fmt.Errorf("%w: token not found", ErrInvalidRefreshToken)
 		}
 		// Redis故障不能当成token失效，避免把服务异常误报为401
-		log.Printf("Error getting refresh token from Redis in UserService: %v", err)
+		logger.Error("get refresh token from redis failed", logger.Err(err))
 		return "", "", 0, "", fmt.Errorf("%w: get refresh token failed", ErrRefreshTokenUnavailable)
 	}
-	userIDuint64, err := strconv.ParseUint(valStr, 10, 64) // 将字符串转换为uint64
+	userIDUint64, err := strconv.ParseUint(valStr, 10, 64) // 将字符串转换为uint64
 	if err != nil {
-		log.Printf("Error parsing userID from Redis value in UserService: %v", err)
+		logger.Error("parse userID from redis value failed", logger.Err(err))
 		return "", "", 0, "", fmt.Errorf("%w: invalid token data", ErrInvalidRefreshToken)
 	}
-	uid = uint(userIDuint64)
+	userID = uint(userIDUint64)
 
 	// 查找用户
-	user, err := s.UserRepo.FindByID(ctx, uid)
+	user, err := s.UserRepo.FindByID(ctx, userID)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return "", "", 0, "", fmt.Errorf("%w: user not found", ErrInvalidRefreshToken)
@@ -270,27 +258,27 @@ func (s *UserService) RefreshToken(ctx context.Context, refreshToken string, Old
 		return "", "", 0, "", fmt.Errorf("find user for refresh token: %w", err)
 	}
 
-	err = s.cache.RemoveUserRefreshSetItem(ctx, uid, refreshToken) // 从用户的refresh token集合中移除旧的refresh token
+	err = s.cache.RemoveUserRefreshSetItem(ctx, userID, refreshToken) // 从用户的refresh token集合中移除旧的refresh token
 	if err != nil {
-		log.Printf("Error removing refresh token from user set in Redis in UserService: %v", err)
+		logger.Error("remove refresh token from user set failed", logger.Err(err))
 		return "", "", 0, "", fmt.Errorf("failed remove old refresh token from user set: %w", err)
 	}
 
 	// 拉黑旧的access token，设置过期时间为剩余有效期
 	// 此项一定要设计成非必填的，因为有时候刷新就是因为access token过期了，前端没有办法传回
-	if OldAccessToken != "" {
-		remainingExpire, err := jwt.GetTokenRemainingExpire(OldAccessToken)
+	if oldAccessToken != "" {
+		remainingExpire, err := jwt.GetTokenRemainingExpire(oldAccessToken)
 		if err == nil {
 			// 解析成功，加入黑名单
-			err = s.cache.AddTokenToBlacklist(ctx, OldAccessToken, time.Duration(remainingExpire)*time.Second)
+			err = s.cache.AddTokenToBlacklist(ctx, oldAccessToken, time.Duration(remainingExpire)*time.Second)
 			if err != nil {
 				// 解析成功，但加入黑名单失败，记录日志并返回错误
-				log.Printf("Error adding old access token to blacklist in UserService: %v", err)
+				logger.Error("add old access token to blacklist failed", logger.Err(err))
 				return "", "", 0, "", fmt.Errorf("failed to blacklist old access token: %w", err)
 			}
 		} else {
 			// 解析失败，直接忽略，不要返回错误
-			log.Printf("Error getting remaining expire for old access token in UserService: %v", err)
+			logger.Error("get remaining expire for old access token failed", logger.Err(err))
 		}
 	}
 
@@ -305,22 +293,6 @@ func (s *UserService) RefreshToken(ctx context.Context, refreshToken string, Old
 		return "", "", 0, "", err
 	}
 
-	// // 删除旧的刷新令牌
-	// err = s.UserRepo.DeleteRefreshToken(ctx, refreshToken)
-	// if err != nil {
-	// 	return "", "", 0, "", err
-	// }
-	// // 保存新的刷新令牌到数据库
-	// newRefreshTokenSession := &model.UserRefreshToken{
-	// 	UserID:    user.ID,
-	// 	TokenHash: newRefreshToken,
-	// 	ExpiresAt: time.Now().Add(7 * 24 * time.Hour), // refresh token 有效期为7天
-	// }
-	// err = s.UserRepo.CreateRefreshToken(ctx, newRefreshTokenSession)
-	// if err != nil {
-	// 	return "", "", 0, "", err
-	// }
-
 	// 将新refreshToken写入Redis，单个 token 独立 TTL
 	newRedisKey := cache.RefreshTokenKey(newRefreshToken)
 	ttl := cache.RefreshTokenTTL
@@ -328,10 +300,10 @@ func (s *UserService) RefreshToken(ctx context.Context, refreshToken string, Old
 	if err != nil {
 		return "", "", 0, "", fmt.Errorf("failed store new refresh token: %w", err)
 	}
-	// 双向索引<userId, refreshToken>
+	// 双向索引<userID, refreshToken>
 	err = s.cache.AddUserRefreshSet(ctx, user.ID, newRefreshToken, ttl)
 	if err != nil {
-		log.Printf("Error adding refresh token to user set in Redis in UserService: %v", err)
+		logger.Error("add refresh token to user set failed", logger.Err(err))
 		return "", "", 0, "", fmt.Errorf("failed add refresh token to user set: %w", err)
 	}
 
@@ -340,22 +312,12 @@ func (s *UserService) RefreshToken(ctx context.Context, refreshToken string, Old
 
 // Logout 用户登出
 func (s *UserService) Logout(ctx context.Context, userID uint, refreshToken, accessToken string, remainingExpire int64) error {
-	// // 删除该用户的所有刷新令牌
-	// err := s.UserRepo.DeleteRefreshTokenByUserID(ctx, userID)
-	// if err != nil {
-	// 	log.Printf("Error logging out user in UserService: %v", err)
-	// 	return err
-	// }
-	// return nil
-
-	// 改用Redis缓存删除该用户的所有刷新令牌
-	// 由于我们在Redis中使用的key是 refresh_token:{refreshToken字符串}，而没有直接存储userID到key中
-	// 所以我们无法直接通过userID删除所有相关的refresh token
-	// 因此，我们需要在用户登出时，前端传递当前的refresh token，服务端根据这个token删除对应的缓存
+	// 刷新令牌只存储在 Redis，key 为 refresh_token:{refreshToken}，未按 userID 建索引，
+	// 因此登出时需要前端传入当前 refresh token，服务端据此删除对应缓存。
 
 	// 缓存禁用时无法校验与撤销refresh token，跳过缓存操作，登出本身不返回错误
 	if !s.cache.IsEnabled() {
-		log.Printf("WARN: cache disabled, skip refresh token revocation on logout, userID=%d", userID)
+		logger.Warn("cache disabled, skip refresh token revocation on logout", logger.Uint("user_id", userID))
 		return nil
 	}
 
@@ -363,41 +325,41 @@ func (s *UserService) Logout(ctx context.Context, userID uint, refreshToken, acc
 	redisKey := cache.RefreshTokenKey(refreshToken)
 	valStr, err := s.cache.Get(ctx, redisKey)
 	if err != nil {
-		log.Printf("Error getting refresh token from Redis in UserService: %v", err)
+		logger.Error("get refresh token from redis failed", logger.Err(err))
 		return fmt.Errorf("%w: token not found", ErrInvalidRefreshToken)
 	}
-	userIDuint64, err := strconv.ParseUint(valStr, 10, 64) // 将字符串转换为uint64
+	userIDUint64, err := strconv.ParseUint(valStr, 10, 64) // 将字符串转换为uint64
 	if err != nil {
-		log.Printf("Error parsing userID from Redis value in UserService: %v", err)
+		logger.Error("parse userID from redis value failed", logger.Err(err))
 		return fmt.Errorf("%w: invalid token data", ErrInvalidRefreshToken)
 	}
-	if uint(userIDuint64) != userID { // 对比用户ID
-		log.Printf("User ID mismatch during logout: token userID %d, context userID %d", userIDuint64, userID)
+	if uint(userIDUint64) != userID { // 对比用户ID
+		logger.Warn("user ID mismatch during logout", logger.Uint64("stored_user_id", userIDUint64), logger.Uint("context_user_id", userID))
 		return fmt.Errorf("%w: user ID mismatch", ErrInvalidRefreshToken)
 	}
 
 	// 删除refresh token缓存
 	err = s.cache.Delete(ctx, redisKey)
 	if err != nil {
-		log.Printf("Error deleting refresh token from Redis in UserService: %v", err)
+		logger.Error("delete refresh token from redis failed", logger.Err(err))
 		return fmt.Errorf("failed to delete refresh token")
 	}
 	err = s.cache.RemoveUserRefreshSetItem(ctx, userID, refreshToken) // 从用户的refresh token集合中移除旧的refresh token
 	if err != nil {
-		log.Printf("Error removing refresh token from user set in Redis in UserService: %v", err)
+		logger.Error("remove refresh token from user set failed", logger.Err(err))
 		return fmt.Errorf("failed remove refresh token from user set: %w", err)
 	}
 
 	// 将access token加入黑名单，设置过期时间为剩余有效期
 	ttl := time.Duration(remainingExpire) * time.Second // time.Duration是以纳秒为单位的，所以需要乘以time.Second
 	if ttl <= 0 {                                       // 如果剩余有效期小于等于0，说明token已经过期，无需加入黑名单
-		log.Printf("Access token already expired, no need to blacklist")
+		logger.Debug("access token already expired, no need to blacklist")
 		return nil
 	}
 
 	err = s.cache.AddTokenToBlacklist(ctx, accessToken, ttl)
 	if err != nil {
-		log.Printf("Error adding access token to blacklist in UserService: %v", err)
+		logger.Error("add access token to blacklist failed", logger.Err(err))
 		return fmt.Errorf("failed to blacklist access token")
 	}
 
@@ -409,7 +371,7 @@ func (s *UserService) GetProfile(ctx context.Context, userID uint) (*dto.Profile
 	// 根据用户ID查询数据库
 	user, err := s.UserRepo.FindByID(ctx, userID)
 	if err != nil {
-		log.Printf("Error getting user profile in UserService: %v", err)
+		logger.Error("get user profile failed", logger.Err(err))
 		return nil, err
 	}
 
@@ -440,7 +402,7 @@ func (s *UserService) UpdateProfile(ctx context.Context, userID uint, req dto.Up
 		existingUser, err := s.UserRepo.FindByUsername(ctx, *req.UserName)
 		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 			// 出现错误，并且不是记录未找到的错误，说明查询失败
-			log.Printf("Error checking existing username in UserService: %v", err)
+			logger.Error("check existing username failed", logger.Err(err))
 			return nil, fmt.Errorf("check existing username: %w", err)
 		}
 		if existingUser != nil && existingUser.ID != userID {
@@ -468,7 +430,7 @@ func (s *UserService) UpdateProfile(ctx context.Context, userID uint, req dto.Up
 	// 调用仓库层更新用户资料
 	err := s.UserRepo.UpdateProfile(ctx, userID, updateMap)
 	if err != nil {
-		log.Printf("Error updating user profile in UserService: %v", err)
+		logger.Error("update user profile failed", logger.Err(err))
 		return nil, fmt.Errorf("update user profile: %w", err)
 	}
 
@@ -480,7 +442,7 @@ func (s *UserService) UpdateProfile(ctx context.Context, userID uint, req dto.Up
 func (s *UserService) UploadAvatar(ctx context.Context, userID uint, fh *multipart.FileHeader) (string, error) {
 	const maxSize = 10 << 20 // 设置最大文件大小为10MB
 	if fh.Size <= 0 || fh.Size > maxSize {
-		log.Printf("File size is invalid in UploadAvatar: %v", fh.Size)
+		logger.Warn("invalid avatar file size", logger.Int64("size", fh.Size))
 		return "", fmt.Errorf("%w: size=%d", ErrInvalidFileSize, fh.Size)
 	}
 
@@ -489,21 +451,21 @@ func (s *UserService) UploadAvatar(ctx context.Context, userID uint, fh *multipa
 	switch ext {
 	case ".jpg", ".jpeg", ".png", ".webp":
 	default:
-		log.Printf("Invalid file type in UploadAvatar: %v", ext)
+		logger.Warn("invalid avatar file type", logger.String("ext", ext))
 		return "", fmt.Errorf("%w: ext=%s", ErrInvalidFileType, ext)
 	}
 
 	// 创建用户头像存储目录
 	dir := filepath.Join(".run", "upload", "avatars", strconv.FormatUint(uint64(userID), 10)) // 拼接目录路径
 	if err := os.MkdirAll(dir, 0o755); err != nil {                                           // 创建目录，如果目录已存在则不会报错
-		log.Printf("Failed to create directory in UploadAvatar: %v", err)
+		logger.Error("create avatar directory failed", logger.Err(err))
 		return "", fmt.Errorf("failed to create directory: %w", err)
 	}
 
 	// 生成随机文件名
 	filename, err := file.RandHex(16) // 生成16字节的随机十六进制字符串作为文件名
 	if err != nil {
-		log.Printf("Failed to generate random filename in UploadAvatar: %v", err)
+		logger.Error("generate avatar filename failed", logger.Err(err))
 		return "", fmt.Errorf("failed to generate random filename: %w", err)
 	}
 	filename = filename + ext // 拼接完整文件名
@@ -525,7 +487,7 @@ func (s *UserService) UploadAvatar(ctx context.Context, userID uint, fh *multipa
 		return "", fmt.Errorf("detect uploaded avatar type failed: %w", err)
 	}
 	if !uploadMIMEMatchesExt(ext, mimeType) {
-		log.Printf("Invalid avatar content type in UploadAvatar: ext=%s mime=%s", ext, mimeType)
+		logger.Warn("invalid avatar content type", logger.String("ext", ext), logger.String("mime", mimeType))
 		return "", fmt.Errorf("%w: ext=%s content=%s", ErrInvalidFileType, ext, mimeType)
 	}
 
@@ -554,7 +516,7 @@ func (s *UserService) UploadAvatar(ctx context.Context, userID uint, fh *multipa
 }
 
 // ChangePassword 修改用户密码
-func (s *UserService) ChangePassword(ctx context.Context, userID uint, oldPassword, newPassword, access_token string, remainingExpire int64) error {
+func (s *UserService) ChangePassword(ctx context.Context, userID uint, oldPassword, newPassword, accessToken string, remainingExpire int64) error {
 	// 新密码沿用注册的强度与长度规则，避免绕过 72 字节上限
 	if err := validatePassword(newPassword); err != nil {
 		return err
@@ -563,49 +525,49 @@ func (s *UserService) ChangePassword(ctx context.Context, userID uint, oldPasswo
 	// 查找用户
 	user, err := s.UserRepo.FindByID(ctx, userID)
 	if err != nil {
-		log.Printf("Error finding user in ChangePassword: %v", err)
+		logger.Error("find user in change password failed", logger.Err(err))
 		return fmt.Errorf("user not found")
 	}
 
 	// 验证旧密码
 	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(oldPassword)); err != nil {
-		log.Printf("Old password does not match in ChangePassword for userID %d", userID)
+		logger.Warn("old password does not match", logger.Uint("user_id", userID))
 		return ErrOldPasswordIncorrect
 	}
 
 	// 加密新密码
 	hashedNewPassword, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
 	if err != nil {
-		log.Printf("Error hashing new password in ChangePassword: %v", err)
+		logger.Error("hash new password failed", logger.Err(err))
 		return fmt.Errorf("failed to hash new password")
 	}
 
 	// 更新密码
 	err = s.UserRepo.UpdatePassword(ctx, userID, string(hashedNewPassword))
 	if err != nil {
-		log.Printf("Error updating password in ChangePassword: %v", err)
+		logger.Error("update password failed", logger.Err(err))
 		return fmt.Errorf("failed to update password")
 	}
 
 	// 缓存禁用时无法写入黑名单/清理refresh token，跳过缓存操作，密码已在数据库更新完成
 	if !s.cache.IsEnabled() {
-		log.Printf("WARN: cache disabled, skip token revocation after password change, userID=%d", userID)
+		logger.Warn("cache disabled, skip token revocation after password change", logger.Uint("user_id", userID))
 		return nil
 	}
 
 	// 先删除该用户名下全部refresh token，保证改密后旧refresh无法继续换取access。
 	// Redis 操作失败必须向上返回，不能吞掉错误让接口误报成功。
 	if err := s.cache.CleanAllUserRefresh(ctx, userID); err != nil {
-		log.Printf("Error cleaning all refresh tokens in ChangePassword for userID %d: %v", userID, err)
+		logger.Error("clean all refresh tokens failed", logger.Uint("user_id", userID), logger.Err(err))
 		return fmt.Errorf("failed to revoke refresh tokens: %w", err)
 	}
 
 	// 拉黑access token
 	ttl := time.Duration(remainingExpire) * time.Second
 	if ttl > 0 { // 如果剩余有效期大于0，才加入黑名单
-		err = s.cache.AddTokenToBlacklist(ctx, access_token, ttl)
+		err = s.cache.AddTokenToBlacklist(ctx, accessToken, ttl)
 		if err != nil {
-			log.Printf("Error adding access token to blacklist in ChangePassword: %v", err)
+			logger.Error("add access token to blacklist failed", logger.Err(err))
 			return fmt.Errorf("failed to blacklist access token: %w", err)
 		}
 	}
@@ -614,10 +576,10 @@ func (s *UserService) ChangePassword(ctx context.Context, userID uint, oldPasswo
 }
 
 // FindByID 根据ID查找用户
-func (s *UserService) FindByID(ctx context.Context, id uint) (*dto.ProfileResponse, error) {
-	user, err := s.UserRepo.FindByID(ctx, id)
+func (s *UserService) FindByID(ctx context.Context, userID uint) (*dto.ProfileResponse, error) {
+	user, err := s.UserRepo.FindByID(ctx, userID)
 	if err != nil {
-		log.Printf("Error finding user by ID in FindByID: %v", err)
+		logger.Error("find user by ID failed", logger.Uint("user_id", userID), logger.Err(err))
 		return nil, fmt.Errorf("user not found")
 	}
 
@@ -637,7 +599,7 @@ func (s *UserService) FindByUsername(ctx context.Context, username string) (*dto
 
 	user, err := s.UserRepo.FindByUsername(ctx, username)
 	if err != nil {
-		log.Printf("Error finding user by username in FindByUsername: %v", err)
+		logger.Error("find user by username failed", logger.String("username", username), logger.Err(err))
 		return nil, fmt.Errorf("user not found")
 	}
 

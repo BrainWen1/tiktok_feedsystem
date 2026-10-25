@@ -33,15 +33,3 @@ type VideoTag struct {
 func (VideoTag) TableName() string {
 	return "video_tag"
 }
-
-// OutboxMsg 本地消息表 outbox pattern，异步事件投递
-type OutboxMsg struct {
-	ID         uint      `gorm:"primaryKey"`
-	VideoID    uint      `gorm:"index"`
-	EventType  string    `gorm:"type:varchar(50)"`
-	Payload    string    `gorm:"type:text"` // 完整事件json
-	RetryTimes int       `gorm:"default:0"` // 重试次数
-	NextExecAt time.Time `gorm:"index"`     // 下次调度时间
-	CreateTime time.Time `gorm:"autoCreateTime"`
-	Status     string    `gorm:"type:varchar(50);index"` // pending / success / fail
-}

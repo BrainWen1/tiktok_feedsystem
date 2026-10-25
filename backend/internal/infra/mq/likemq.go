@@ -3,9 +3,10 @@ package mq
 import (
 	"context"
 	"errors"
-	"log"
 	"sync/atomic"
 	"time"
+
+	"feedsystem/internal/utils/logger"
 
 	amqp "github.com/rabbitmq/amqp091-go"
 )
@@ -56,7 +57,7 @@ type LikeEvent struct {
 func NewLikeMQ(base *RabbitMQ) (*LikeMQ, error) {
 	l := &LikeMQ{}
 	if base == nil || !base.IsEnabled() {
-		log.Printf("WARN: RabbitMQ disabled, LikeMQ disabled")
+		logger.Warn("rabbitmq disabled, LikeMQ disabled")
 		l.Disable()
 		return l, ErrMQDisabled
 	}
@@ -64,14 +65,14 @@ func NewLikeMQ(base *RabbitMQ) (*LikeMQ, error) {
 	// 创建一个新的 channel
 	ch, err := base.NewChannel()
 	if err != nil {
-		log.Printf("ERROR: failed to create channel for LikeMQ, LikeMQ disabled: %v", err)
+		logger.Error("create channel for LikeMQ failed, LikeMQ disabled", logger.Err(err))
 		l.Disable()
 		return l, err
 	}
 	// 声明交换机和队列，并绑定它们
 	if err := DeclareTopic(ch, likeExchange, likeQueue, likeBindingKey); err != nil {
 		ch.Close()
-		log.Printf("ERROR: failed to declare exchange/queue for LikeMQ, LikeMQ disabled: %v", err)
+		logger.Error("declare exchange/queue for LikeMQ failed, LikeMQ disabled", logger.Err(err))
 		l.Disable()
 		return l, err
 	}

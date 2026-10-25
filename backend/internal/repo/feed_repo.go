@@ -8,10 +8,12 @@ import (
 	"gorm.io/gorm"
 )
 
+// FeedRepo 视频流仓库，只负责 feed 相关查询的原始 SQL。
 type FeedRepo struct {
 	db *gorm.DB
 }
 
+// NewFeedRepo 创建视频流仓库
 func NewFeedRepo(db *gorm.DB) *FeedRepo {
 	return &FeedRepo{db: db}
 }
@@ -33,11 +35,12 @@ func (r *FeedRepo) ListLatest(ctx context.Context, lastCreatedAt time.Time, last
 	return videos, err
 }
 
-// ListByFollowing 获取关注用户发布视频流
-func (r *FeedRepo) ListByFollowing(ctx context.Context, followUids []uint, lastCreatedAt time.Time, lastVid uint, limit int) ([]model.Video, error) {
+// ListByFollowing 获取关注用户发布视频流。
+// 复合游标为 (created_at, id)，按创建时间与主键同时降序，保证翻页顺序稳定。
+func (r *FeedRepo) ListByFollowing(ctx context.Context, followUserIDs []uint, lastCreatedAt time.Time, lastVid uint, limit int) ([]model.Video, error) {
 	var videos []model.Video
 	db := r.db.WithContext(ctx)
-	q := db.Where("author_id IN ?", followUids).Order("created_at DESC, id DESC")
+	q := db.Where("author_id IN ?", followUserIDs).Order("created_at DESC, id DESC")
 
 	if lastVid != 0 {
 		q = q.Where("(created_at, id) < (?, ?)", lastCreatedAt, lastVid)
@@ -47,7 +50,8 @@ func (r *FeedRepo) ListByFollowing(ctx context.Context, followUids []uint, lastC
 	return videos, err
 }
 
-// ListByPopularity 根据热度分页获取热门视频
+// ListByPopularity 根据热度分页获取热门视频。
+// 复合游标为 (popularity, id)，热度并列时用主键决胜。
 func (r *FeedRepo) ListByPopularity(ctx context.Context, lastPopularity int64, lastVid uint, limit int) ([]model.Video, error) {
 	var videos []model.Video
 	db := r.db.WithContext(ctx)
@@ -61,7 +65,8 @@ func (r *FeedRepo) ListByPopularity(ctx context.Context, lastPopularity int64, l
 	return videos, err
 }
 
-// ListLikesCount 按点赞数量降序分页
+// ListByLikesCount 按点赞数量降序分页查询视频。
+// 复合游标为 (likes_count, id)，点赞数并列时用主键决胜。
 func (r *FeedRepo) ListByLikesCount(ctx context.Context, lastLikeCount int64, lastVid uint, limit int) ([]model.Video, error) {
 	var videos []model.Video
 	db := r.db.WithContext(ctx)

@@ -6,10 +6,11 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"log"
 	"strconv"
 	"sync/atomic"
 	"time"
+
+	"feedsystem/internal/utils/logger"
 
 	"github.com/redis/go-redis/v9"
 )
@@ -148,7 +149,7 @@ func (r *RedisCache) AddTokenToBlacklist(ctx context.Context, token string, expi
 	}
 	// 将token加入黑名单，设置过期时间为token的剩余有效期
 	// 屏蔽敏感信息，防止日志泄露
-	log.Printf("Adding token to blacklist: [REDACTED] with expiration: %v", expiration)
+	logger.Debug("adding token to blacklist", logger.Duration("expiration", expiration))
 	return r.Set(ctx, BlacklistTokenKey(token), "blacklisted", expiration)
 }
 
@@ -166,7 +167,7 @@ func (r *RedisCache) IsTokenInBlacklist(ctx context.Context, token string) (bool
 			return false, nil
 		}
 		// 其他错误
-		log.Printf("Error checking token in blacklist in UserService: %v", err)
+		logger.Error("check token in blacklist failed", logger.Err(err))
 		return false, err
 	}
 	// 如果Redis返回的值是"blacklisted"，说明token在黑名单中
@@ -175,14 +176,14 @@ func (r *RedisCache) IsTokenInBlacklist(ctx context.Context, token string) (bool
 
 // AddUserRefreshSet 将refresh token加入用户集合
 // 每个 refresh token 的 refresh_token:{token} key 单独设置 TTL，到期后自动失效；
-// 索引集合只负责维护 <uid, tokens> 映射，不再依赖定时任务批量清理。
-func (c *RedisCache) AddUserRefreshSet(ctx context.Context, uid uint, refresh_token string, expire time.Duration) error {
+// 索引集合只负责维护 <userID, tokens> 映射，不再依赖定时任务批量清理。
+func (c *RedisCache) AddUserRefreshSet(ctx context.Context, userID uint, refreshToken string, expire time.Duration) error {
 	if !c.IsEnabled() {
 		return nil // 缓存禁用，跳过写入
 	}
-	key := RefreshSetKey(uid)
+	key := RefreshSetKey(userID)
 	// sadd 插入成员
-	err := c.client.SAdd(ctx, key, refresh_token).Err()
+	err := c.client.SAdd(ctx, key, refreshToken).Err()
 	if err != nil {
 		return err
 	}
@@ -191,25 +192,25 @@ func (c *RedisCache) AddUserRefreshSet(ctx context.Context, uid uint, refresh_to
 }
 
 // RemoveUserRefreshSetItem 用户集合移除单条refresh token
-func (c *RedisCache) RemoveUserRefreshSetItem(ctx context.Context, uid uint, refresh_token string) error {
+func (c *RedisCache) RemoveUserRefreshSetItem(ctx context.Context, userID uint, refreshToken string) error {
 	if !c.IsEnabled() {
 		return nil // 缓存禁用，跳过移除
 	}
-	return c.client.SRem(ctx, RefreshSetKey(uid), refresh_token).Err()
+	return c.client.SRem(ctx, RefreshSetKey(userID), refreshToken).Err()
 }
 
 // CleanAllUserRefresh 删除该用户名下全部 refresh token
 // 先取索引集合，再用一次多 key DEL 原子删除所有 refresh_token:{token} 与索引集合；
 // Redis 任一操作失败都会返回 error，由调用方决定是否向上抛出。
-func (c *RedisCache) CleanAllUserRefresh(ctx context.Context, uid uint) error {
+func (c *RedisCache) CleanAllUserRefresh(ctx context.Context, userID uint) error {
 	if !c.IsEnabled() {
 		return nil // 缓存禁用，跳过清理
 	}
-	setKey := RefreshSetKey(uid)
+	setKey := RefreshSetKey(userID)
 	// 获取集合里面全部 rt
 	refreshTokens, err := c.client.SMembers(ctx, setKey).Result()
 	if err != nil {
-		return fmt.Errorf("list refresh tokens for user %d: %w", uid, err)
+		return fmt.Errorf("list refresh tokens for user %d: %w", userID, err)
 	}
 	// 批量删除 token key 和索引集合，DEL 的多 key 删除是原子操作
 	keys := make([]string, 0, len(refreshTokens)+1)
@@ -218,7 +219,7 @@ func (c *RedisCache) CleanAllUserRefresh(ctx context.Context, uid uint) error {
 	}
 	keys = append(keys, setKey)
 	if err := c.client.Del(ctx, keys...).Err(); err != nil {
-		return fmt.Errorf("delete refresh tokens for user %d: %w", uid, err)
+		return fmt.Errorf("delete refresh tokens for user %d: %w", userID, err)
 	}
 	return nil
 }
@@ -271,15 +272,15 @@ func (c *RedisCache) AddToSet(ctx context.Context, key string, member interface{
 	if !c.IsEnabled() {
 		return nil // 缓存禁用，跳过写入
 	}
-	log.Printf("trying to add member %v to set %s with ttl %v", member, key, ttl)
+	logger.Debug("adding member to set", logger.Any("member", member), logger.String("key", key), logger.Duration("ttl", ttl))
 	err := c.client.SAdd(ctx, key, member).Err()
 	if err != nil {
-		log.Printf("Error adding member to set %s: %v", key, err)
+		logger.Error("add member to set failed", logger.String("key", key), logger.Err(err))
 		return err
 	}
 	// 设置集合整体过期时间
 	if ttl > 0 {
-		log.Printf("setting ttl for set %s to %v", key, ttl)
+		logger.Debug("setting ttl for set", logger.String("key", key), logger.Duration("ttl", ttl))
 		return c.client.Expire(ctx, key, ttl).Err()
 	}
 	return nil
@@ -292,7 +293,7 @@ func (c *RedisCache) RemoveFromSet(ctx context.Context, key string, member inter
 	}
 	err := c.client.SRem(ctx, key, member).Err()
 	if err != nil {
-		log.Printf("Error removing member from set %s: %v", key, err)
+		logger.Error("remove member from set failed", logger.String("key", key), logger.Err(err))
 		return err
 	}
 	return nil
@@ -305,7 +306,7 @@ func (c *RedisCache) IsMemberOfSet(ctx context.Context, key string, member inter
 	}
 	isMember, err := c.client.SIsMember(ctx, key, member).Result()
 	if err != nil {
-		log.Printf("Error checking membership of %v in set %s: %v", member, key, err)
+		logger.Error("check set membership failed", logger.Any("member", member), logger.String("key", key), logger.Err(err))
 		return false, err
 	}
 	return isMember, nil
@@ -320,7 +321,7 @@ func (c *RedisCache) MIsMemberOfSet(ctx context.Context, key string, members []i
 	// 调用SMIsMember命令批量检查每个元素是否在集合中，返回一个布尔切片
 	result, err := c.client.SMIsMember(ctx, key, members...).Result()
 	if err != nil {
-		log.Printf("Error checking membership of %v in set %s: %v", members, key, err)
+		logger.Error("check set membership failed", logger.Any("members", members), logger.String("key", key), logger.Err(err))
 		return nil, err
 	}
 	return result, nil
@@ -333,7 +334,7 @@ func (c *RedisCache) Exists(ctx context.Context, key string) (bool, error) {
 	}
 	exists, err := c.client.Exists(ctx, key).Result()
 	if err != nil {
-		log.Printf("Error checking existence of key %s: %v", key, err)
+		logger.Error("check key existence failed", logger.String("key", key), logger.Err(err))
 		return false, err
 	}
 	return exists > 0, nil
@@ -345,19 +346,19 @@ func (c *RedisCache) ZAdd(ctx context.Context, key string, zList []redis.Z, ttl 
 		return nil // 缓存禁用，跳过写入
 	}
 	if len(zList) == 0 {
-		log.Printf("zList is empty, nothing to add to zset %s", key)
+		logger.Debug("zset list is empty, nothing to add", logger.String("key", key))
 		return nil
 	}
 
 	// 使用ZAdd命令将元素添加到ZSet中
 	err := c.client.ZAdd(ctx, key, zList...).Err()
 	if err != nil {
-		log.Printf("Error adding member to zset %s: %v", key, err)
+		logger.Error("add member to zset failed", logger.String("key", key), logger.Err(err))
 		return err
 	}
 	// 设置ZSet整体过期时间
 	if ttl > 0 {
-		log.Printf("setting ttl for zset %s to %v", key, ttl)
+		logger.Debug("setting ttl for zset", logger.String("key", key), logger.Duration("ttl", ttl))
 		return c.client.Expire(ctx, key, ttl).Err()
 	}
 	return nil
@@ -370,7 +371,7 @@ func (c *RedisCache) ZRem(ctx context.Context, key string, member interface{}) e
 	}
 	err := c.client.ZRem(ctx, key, member).Err()
 	if err != nil {
-		log.Printf("Error removing member from zset %s: %v", key, err)
+		logger.Error("remove member from zset failed", logger.String("key", key), logger.Err(err))
 		return err
 	}
 	return nil
@@ -383,15 +384,15 @@ func (c *RedisCache) Increase(ctx context.Context, key string, increment int64, 
 	}
 	newValue, err := c.client.IncrBy(ctx, key, increment).Result()
 	if err != nil {
-		log.Printf("Error increasing value of key %s by %d: %v", key, increment, err)
+		logger.Error("increase key value failed", logger.String("key", key), logger.Int64("increment", increment), logger.Err(err))
 		return 0, err
 	}
 	// 设置key的过期时间
 	if ttl > 0 {
-		log.Printf("setting ttl for key %s to %v", key, ttl)
+		logger.Debug("setting ttl for key", logger.String("key", key), logger.Duration("ttl", ttl))
 		err = c.client.Expire(ctx, key, ttl).Err()
 		if err != nil {
-			log.Printf("Error setting expiration for key %s: %v", key, err)
+			logger.Error("set key expiration failed", logger.String("key", key), logger.Err(err))
 			return newValue, err
 		}
 	}
@@ -405,7 +406,7 @@ func (c *RedisCache) ZCard(ctx context.Context, key string) (int64, error) {
 	}
 	count, err := c.client.ZCard(ctx, key).Result()
 	if err != nil {
-		log.Printf("Error getting zset cardinality for key %s: %v", key, err)
+		logger.Error("get zset cardinality failed", logger.String("key", key), logger.Err(err))
 		return 0, err
 	}
 	return count, nil
@@ -427,7 +428,7 @@ func (c *RedisCache) ZRange(ctx context.Context, key string, start, stop int64, 
 	}).Result()
 
 	if err != nil {
-		log.Printf("Error getting zset range for key %s: %v", key, err)
+		logger.Error("get zset range failed", logger.String("key", key), logger.Err(err))
 		return nil, err
 	}
 	return result, nil
@@ -451,7 +452,7 @@ func (c *RedisCache) ZRangeByScore(ctx context.Context, key, start, stop string,
 		Rev:     reverse,
 	}).Result()
 	if err != nil {
-		log.Printf("Error getting zset range by score for key %s: %v", key, err)
+		logger.Error("get zset range by score failed", logger.String("key", key), logger.Err(err))
 		return nil, err
 	}
 	return result, nil
@@ -467,7 +468,7 @@ func (c *RedisCache) ZScore(ctx context.Context, key, member string) (float64, e
 		if errors.Is(err, redis.Nil) {
 			return 0, ErrCacheMiss
 		}
-		log.Printf("Error getting zset score for key %s member %s: %v", key, member, err)
+		logger.Error("get zset score failed", logger.String("key", key), logger.String("member", member), logger.Err(err))
 		return 0, err
 	}
 	return score, nil
@@ -487,7 +488,7 @@ func (c *RedisCache) ZIsMember(ctx context.Context, key string, member interface
 		return false, nil
 	}
 	if err != nil {
-		log.Printf("ZRank check failed key=%s member=%v err=%v", key, member, err)
+		logger.Error("zrank check failed", logger.String("key", key), logger.Any("member", member), logger.Err(err))
 		return false, err
 	}
 	// 没报错，说明查到了，存在

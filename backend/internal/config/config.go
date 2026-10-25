@@ -1,10 +1,11 @@
 package config
 
 import (
-	"log"
 	"os"
 	"strconv"
 	"strings"
+
+	"feedsystem/internal/utils/logger"
 
 	"github.com/joho/godotenv"
 )
@@ -48,15 +49,14 @@ func LoadConfig() error {
 	if configPath == "" {
 		configPath = "configs/.env.dev" // 默认路径
 	}
-	log.Printf("Loading config from %s", configPath)
+	logger.Info("loading config", logger.String("path", configPath))
 
-	var err error
-	err = godotenv.Load(configPath)
+	err := godotenv.Load(configPath)
 	if err != nil {
-		log.Fatal("Error loading config file:", configPath, err)
+		logger.Fatal("error loading config file", logger.String("path", configPath), logger.Err(err))
 		return err
 	} else {
-		log.Println("Successfully Loaded config file:", configPath)
+		logger.Info("successfully loaded config file", logger.String("path", configPath))
 	}
 
 	// string字段
@@ -73,9 +73,9 @@ func LoadConfig() error {
 
 	// 白名单为空时不允许任何跨域携带凭证请求，避免退化成 AllowOrigins=*
 	if len(AppConfig.CORS_allow_origins) == 0 {
-		log.Println("WARN: CORS_ALLOW_ORIGINS is empty, cross-origin requests will be rejected")
+		logger.Warn("CORS_ALLOW_ORIGINS is empty, cross-origin requests will be rejected")
 	} else {
-		log.Printf("CORS allowed origins: %v", AppConfig.CORS_allow_origins)
+		logger.Info("CORS allowed origins", logger.Any("origins", AppConfig.CORS_allow_origins))
 	}
 
 	// int字段

@@ -9,8 +9,8 @@ import (
 	"feedsystem/internal/infra/ratelimit"
 	"feedsystem/internal/repo"
 	"feedsystem/internal/service"
+	"feedsystem/internal/utils/logger"
 	"feedsystem/internal/utils/response"
-	"log"
 	"net/http"
 	"os"
 	"path"
@@ -25,15 +25,15 @@ import (
 const maxRequestBodyBytes = 110 << 20
 
 // 接口限流策略：登录/注册/刷新严格限制，上传单独限流，feed 读取放宽。
-// 登录类按 IP 限流，已登录接口优先按 uid 限流。
+// 登录类按 IP 限流，已登录接口优先按 userID 限流。
 var (
-	registerRateLimit    = ratelimit.Config{Scope: "register", Limit: 5, Window: time.Minute}
-	loginRateLimit       = ratelimit.Config{Scope: "login", Limit: 10, Window: time.Minute}
-	refreshRateLimit     = ratelimit.Config{Scope: "refresh", Limit: 20, Window: time.Minute}
-	uploadVideoLimit     = ratelimit.Config{Scope: "upload_video", Limit: 5, Window: time.Minute, KeyByUID: true}
-	uploadImageLimit     = ratelimit.Config{Scope: "upload_image", Limit: 10, Window: time.Minute, KeyByUID: true}
-	feedReadRateLimitIP  = ratelimit.Config{Scope: "feed_read", Limit: 120, Window: time.Minute}
-	feedReadRateLimitUID = ratelimit.Config{Scope: "feed_read", Limit: 120, Window: time.Minute, KeyByUID: true}
+	registerRateLimit       = ratelimit.Config{Scope: "register", Limit: 5, Window: time.Minute}
+	loginRateLimit          = ratelimit.Config{Scope: "login", Limit: 10, Window: time.Minute}
+	refreshRateLimit        = ratelimit.Config{Scope: "refresh", Limit: 20, Window: time.Minute}
+	uploadVideoLimit        = ratelimit.Config{Scope: "upload_video", Limit: 5, Window: time.Minute, KeyByUserID: true}
+	uploadImageLimit        = ratelimit.Config{Scope: "upload_image", Limit: 10, Window: time.Minute, KeyByUserID: true}
+	feedReadRateLimitIP     = ratelimit.Config{Scope: "feed_read", Limit: 120, Window: time.Minute}
+	feedReadRateLimitUserID = ratelimit.Config{Scope: "feed_read", Limit: 120, Window: time.Minute, KeyByUserID: true}
 )
 
 // blockedStaticExt 静态资源目录中禁止直接访问的敏感后缀，防止源码/配置泄露
@@ -94,7 +94,7 @@ func SetupRouter(sqlDB *gorm.DB, cache *cache.RedisCache, rmq *mq.RabbitMQ, auth
 	// 默认不信任代理头，防止客户端伪造 X-Forwarded-For 绕过基于 IP 的登录限流。
 	// 若部署在可信反向代理后，需在此处配置实际代理网段。
 	if err := r.SetTrustedProxies(nil); err != nil {
-		log.Printf("WARN: set trusted proxies failed: %v", err)
+		logger.Warn("set trusted proxies failed", logger.Err(err))
 	}
 
 	// 全局请求体上限：Content-Length 超限直接拒绝，未知长度由 MaxBytesReader 在读取时截断兜底，
@@ -132,7 +132,7 @@ func SetupRouter(sqlDB *gorm.DB, cache *cache.RedisCache, rmq *mq.RabbitMQ, auth
 	likeMQ, err := mq.NewLikeMQ(rmq)
 	if err != nil {
 		// MQ降级：保留已禁用的合法实例，点赞投递由service层回退数据库
-		log.Printf("WARN: LikeMQ disabled, like events fallback to database: %v", err)
+		logger.Warn("LikeMQ disabled, like events fallback to database", logger.Err(err))
 	}
 	likeRepo := repo.NewLikeRepo(sqlDB)
 	likeService := service.NewLikeService(likeRepo, likeMQ, userService, cache)
@@ -147,7 +147,7 @@ func SetupRouter(sqlDB *gorm.DB, cache *cache.RedisCache, rmq *mq.RabbitMQ, auth
 	commentMQ, err := mq.NewCommentMQ(rmq)
 	if err != nil {
 		// MQ降级：保留已禁用的合法实例，评论投递由service层回退数据库
-		log.Printf("WARN: CommentMQ disabled, comment events fallback to database: %v", err)
+		logger.Warn("CommentMQ disabled, comment events fallback to database", logger.Err(err))
 	}
 	commentRepo := repo.NewCommentRepo(sqlDB)
 	commentService := service.NewCommentService(commentRepo, commentMQ, cache, likeService, videoService)
@@ -183,7 +183,7 @@ func SetupRouter(sqlDB *gorm.DB, cache *cache.RedisCache, rmq *mq.RabbitMQ, auth
 		protectedUserGroup.POST("/logout", userHandler.Logout)                                                    // 用户登出
 		protectedUserGroup.GET("/profile", userHandler.GetProfile)                                                // 获取用户资料
 		protectedUserGroup.PATCH("/profile", userHandler.UpdateProfile)                                           // 更新用户资料
-		protectedUserGroup.POST("/upload_avatar", limiter.Middleware(uploadImageLimit), userHandler.UploadAvatar) // 上传用户头像（按uid限流）
+		protectedUserGroup.POST("/upload_avatar", limiter.Middleware(uploadImageLimit), userHandler.UploadAvatar) // 上传用户头像（按userID限流）
 		protectedUserGroup.POST("/change_password", userHandler.ChangePassword)                                   // 修改用户密码
 	}
 
@@ -197,8 +197,8 @@ func SetupRouter(sqlDB *gorm.DB, cache *cache.RedisCache, rmq *mq.RabbitMQ, auth
 	// 受保护的路由组
 	protectedVideoGroup := videoGroup.Group("/").Use(authMiddleware.Auth()) // 使用Auth中间件鉴权
 	{
-		protectedVideoGroup.POST("/upload_video", limiter.Middleware(uploadVideoLimit), videoHandler.UploadVideo) // 上传视频（按uid限流）
-		protectedVideoGroup.POST("/upload_cover", limiter.Middleware(uploadImageLimit), videoHandler.UploadCover) // 上传视频封面（按uid限流）
+		protectedVideoGroup.POST("/upload_video", limiter.Middleware(uploadVideoLimit), videoHandler.UploadVideo) // 上传视频（按userID限流）
+		protectedVideoGroup.POST("/upload_cover", limiter.Middleware(uploadImageLimit), videoHandler.UploadCover) // 上传视频封面（按userID限流）
 		protectedVideoGroup.POST("/publish", videoHandler.PublishVideo)                                           // 发布视频
 	}
 
@@ -239,7 +239,7 @@ func SetupRouter(sqlDB *gorm.DB, cache *cache.RedisCache, rmq *mq.RabbitMQ, auth
 		protectedSocialGroup.GET("/is_follow", socialHandler.IsFollow) // 获取两者关注关系
 	}
 
-	// feed流相关路由：读多写少，公开接口按 IP、登录接口按 uid 放宽限流
+	// feed流相关路由：读多写少，公开接口按 IP、登录接口按 userID 放宽限流
 	feedIPLimiter := limiter.Middleware(feedReadRateLimitIP)
 	feedGroup := r.Group("/feed")
 	{
@@ -248,8 +248,8 @@ func SetupRouter(sqlDB *gorm.DB, cache *cache.RedisCache, rmq *mq.RabbitMQ, auth
 		feedGroup.GET("/listByLikesCount", feedIPLimiter, feedHandler.FeedListLikesCount)   // 获取按点赞数排序的视频流
 		feedGroup.GET("/listByTag", feedIPLimiter, feedHandler.FeedListByTag)               // 获取按标签过滤的视频流
 	}
-	// 鉴权先执行，限流器随后才能拿到 uid
-	protectedFeedGroup := feedGroup.Group("/").Use(authMiddleware.Auth(), limiter.Middleware(feedReadRateLimitUID))
+	// 鉴权先执行，限流器随后才能拿到 userID
+	protectedFeedGroup := feedGroup.Group("/").Use(authMiddleware.Auth(), limiter.Middleware(feedReadRateLimitUserID))
 	{
 		protectedFeedGroup.GET("/listByFollowing", feedHandler.FeedListByFollowing) // 获取关注博主的视频流
 	}

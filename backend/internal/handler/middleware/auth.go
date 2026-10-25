@@ -3,15 +3,15 @@ package middleware
 import (
 	"feedsystem/internal/infra/cache"
 	"feedsystem/internal/utils/jwt"
+	"feedsystem/internal/utils/logger"
 	"feedsystem/internal/utils/response"
-	"log"
 	"strings"
 	"sync/atomic"
 
 	"github.com/gin-gonic/gin"
 )
 
-// sharedCache 供包级软鉴权函数TryGetUID复用，保证软鉴权也能校验token黑名单
+// sharedCache 供包级软鉴权函数TryGetUserID复用，保证软鉴权也能校验token黑名单
 var sharedCache atomic.Pointer[cache.RedisCache]
 
 // 避免auth中间件和service层绑定，AuthMiddleware不直接依赖业务层UserService，而是依赖基础设施层的RedisCache
@@ -32,7 +32,7 @@ func (am *AuthMiddleware) Auth() gin.HandlerFunc {
 		// 拿到请求头中的Authorization字段
 		authHeader := ctx.GetHeader("Authorization")
 		if authHeader == "" {
-			log.Printf("Authorization header is missing")
+			logger.Debug("authorization header is missing")
 			response.FailAuthResponse(ctx, "缺少Authorization头")
 			ctx.Abort()
 			return
@@ -42,7 +42,7 @@ func (am *AuthMiddleware) Auth() gin.HandlerFunc {
 		parts := strings.SplitN(authHeader, " ", 2)
 		if len(parts) != 2 || parts[0] != "Bearer" {
 			// 屏蔽敏感信息，防止日志泄露（Authorization头内含Access Token）
-			log.Printf("Authorization header format is invalid: [REDACTED]")
+			logger.Warn("authorization header format is invalid")
 			response.FailAuthResponse(ctx, "Authorization头格式错误")
 			ctx.Abort()
 			return
@@ -52,7 +52,7 @@ func (am *AuthMiddleware) Auth() gin.HandlerFunc {
 		token := parts[1]
 		claims, err := jwt.ParseToken(token)
 		if err != nil {
-			log.Printf("Failed to parse token: %v", err)
+			logger.Warn("parse token failed", logger.Err(err))
 			response.FailAuthResponse(ctx, "无效的token")
 			ctx.Abort()
 			return
@@ -61,14 +61,14 @@ func (am *AuthMiddleware) Auth() gin.HandlerFunc {
 		// 检查token是否在黑名单中
 		isBlacklisted, err := am.cache.IsTokenInBlacklist(ctx, token)
 		if err != nil {
-			log.Printf("Error checking token blacklist: %v", err)
+			logger.Error("check token blacklist failed", logger.Err(err))
 			response.FailAuthResponse(ctx, "服务器错误")
 			ctx.Abort()
 			return
 		}
 		if isBlacklisted { // token在黑名单中，说明用户已经登出或token已被注销
 			// 屏蔽敏感信息，防止日志泄露
-			log.Printf("Token is blacklisted: [REDACTED], userID=%d", claims.UserID)
+			logger.Warn("token is blacklisted", logger.Uint("user_id", claims.UserID))
 			response.FailAuthResponse(ctx, "token已被注销")
 			ctx.Abort()
 			return
@@ -77,14 +77,14 @@ func (am *AuthMiddleware) Auth() gin.HandlerFunc {
 		// 将用户信息存储在上下文中，供后续处理函数使用
 		ctx.Set("userID", claims.UserID)
 		ctx.Set("username", claims.UserName)
-		log.Printf("Authenticated user: ID=%d, Username=%s", claims.UserID, claims.UserName)
+		logger.Debug("authenticated user", logger.Uint("user_id", claims.UserID), logger.String("username", claims.UserName))
 
 		ctx.Next()
 	}
 }
 
-// TryGetUID 尝试从token中获取用户ID，如果解析失败则返回0，表示游客
-func TryGetUID(ctx *gin.Context) uint {
+// TryGetUserID 尝试从token中获取用户ID，如果解析失败则返回0，表示游客
+func TryGetUserID(ctx *gin.Context) uint {
 	authHeader := ctx.GetHeader("Authorization")
 	if authHeader == "" {
 		return 0
@@ -106,11 +106,11 @@ func TryGetUID(ctx *gin.Context) uint {
 		isBlacklisted, err := c.IsTokenInBlacklist(ctx.Request.Context(), tokenStr)
 		if err != nil {
 			// 黑名单查询失败时按游客降级，避免把无法确认身份的请求当成已登录
-			log.Printf("Error checking token blacklist in TryGetUID: %v", err)
+			logger.Error("check token blacklist in TryGetUserID failed", logger.Err(err))
 			return 0
 		}
 		if isBlacklisted {
-			log.Printf("Soft auth token is blacklisted: [REDACTED], userID=%d", claims.UserID)
+			logger.Warn("soft auth token is blacklisted", logger.Uint("user_id", claims.UserID))
 			return 0
 		}
 	}
