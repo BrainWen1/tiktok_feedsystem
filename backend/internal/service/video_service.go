@@ -21,9 +21,7 @@ import (
 )
 
 const (
-	maxUploadSize  = 100 << 20       // MaxUploadSize 最大上传文件大小，单位字节
-	placeholderTTL = 5 * time.Minute // PlaceholderTTL 空占位缓存过期时间
-
+	maxUploadSize = 100 << 20 // MaxUploadSize 最大上传文件大小，单位字节
 )
 
 // 折中的耦合方案，后期解耦把部分用户信息写到video表里，配合mq做异步更新
@@ -227,8 +225,8 @@ func (s *VideoService) VideoDetail(ctx context.Context, videoID uint, uid uint) 
 	if uid != 0 {
 		// 查询用户是否点赞过该视频
 		// 先查redis缓存，缓存未命中再查数据库
-		key := fmt.Sprintf("user_liked_videos:%d", uid)
-		log.Printf("key:%s", key)
+		// 与 worker 消费端共用同一套 key 构造函数，结构固定为 Set（P0-8/P0-9）
+		key := cache.LikeUserSetKey(uid)
 		// 用户在空占位缓存未过期的时间里再次点赞的话，worker会在点赞集合里写入这个vid，再次查询会直接在这里命中缓存，不会被空占位误判
 		isLiked, err := s.cache.IsMemberOfSet(ctx, key, videoID)
 		if err != nil {
@@ -242,8 +240,7 @@ func (s *VideoService) VideoDetail(ctx context.Context, videoID uint, uid uint) 
 			}
 		} else if isLiked == false {
 			// 先检查空缓存占位，避免大量缓存穿透
-			placeholderKey := fmt.Sprintf("user_liked_placeholders:%d:%d", uid, videoID)
-			log.Printf("placeholderKey:%s", placeholderKey)
+			placeholderKey := cache.LikePlaceholderKey(uid, videoID)
 			exists, err := s.cache.Exists(ctx, placeholderKey)
 
 			if err == nil && exists == true {
@@ -262,14 +259,14 @@ func (s *VideoService) VideoDetail(ctx context.Context, videoID uint, uid uint) 
 				if err == nil {
 					log.Printf("trying to write into redis")
 					if isLikedResp.IsLiked == true {
-						// 已点赞，写入点赞集合
-						err = s.cache.AddToSet(ctx, key, videoID, 0) // 0表示永不过期
+						// 已点赞，写入点赞集合，TTL 兜底过期，避免脏 member 永久驻留
+						err = s.cache.AddToSet(ctx, key, videoID, cache.LikeUserSetTTL)
 						if err != nil {
 							log.Printf("Error adding video %d to Redis set for user %d: %v", videoID, uid, err)
 						}
 					} else {
 						// 未点赞，写入空占位
-						err = s.cache.Set(ctx, placeholderKey, "1", placeholderTTL) // 设置空占位，过期时间为5分钟
+						err = s.cache.Set(ctx, placeholderKey, "1", cache.LikePlaceholderTTL)
 						if err != nil {
 							log.Printf("Error setting placeholder key %s in Redis: %v", placeholderKey, err)
 						}
@@ -436,7 +433,8 @@ func (s *VideoService) VideoList(ctx context.Context, authorID uint, uid uint, p
 	likedMap := make(map[uint]bool) // <vid, isLiked>
 	if uid != 0 {
 		// 查询用户是否点赞过这些视频
-		key := fmt.Sprintf("user_liked_videos:%d", uid)
+		// 与 worker 消费端共用同一套 key 构造函数，结构固定为 Set（P0-8/P0-9）
+		key := cache.LikeUserSetKey(uid)
 		// 批量查询
 		isLikedList, err := s.cache.MIsMemberOfSet(ctx, key, vidList)
 		if err != nil {
@@ -458,7 +456,7 @@ func (s *VideoService) VideoList(ctx context.Context, authorID uint, uid uint, p
 					// 点赞集合的缓存未命中
 					log.Printf("redis cache miss for user %d and video %d", uid, vid)
 					// 检查空占位缓存，避免缓存穿透
-					placeholderKey := fmt.Sprintf("user_liked_placeholders:%d:%d", uid, vid.(uint))
+					placeholderKey := cache.LikePlaceholderKey(uid, vid.(uint))
 					exists, err := s.cache.Exists(ctx, placeholderKey)
 					if err == nil && exists == true {
 						likedMap[vid.(uint)] = false
@@ -475,15 +473,15 @@ func (s *VideoService) VideoList(ctx context.Context, authorID uint, uid uint, p
 
 					// 将数据库查询结果写入Redis缓存，避免下次重复查询
 					if isLikedResp.IsLiked == true {
-						// 已点赞，写入点赞集合缓存
+						// 已点赞，写入点赞集合缓存，TTL 兜底过期，避免脏 member 永久驻留
 						log.Printf("trying to write into redis for user %d and video %d", uid, vid)
-						err = s.cache.AddToSet(ctx, key, vid.(uint), 0) // 0表示永不过期
+						err = s.cache.AddToSet(ctx, key, vid.(uint), cache.LikeUserSetTTL)
 						if err != nil {
 							log.Printf("Error adding video %d to Redis set for user %d: %v", vid, uid, err)
 						}
 					} else {
 						// 未点赞，写入空占位缓存
-						err = s.cache.Set(ctx, placeholderKey, "1", placeholderTTL)
+						err = s.cache.Set(ctx, placeholderKey, "1", cache.LikePlaceholderTTL)
 						if err != nil {
 							log.Printf("Error setting placeholder key %s in Redis: %v", placeholderKey, err)
 						}

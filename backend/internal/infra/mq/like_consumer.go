@@ -13,15 +13,12 @@ import (
 )
 
 const (
-	placeholderTTL        = 5 * time.Minute // 空占位缓存的过期时间
-	eventIDTTL            = 24 * time.Hour  // 消息ID缓存的过期时间
-	eventKeyPrefix        = "mq:like_event_id:"
-	likeKeyPrefix         = "like:user:"
-	likePlaceholderPrefix = "like:user:placeholder:"
+	eventIDTTL     = 24 * time.Hour // 消息ID缓存的过期时间
+	eventKeyPrefix = "mq:like_event_id:"
 )
 
 // StartLikeConsumer 启动点赞消费，给worker调用
-func StartLikeConsumer(lmq *LikeMQ, likeRepo *repo.LikeRepo, cache *cache.RedisCache) error {
+func StartLikeConsumer(lmq *LikeMQ, likeRepo *repo.LikeRepo, redisCache *cache.RedisCache) error {
 	if !lmq.IsEnabled() {
 		log.Printf("WARN: LikeMQ disabled, skip like consumer")
 		return ErrMQDisabled // MQ禁用时不启动消费循环
@@ -29,7 +26,7 @@ func StartLikeConsumer(lmq *LikeMQ, likeRepo *repo.LikeRepo, cache *cache.RedisC
 	if lmq.ch == nil {
 		return errors.New("like mq is not initialized")
 	}
-	if cache == nil {
+	if redisCache == nil {
 		return errors.New("like cache is not initialized")
 	}
 	if likeRepo == nil {
@@ -66,7 +63,7 @@ func StartLikeConsumer(lmq *LikeMQ, likeRepo *repo.LikeRepo, cache *cache.RedisC
 
 			// 引入Redis缓存消息ID，先检查是否已经处理过，没有的话再处理，处理完后将消息ID存入Redis，设置过期时间，避免重复消费
 			key := fmt.Sprintf("%s%s", eventKeyPrefix, event.EventID)
-			val, err := cache.Get(ctx, key)
+			val, err := redisCache.Get(ctx, key)
 			if err != nil && err.Error() != "redis: nil" {
 				log.Printf("redis get error: %v", err)
 				_ = msg.Nack(false, true) // Redis异常，放回队列重试
@@ -105,7 +102,7 @@ func StartLikeConsumer(lmq *LikeMQ, likeRepo *repo.LikeRepo, cache *cache.RedisC
 
 					// 在这里尝试写入redis，即使第一次成功处理后redis写入失败，也可以在这里再次尝试写入，
 					// 避免后续所有重复消费全部缓存miss进入数据库
-					err = cache.Set(ctx, key, "1", eventIDTTL) // 过期时间为24小时
+					err = redisCache.Set(ctx, key, "1", eventIDTTL) // 过期时间为24小时
 					if err != nil {
 						// 再次写入失败直接跳过，避免陷入死循环，后续重复消费会再次尝试写入redis
 						log.Printf("redis set error: %v", err)
@@ -128,20 +125,21 @@ func StartLikeConsumer(lmq *LikeMQ, likeRepo *repo.LikeRepo, cache *cache.RedisC
 			}
 
 			// 成功处理后，将消息ID存入Redis，设置过期时间，避免重复消费
-			err = cache.Set(ctx, key, "1", eventIDTTL) // 过期时间为24小时
+			err = redisCache.Set(ctx, key, "1", eventIDTTL) // 过期时间为24小时
 			if err != nil {
 				log.Printf("redis set error: %v", err)
 				_ = msg.Ack(false) // Redis异常，但是数据库操作已经成功，仍然ACK掉消息，避免重复消费
 				continue
 			}
 
-			// 根据事件类型更新Redis缓存，便于快速查询用户是否点赞过某个视频
-			key = fmt.Sprintf("%s%d", likeKeyPrefix, event.UserID)
+			// 根据事件类型更新Redis缓存，便于快速查询用户是否点赞过某个视频。
+			// key 与 service 查询端共用 cache.LikeUserSetKey，结构固定为 Set（P0-8/P0-9）。
+			key = cache.LikeUserSetKey(event.UserID)
 			switch event.Action {
 			case "like":
 				{
-					// 将 <uid, vid_set> 存入redis，便于快捷查询是否点赞，永不过期
-					err = cache.AddToSet(ctx, key, event.VideoID, 0) // 0表示永不过期
+					// 将 vid 写入用户点赞集合；TTL 兜底过期，避免漏删脏数据永久驻留
+					err = redisCache.AddToSet(ctx, key, event.VideoID, cache.LikeUserSetTTL)
 					if err != nil {
 						// 此操作与MQ消费的幂等性无关，失败了也不影响数据库操作成功，所以直接打印日志并继续
 						log.Printf("redis add to set error: %v", err)
@@ -151,15 +149,15 @@ func StartLikeConsumer(lmq *LikeMQ, likeRepo *repo.LikeRepo, cache *cache.RedisC
 			case "unlike":
 				{
 					// 将当前vid从 <uid, vid_set> 中删除
-					err = cache.RemoveFromSet(ctx, key, event.VideoID)
+					err = redisCache.RemoveFromSet(ctx, key, event.VideoID)
 					if err != nil {
 						log.Printf("redis remove from set error: %v", err)
 						continue
 					}
 
 					// 插入或更新一个空占位缓存，避免用户在短时间内重复点击取消点赞导致缓存穿透
-					placeholderKey := fmt.Sprintf("%s%d:%d", likePlaceholderPrefix, event.UserID, event.VideoID)
-					err = cache.Set(ctx, placeholderKey, "1", placeholderTTL) // 过期时间为5分钟
+					placeholderKey := cache.LikePlaceholderKey(event.UserID, event.VideoID)
+					err = redisCache.Set(ctx, placeholderKey, "1", cache.LikePlaceholderTTL)
 					if err != nil {
 						log.Printf("redis set placeholder error: %v", err)
 						continue

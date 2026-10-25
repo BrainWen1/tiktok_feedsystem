@@ -12,10 +12,6 @@ import (
 	"strconv"
 )
 
-const (
-	likeUserKeyPrefix = "like:user:" // 用户点赞视频的缓存前缀
-)
-
 // VideoDetailer 只暴露 LikeService 需要的最小视频详情能力。
 // 这里不要直接依赖完整的 VideoService，避免和 VideoService 形成初始化循环。
 type VideoDetailer interface {
@@ -155,20 +151,19 @@ func (s *LikeService) BatchGetIsLike(ctx context.Context, loginUid uint, vidList
 		return resMap, nil
 	}
 
-	// 缓存优先，批量查redis zset like:video:{vid} 或者 like:user:{uid}
-	// 创建一个包含所有需要检查的key的切片
-	keys := make([]string, 0, len(vidList))
-	for i := 0; i < len(vidList); i++ {
-		keys = append(keys, fmt.Sprintf("%s%d", likeUserKeyPrefix, loginUid))
-	}
-
-	// 简化实现：循环判断，生产可以优化pipeline
+	// 缓存优先：like:user:{uid} 固定为 Set，member 是 video id，
+	// 与消费端 SADD / SREM 写入的数据结构完全一致（P0-9）。
+	key := cache.LikeUserSetKey(loginUid)
+	members := make([]interface{}, 0, len(vidList))
 	for _, vid := range vidList {
-		exist, err := s.cache.ZIsMember(ctx, fmt.Sprintf("%s%d", likeUserKeyPrefix, loginUid), vid)
-		if err != nil {
-			return nil, err
-		}
-		resMap[vid] = exist
+		members = append(members, vid)
+	}
+	isLikedList, err := s.cache.MIsMemberOfSet(ctx, key, members)
+	if err != nil {
+		return nil, fmt.Errorf("failed to batch check like status in cache for user %d: %w", loginUid, err)
+	}
+	for i, vid := range vidList {
+		resMap[vid] = isLikedList[i]
 	}
 	return resMap, nil
 }
