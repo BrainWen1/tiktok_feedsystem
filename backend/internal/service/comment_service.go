@@ -11,7 +11,15 @@ import (
 	"fmt"
 	"log"
 	"strconv"
+	"strings"
+	"unicode"
+	"unicode/utf8"
+
+	"gorm.io/gorm"
 )
+
+// maxCommentContentRunes 单条评论最大字符数，防止超长内容写入数据库。
+const maxCommentContentRunes = 500
 
 type CommentService struct {
 	CommentRepo  *repo.CommentRepo
@@ -31,10 +39,24 @@ func NewCommentService(commentRepo *repo.CommentRepo, commentMQ *mq.CommentMQ, c
 	}
 }
 
+// PublishComment 发布评论：先做内容与目标校验，再把合法评论投递到 MQ。
+// 非法评论在入口即被拒绝，不会进入 MQ 或数据库。
 func (s *CommentService) PublishComment(ctx context.Context, vid, uid, pid uint, username, content string) error {
-	if vid == 0 || uid == 0 || content == "" {
-		log.Printf("Invalid parameters: vid=%d, uid=%d, content=%s", vid, uid, content)
-		return errors.New("video ID, user ID, and content must be non-zero and non-empty")
+	if vid == 0 || uid == 0 {
+		log.Printf("Invalid parameters: vid=%d, uid=%d", vid, uid)
+		return errors.New("video ID and user ID must be non-zero")
+	}
+
+	// 去掉首尾空白后再校验和入库，避免纯空白评论
+	content = strings.TrimSpace(content)
+	if err := validateCommentContent(content); err != nil {
+		log.Printf("Invalid comment content: vid=%d uid=%d err=%v", vid, uid, err)
+		return err
+	}
+	// 校验视频存在性以及二级评论的父评论归属
+	if err := s.validateCommentTarget(ctx, vid, pid); err != nil {
+		log.Printf("Invalid comment target: vid=%d uid=%d pid=%d err=%v", vid, uid, pid, err)
+		return err
 	}
 
 	//组装消息
@@ -49,11 +71,58 @@ func (s *CommentService) PublishComment(ctx context.Context, vid, uid, pid uint,
 	if err != nil {
 		log.Printf("Failed to publish publish-comment event to MQ: %v", err)
 		// MQ投递失败，降级方案：同步直接写数据库
-		err = s.CommentRepo.CreateComment(ctx, comment)
-		return err
+		if createErr := s.CommentRepo.CreateComment(ctx, comment); createErr != nil {
+			return fmt.Errorf("create comment fallback for video %d user %d: %w", vid, uid, createErr)
+		}
 	}
 
-	// MQ投递成功，返回nil，后台慢慢消费入库
+	// MQ投递成功（或降级写库成功），返回nil
+	return nil
+}
+
+// validateCommentContent 校验评论内容：非空、长度受限，且只允许可打印字符与常见空白字符。
+func validateCommentContent(content string) error {
+	if content == "" {
+		return errors.New("comment content must be non-empty")
+	}
+	if utf8.RuneCountInString(content) > maxCommentContentRunes {
+		return fmt.Errorf("comment content must not exceed %d characters", maxCommentContentRunes)
+	}
+	for _, r := range content {
+		// 允许换行、制表符及其他 Unicode 空白字符
+		if r == '\n' || r == '\r' || r == '\t' || unicode.IsSpace(r) {
+			continue
+		}
+		// 控制字符、格式字符、私用区等不可打印字符一律拒绝
+		if !unicode.IsPrint(r) {
+			return errors.New("comment content contains invalid characters")
+		}
+	}
+	return nil
+}
+
+// validateCommentTarget 校验评论目标：视频必须存在；二级评论的父评论必须属于同一个视频。
+func (s *CommentService) validateCommentTarget(ctx context.Context, vid, pid uint) error {
+	if _, err := s.videoService.VideoRepo.FindByID(ctx, vid); err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return fmt.Errorf("comment video %d not found", vid)
+		}
+		return fmt.Errorf("check comment video %d: %w", vid, err)
+	}
+	if pid == 0 {
+		return nil
+	}
+
+	parent, err := s.CommentRepo.FindByID(ctx, pid)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return fmt.Errorf("parent comment %d not found", pid)
+		}
+		return fmt.Errorf("find parent comment %d: %w", pid, err)
+	}
+	if parent.VideoID != vid {
+		return fmt.Errorf("parent comment %d does not belong to video %d", pid, vid)
+	}
 	return nil
 }
 

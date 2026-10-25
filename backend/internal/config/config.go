@@ -4,6 +4,7 @@ import (
 	"log"
 	"os"
 	"strconv"
+	"strings"
 
 	"github.com/joho/godotenv"
 )
@@ -22,6 +23,21 @@ type Config struct {
 
 	JWT_secret      string
 	JWT_expire_hour int
+
+	// CORS_allow_origins 允许跨域携带凭证的来源白名单，从 CORS_ALLOW_ORIGINS 读取（逗号分隔）
+	CORS_allow_origins []string
+}
+
+// splitCSV 解析逗号分隔配置，去掉空白项；空字符串返回空切片
+func splitCSV(raw string) []string {
+	parts := strings.Split(raw, ",")
+	result := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if v := strings.TrimSpace(part); v != "" {
+			result = append(result, v)
+		}
+	}
+	return result
 }
 
 var AppConfig Config // 全局配置对象
@@ -45,13 +61,21 @@ func LoadConfig() error {
 
 	// string字段
 	AppConfig = Config{
-		DB_dsn:         os.Getenv("MYSQL_DSN"),
-		Redis_addr:     os.Getenv("REDIS_ADDR"),
-		Redis_password: os.Getenv("REDIS_PASSWORD"),
-		JWT_secret:     os.Getenv("JWT_SECRET"),
-		MQ_Host:        os.Getenv("MQ_HOST"),
-		MQ_Username:    os.Getenv("MQ_USERNAME"),
-		MQ_Password:    os.Getenv("MQ_PASSWORD"),
+		DB_dsn:             os.Getenv("MYSQL_DSN"),
+		Redis_addr:         os.Getenv("REDIS_ADDR"),
+		Redis_password:     os.Getenv("REDIS_PASSWORD"),
+		JWT_secret:         os.Getenv("JWT_SECRET"),
+		MQ_Host:            os.Getenv("MQ_HOST"),
+		MQ_Username:        os.Getenv("MQ_USERNAME"),
+		MQ_Password:        os.Getenv("MQ_PASSWORD"),
+		CORS_allow_origins: splitCSV(os.Getenv("CORS_ALLOW_ORIGINS")),
+	}
+
+	// 白名单为空时不允许任何跨域携带凭证请求，避免退化成 AllowOrigins=*
+	if len(AppConfig.CORS_allow_origins) == 0 {
+		log.Println("WARN: CORS_ALLOW_ORIGINS is empty, cross-origin requests will be rejected")
+	} else {
+		log.Printf("CORS allowed origins: %v", AppConfig.CORS_allow_origins)
 	}
 
 	// int字段

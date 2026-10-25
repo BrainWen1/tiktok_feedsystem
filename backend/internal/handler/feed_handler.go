@@ -5,7 +5,7 @@ import (
 	"feedsystem/internal/handler/middleware"
 	"feedsystem/internal/service"
 	"feedsystem/internal/utils/response"
-	"fmt"
+	"log"
 
 	"github.com/gin-gonic/gin"
 )
@@ -23,7 +23,8 @@ func (h *FeedHandler) FeedListLatest(c *gin.Context) {
 	// 解析请求参数
 	var req dto.FeedListReq
 	if err := c.ShouldBindQuery(&req); err != nil {
-		response.FailResponse(c, fmt.Sprintf("Failed to bind query parameters: %v", err))
+		log.Printf("Failed to bind query parameters: %v", err)
+		response.FailResponse(c, "请求参数错误")
 		return
 	}
 
@@ -33,7 +34,8 @@ func (h *FeedHandler) FeedListLatest(c *gin.Context) {
 	// 调用服务层获取视频列表
 	list, err := h.feedSvc.ListLatest(c.Request.Context(), loginUid, req.Cursor, req.Limit)
 	if err != nil {
-		response.FailResponse(c, fmt.Sprintf("Failed to fetch latest feeds: %v", err))
+		log.Printf("Failed to fetch latest feeds: %v", err)
+		response.ServerErrorResponse(c, "获取视频流失败，请稍后重试")
 		return
 	}
 	response.SuccessResponse(c, list)
@@ -44,7 +46,8 @@ func (h *FeedHandler) FeedListByFollowing(c *gin.Context) {
 	// 解析请求参数
 	var req dto.FeedListReq
 	if err := c.ShouldBindQuery(&req); err != nil {
-		response.FailResponse(c, fmt.Sprintf("Failed to bind query parameters: %v", err))
+		log.Printf("Failed to bind query parameters: %v", err)
+		response.FailResponse(c, "请求参数错误")
 		return
 	}
 
@@ -54,7 +57,8 @@ func (h *FeedHandler) FeedListByFollowing(c *gin.Context) {
 	// 调用服务层获取视频列表
 	list, err := h.feedSvc.ListByFollowing(c.Request.Context(), loginUid, req.Cursor, req.Limit)
 	if err != nil {
-		response.FailResponse(c, fmt.Sprintf("Failed to fetch following feeds: %v", err))
+		log.Printf("Failed to fetch following feeds: %v", err)
+		response.ServerErrorResponse(c, "获取关注视频流失败，请稍后重试")
 		return
 	}
 	response.SuccessResponse(c, list)
@@ -65,7 +69,8 @@ func (h *FeedHandler) FeedListByPopularity(c *gin.Context) {
 	// 解析请求参数
 	var req dto.FeedListReq
 	if err := c.ShouldBindQuery(&req); err != nil {
-		response.FailResponse(c, fmt.Sprintf("Failed to bind query parameters: %v", err))
+		log.Printf("Failed to bind query parameters: %v", err)
+		response.FailResponse(c, "请求参数错误")
 		return
 	}
 
@@ -75,7 +80,8 @@ func (h *FeedHandler) FeedListByPopularity(c *gin.Context) {
 	// 调用服务层获取视频列表
 	list, err := h.feedSvc.ListByPopularity(c.Request.Context(), loginUid, req.Cursor, req.Limit)
 	if err != nil {
-		response.FailResponse(c, fmt.Sprintf("Failed to fetch popular feeds: %v", err))
+		log.Printf("Failed to fetch popular feeds: %v", err)
+		response.ServerErrorResponse(c, "获取热门视频流失败，请稍后重试")
 		return
 	}
 	response.SuccessResponse(c, list)
@@ -86,7 +92,8 @@ func (h *FeedHandler) FeedListLikesCount(c *gin.Context) {
 	// 解析请求参数
 	var req dto.FeedListReq
 	if err := c.ShouldBindQuery(&req); err != nil {
-		response.FailResponse(c, fmt.Sprintf("Failed to bind query parameters: %v", err))
+		log.Printf("Failed to bind query parameters: %v", err)
+		response.FailResponse(c, "请求参数错误")
 		return
 	}
 
@@ -96,7 +103,8 @@ func (h *FeedHandler) FeedListLikesCount(c *gin.Context) {
 	// 调用服务层获取视频列表
 	list, err := h.feedSvc.ListByLikesCount(c.Request.Context(), loginUid, req.Cursor, req.Limit)
 	if err != nil {
-		response.FailResponse(c, fmt.Sprintf("Failed to fetch likes count feeds: %v", err))
+		log.Printf("Failed to fetch likes count feeds: %v", err)
+		response.ServerErrorResponse(c, "获取点赞榜单失败，请稍后重试")
 		return
 	}
 	response.SuccessResponse(c, list)
@@ -107,7 +115,8 @@ func (h *FeedHandler) FeedListByTag(c *gin.Context) {
 	// 解析请求参数
 	var req dto.FeedListReq
 	if err := c.ShouldBindQuery(&req); err != nil {
-		response.FailResponse(c, fmt.Sprintf("Failed to bind query parameters: %v", err))
+		log.Printf("Failed to bind query parameters: %v", err)
+		response.FailResponse(c, "请求参数错误")
 		return
 	}
 
@@ -117,7 +126,8 @@ func (h *FeedHandler) FeedListByTag(c *gin.Context) {
 	// 调用服务层获取视频列表
 	list, err := h.feedSvc.ListByTag(c.Request.Context(), loginUid, req.Tag, req.Cursor, req.Limit)
 	if err != nil {
-		response.FailResponse(c, fmt.Sprintf("Failed to fetch feeds by tag: %v", err))
+		log.Printf("Failed to fetch feeds by tag: %v", err)
+		response.ServerErrorResponse(c, "获取标签视频流失败，请稍后重试")
 		return
 	}
 	response.SuccessResponse(c, list)

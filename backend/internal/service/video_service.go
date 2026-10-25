@@ -47,7 +47,7 @@ func (s *VideoService) UploadVideo(ctx context.Context, userID uint, fh *multipa
 	// 检查文件大小
 	if fh.Size <= 0 || fh.Size > maxSize {
 		log.Printf("User %d attempted to upload a file which is out of size bounds", userID)
-		return "", fmt.Errorf("file size must be between 0 and 100MB")
+		return "", fmt.Errorf("%w: size=%d", ErrInvalidFileSize, fh.Size)
 	}
 
 	// 检查文件扩展名是否合法
@@ -56,7 +56,7 @@ func (s *VideoService) UploadVideo(ctx context.Context, userID uint, fh *multipa
 	case ".mp4", ".avi", ".mov", ".mkv":
 	default:
 		log.Printf("Invalid file type in UploadVideo: %v", ext)
-		return "", fmt.Errorf("invalid file type")
+		return "", fmt.Errorf("%w: ext=%s", ErrInvalidFileType, ext)
 	}
 
 	// 创建视频存储目录
@@ -90,9 +90,9 @@ func (s *VideoService) UploadVideo(ctx context.Context, userID uint, fh *multipa
 	if err != nil {
 		return "", fmt.Errorf("detect uploaded video type failed: %w", err)
 	}
-	if !strings.HasPrefix(mimeType, "video/") {
-		log.Printf("Invalid video content type in UploadVideo: %s", mimeType)
-		return "", fmt.Errorf("invalid file content type: %s", mimeType)
+	if !uploadMIMEMatchesExt(ext, mimeType) {
+		log.Printf("Invalid video content type in UploadVideo: ext=%s mime=%s", ext, mimeType)
+		return "", fmt.Errorf("%w: ext=%s content=%s", ErrInvalidFileType, ext, mimeType)
 	}
 
 	// 创建本地目标文件
@@ -135,12 +135,37 @@ func detectUploadMIME(src io.Reader) (string, io.Reader, error) {
 	return http.DetectContentType(head), io.MultiReader(bytes.NewReader(head), src), nil
 }
 
+// uploadMIMEMatchesExt 校验真实内容类型与文件后缀是否匹配。
+// 仅靠 http.DetectContentType 的前缀判断不足以阻止“改名绕过”，
+// 这里按后缀限定允许的内容类型；.mkv 与 webm 共用 EBML 头，嗅探结果可能是 video/webm。
+func uploadMIMEMatchesExt(ext, mimeType string) bool {
+	switch ext {
+	case ".jpg", ".jpeg":
+		return mimeType == "image/jpeg"
+	case ".png":
+		return mimeType == "image/png"
+	case ".webp":
+		return mimeType == "image/webp"
+	case ".mp4":
+		return mimeType == "video/mp4"
+	case ".mov":
+		// Go 的 MIME 嗅探没有 quicktime 签名，部分 .mov 会被识别为 application/octet-stream
+		return mimeType == "video/quicktime" || mimeType == "video/mp4" || mimeType == "application/octet-stream"
+	case ".avi":
+		return mimeType == "video/avi" || mimeType == "video/x-msvideo"
+	case ".mkv":
+		return mimeType == "video/webm" || mimeType == "video/x-matroska" || mimeType == "application/octet-stream"
+	default:
+		return false
+	}
+}
+
 // UploadCover 处理视频封面上传逻辑
 func (s *VideoService) UploadCover(ctx context.Context, userID uint, fh *multipart.FileHeader) (string, error) {
 	const maxSize = 10 << 20 // 最大文件大小为10MB
 	if fh.Size <= 0 || fh.Size > maxSize {
 		log.Printf("File size is invalid in UploadCover: %v", fh.Size)
-		return "", fmt.Errorf("invalid file size")
+		return "", fmt.Errorf("%w: size=%d", ErrInvalidFileSize, fh.Size)
 	}
 
 	// 检查文件扩展名是否合法
@@ -149,7 +174,7 @@ func (s *VideoService) UploadCover(ctx context.Context, userID uint, fh *multipa
 	case ".jpg", ".jpeg", ".png", ".webp":
 	default:
 		log.Printf("Invalid file type in UploadCover: %v", ext)
-		return "", fmt.Errorf("invalid file type")
+		return "", fmt.Errorf("%w: ext=%s", ErrInvalidFileType, ext)
 	}
 
 	// 创建用户头像存储目录
@@ -183,9 +208,9 @@ func (s *VideoService) UploadCover(ctx context.Context, userID uint, fh *multipa
 	if err != nil {
 		return "", fmt.Errorf("detect uploaded cover type failed: %w", err)
 	}
-	if !strings.HasPrefix(mimeType, "image/") {
-		log.Printf("Invalid cover content type in UploadCover: %s", mimeType)
-		return "", fmt.Errorf("invalid file content type: %s", mimeType)
+	if !uploadMIMEMatchesExt(ext, mimeType) {
+		log.Printf("Invalid cover content type in UploadCover: ext=%s mime=%s", ext, mimeType)
+		return "", fmt.Errorf("%w: ext=%s content=%s", ErrInvalidFileType, ext, mimeType)
 	}
 
 	// 创建本地目标文件
@@ -429,8 +454,10 @@ func (s *VideoService) getDetail(ctx context.Context, vid uint) (*model.Video, e
 			// 拿到锁，查询数据库并更新缓存
 			log.Printf("Acquired lock for video %d, querying database", vid) // [日志] 拿到锁
 			defer func() {                                                   // 注册延迟释放锁
-				err := s.cache.Unlock(context.Background(), lockKey, token)
-				if err != nil {
+				// 使用带短超时的独立 ctx，避免 Redis 抖动时 Unlock 长时间阻塞请求返回
+				unlockCtx, unlockCancel := context.WithTimeout(context.WithoutCancel(ctx), 200*time.Millisecond)
+				defer unlockCancel()
+				if err := s.cache.Unlock(unlockCtx, lockKey, token); err != nil {
 					log.Printf("unlock failed key=%s err=%v", lockKey, err)
 				}
 			}()
@@ -445,12 +472,11 @@ func (s *VideoService) getDetail(ctx context.Context, vid uint) (*model.Video, e
 				return nil, err
 			}
 			log.Printf("Fetched video %d from database, updating cache", vid) // [日志] 查询数据库
-			// 将查询到的视频数据写入缓存
-			err = s.setCached(ctx, cacheKey, video)
-			if err != nil {
-				return nil, err
+			// 将查询到的视频数据写入缓存；写缓存失败只告警，不能影响本次数据库读取结果
+			if err := s.setCached(ctx, cacheKey, video); err != nil {
+				log.Printf("WARN: set video cache failed, key=%s vid=%d err=%v", cacheKey, vid, err)
 			}
-			log.Printf("Cache miss for video %d, fetched from DB and cached", vid) // [日志] 设置缓存
+			log.Printf("Cache miss for video %d, fetched from DB", vid) // [日志] 查询数据库完成
 			return video, nil
 		}
 		//抢锁失败，轮询等待缓存构建完成
@@ -473,9 +499,9 @@ func (s *VideoService) getDetail(ctx context.Context, vid uint) (*model.Video, e
 		return nil, err
 	}
 	if s.cache.IsEnabled() {
-		err = s.setCached(ctx, cacheKey, video)
-		if err != nil {
-			return nil, err
+		// 缓存只是加速层，写入失败保留数据库读取结果，仅记录告警
+		if err := s.setCached(ctx, cacheKey, video); err != nil {
+			log.Printf("WARN: set video cache failed, key=%s vid=%d err=%v", cacheKey, vid, err)
 		}
 	}
 	return video, nil

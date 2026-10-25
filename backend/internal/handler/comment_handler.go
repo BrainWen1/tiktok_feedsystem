@@ -5,7 +5,6 @@ import (
 	"feedsystem/internal/handler/middleware"
 	"feedsystem/internal/service"
 	"feedsystem/internal/utils/response"
-	"fmt"
 	"log"
 
 	"github.com/gin-gonic/gin"
@@ -26,7 +25,7 @@ func (h *CommentHandler) PublishComment(ctx *gin.Context) {
 	uid, username, err := getUserFromCtx(ctx)
 	if err != nil {
 		log.Printf("Failed to get user from context: %v", err)
-		response.FailResponse(ctx, fmt.Sprintf("Failed to get user from context: %v", err))
+		response.FailAuthResponse(ctx, "未登录或登录已过期")
 		return
 	}
 
@@ -34,7 +33,7 @@ func (h *CommentHandler) PublishComment(ctx *gin.Context) {
 	var req dto.PublishCommentRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
 		log.Printf("Failed to bind request: %v", err)
-		response.FailResponse(ctx, fmt.Sprintf("Failed to bind request: %v", err))
+		response.FailResponse(ctx, "请求参数错误")
 		return
 	}
 
@@ -42,7 +41,7 @@ func (h *CommentHandler) PublishComment(ctx *gin.Context) {
 	err = h.CommentService.PublishComment(ctx.Request.Context(), req.VideoID, uid, req.ParentID, username, req.Content)
 	if err != nil {
 		log.Printf("Failed to create comment: %v", err)
-		response.FailResponse(ctx, fmt.Sprintf("Failed to create comment: %v", err))
+		response.ServerErrorResponse(ctx, "评论发布失败，请稍后重试")
 		return
 	}
 
@@ -54,7 +53,7 @@ func (h *CommentHandler) DeleteComment(ctx *gin.Context) {
 	uid, _, err := getUserFromCtx(ctx)
 	if err != nil {
 		log.Printf("Failed to get user from context: %v", err)
-		response.FailResponse(ctx, fmt.Sprintf("Failed to get user from context: %v", err))
+		response.FailAuthResponse(ctx, "未登录或登录已过期")
 		return
 	}
 
@@ -62,7 +61,7 @@ func (h *CommentHandler) DeleteComment(ctx *gin.Context) {
 	var req dto.DeleteCommentRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
 		log.Printf("Failed to bind request: %v", err)
-		response.FailResponse(ctx, fmt.Sprintf("Failed to bind request: %v", err))
+		response.FailResponse(ctx, "请求参数错误")
 		return
 	}
 
@@ -70,7 +69,7 @@ func (h *CommentHandler) DeleteComment(ctx *gin.Context) {
 	err = h.CommentService.DeleteComment(ctx.Request.Context(), uid, req.CommentID)
 	if err != nil {
 		log.Printf("Failed to delete comment: %v", err)
-		response.FailResponse(ctx, fmt.Sprintf("Failed to delete comment: %v", err))
+		response.ServerErrorResponse(ctx, "评论删除失败，请稍后重试")
 		return
 	}
 
@@ -83,7 +82,7 @@ func (h *CommentHandler) ListComments(ctx *gin.Context) {
 	var req dto.ListCommentsRequest
 	if err := ctx.ShouldBindQuery(&req); err != nil {
 		log.Printf("Failed to bind request: %v", err)
-		response.FailResponse(ctx, fmt.Sprintf("Failed to bind request: %v", err))
+		response.FailResponse(ctx, "请求参数错误")
 		return
 	}
 
@@ -94,7 +93,7 @@ func (h *CommentHandler) ListComments(ctx *gin.Context) {
 	resp, err := h.CommentService.ListComments(ctx.Request.Context(), uid, req)
 	if err != nil {
 		log.Printf("Failed to list comments: %v", err)
-		response.FailResponse(ctx, fmt.Sprintf("Failed to list comments: %v", err))
+		response.ServerErrorResponse(ctx, "评论列表获取失败，请稍后重试")
 		return
 	}
 

@@ -23,6 +23,11 @@ const (
 	socialFollowersKey = "social:followers:uid:"    // 粉丝列表缓存的key模板
 
 	socialCacheWriteConcurrency = 8 // 缓存回写 goroutine 的全局并发上限
+
+	// socialEmptyZSetMember 空关注/粉丝列表的占位成员。
+	// Redis 无法保存空 ZSet（成员全部删除后 key 会消失），用非法的 uid=0 作为占位，
+	// 让 0 关注/0 粉丝的用户也能留下缓存标记，避免每次请求都穿透到数据库。
+	socialEmptyZSetMember = "0"
 )
 
 var (
@@ -40,6 +45,59 @@ type SocialService struct {
 
 func NewSocialService(socialRepo *repo.SocialRepo, cache *cache.RedisCache, UserService *UserService) *SocialService {
 	return &SocialService{SocialRepo: socialRepo, cache: cache, UserService: UserService}
+}
+
+// readSocialCacheCount 读取关注/粉丝 ZSet 的元素数量，并排除空集合占位成员。
+// known=false 表示缓存 key 不存在（正常 miss，可回源数据库）；Redis 异常直接返回 error，
+// 这样上层能区分“缓存没有”和“缓存故障”，不会把故障当成空列表。
+func (s *SocialService) readSocialCacheCount(ctx context.Context, key string) (count int64, known bool, err error) {
+	exists, err := s.cache.Exists(ctx, key)
+	if err != nil {
+		return 0, false, fmt.Errorf("check cache existence for key %s: %w", key, err)
+	}
+	if !exists {
+		return 0, false, nil
+	}
+
+	count, err = s.cache.ZCard(ctx, key)
+	if err != nil {
+		return 0, false, fmt.Errorf("zcard cache key %s: %w", key, err)
+	}
+	// Redis 无法保存空 ZSet，count=0 说明 key 在 Exists 与 ZCard 之间过期，按 miss 回源
+	if count == 0 {
+		return 0, false, nil
+	}
+	hasEmptyMarker, err := s.cache.ZIsMember(ctx, key, socialEmptyZSetMember)
+	if err != nil {
+		return 0, false, fmt.Errorf("check empty member for key %s: %w", key, err)
+	}
+	if hasEmptyMarker && count > 0 {
+		count--
+	}
+	return count, true, nil
+}
+
+// writeSocialZSet 回写关注/粉丝列表缓存；空列表写入占位成员，保证 0 关注/0 粉丝的用户也能命中缓存。
+func (s *SocialService) writeSocialZSet(ctx context.Context, key string, zList []redis.Z) error {
+	if len(zList) == 0 {
+		zList = []redis.Z{{Score: 0, Member: socialEmptyZSetMember}}
+	}
+	return s.cache.ZAdd(ctx, key, zList, socialUidsTTL)
+}
+
+// filterSocialMembers 过滤空集合占位成员，避免把 uid=0 当作真实用户返回。
+func filterSocialMembers(members []string) []string {
+	if len(members) == 0 {
+		return members
+	}
+	filtered := members[:0]
+	for _, member := range members {
+		if member == socialEmptyZSetMember {
+			continue
+		}
+		filtered = append(filtered, member)
+	}
+	return filtered
 }
 
 // Follow 关注博主
@@ -176,12 +234,26 @@ func (s *SocialService) GetBloggers(ctx context.Context, targetUid, uid uint, cu
 	}
 
 	key := fmt.Sprintf("%s%d", socialBloggersKey, targetUid)
-	// 尝试从Redis ZSet拿：按 (score, member) 复合游标读取，避免 ZRange 的 offset 分页
-	if exists, err := s.cache.Exists(ctx, key); err == nil && exists {
-		total, zErr := s.cache.ZCard(ctx, key)
+	// 尝试从Redis ZSet拿：按 (score, member) 复合游标读取，避免 ZRange 的 offset 分页。
+	// key 不存在属于正常 miss，回源数据库；Redis 异常向上透传，由上层决定是否降级。
+	total, cacheHit, err := s.readSocialCacheCount(ctx, key)
+	if err != nil {
+		return nil, 0, nil, fmt.Errorf("get bloggers: %w", err)
+	}
+	if cacheHit {
+		// 空集合占位说明缓存已确认该用户没有关注任何人，直接返回空页，避免穿透数据库
+		if total == 0 {
+			return []*dto.UserSocialSimpleResponse{}, 0, nil, nil
+		}
 		uidStrList, pageErr := s.socialCachePageByCursor(ctx, key, lastCreatedAt, lastUid, int(pageSize))
+		if pageErr != nil {
+			return nil, 0, nil, fmt.Errorf("get bloggers: read cache page key=%s: %w", key, pageErr)
+		}
 		nextCursor, cursorErr := s.socialCursorFromCache(ctx, key, uidStrList, int(pageSize))
-		if zErr == nil && pageErr == nil && cursorErr == nil {
+		if cursorErr != nil && !errors.Is(cursorErr, cache.ErrCacheMiss) {
+			return nil, 0, nil, fmt.Errorf("get bloggers: build cursor from cache key=%s: %w", key, cursorErr)
+		}
+		if cursorErr == nil {
 			// 转uint，批量拿用户信息
 			uidList := strSlice2UintSlice(uidStrList)
 			userList, err := s.batchGetUserSimple(ctx, uidList)
@@ -209,7 +281,8 @@ func (s *SocialService) GetBloggers(ctx context.Context, targetUid, uid uint, cu
 			}
 			log.Printf("Failed to batch get user simple info: %v", err)
 		} else {
-			log.Printf("social cache read failed, fallback to db: key=%s zErr=%v pageErr=%v cursorErr=%v", key, zErr, pageErr, cursorErr)
+			// 分页游标成员在读取过程中过期，按缓存未命中原生回源数据库
+			log.Printf("social cache cursor expired, fallback to db: key=%s err=%v", key, cursorErr)
 		}
 	}
 
@@ -218,7 +291,7 @@ func (s *SocialService) GetBloggers(ctx context.Context, targetUid, uid uint, cu
 	if err != nil {
 		return nil, 0, nil, err
 	}
-	total := int64(len(socials))
+	total = int64(len(socials))
 	pageSocials := socialPageByCursor(socials, lastCreatedAt, lastUid, int(pageSize), func(social *model.Social) uint {
 		return social.BloggerID
 	})
@@ -302,7 +375,8 @@ func (s *SocialService) asyncRewriteSocialZSet(key string, zList []redis.Z) {
 		cacheCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
 
-		if err := s.cache.ZAdd(cacheCtx, key, zList, socialUidsTTL); err != nil {
+		// 空列表也会写入占位成员，缓存“该用户没有关注/粉丝”这一结果，避免 0 值反复穿透数据库
+		if err := s.writeSocialZSet(cacheCtx, key, zList); err != nil {
 			log.Printf("batch zadd social cache failed, key=%s, err:%v", key, err)
 		}
 	}()
@@ -359,7 +433,11 @@ func socialCursorFromDBPage(pageSocials []*model.Social, pageSize int, uidOf fun
 func (s *SocialService) socialCachePageByCursor(ctx context.Context, key string, lastCreatedAt time.Time, lastUid uint, pageSize int) ([]string, error) {
 	limit := int64(pageSize)
 	if lastUid == 0 {
-		return s.cache.ZRange(ctx, key, 0, limit-1, true)
+		members, err := s.cache.ZRange(ctx, key, 0, limit-1, true)
+		if err != nil {
+			return nil, err
+		}
+		return filterSocialMembers(members), nil
 	}
 
 	scoreStr := strconv.FormatInt(lastCreatedAt.Unix(), 10)
@@ -387,7 +465,7 @@ func (s *SocialService) socialCachePageByCursor(ctx context.Context, key string,
 	if int64(len(result)) > limit {
 		result = result[:limit]
 	}
-	return result, nil
+	return filterSocialMembers(result), nil
 }
 
 // socialCursorFromCache 用缓存页的最后一条 uid + ZSet score 生成下一页游标。
@@ -470,12 +548,26 @@ func (s *SocialService) GetFollowers(ctx context.Context, targetUid, uid uint, c
 	}
 
 	key := fmt.Sprintf("%s%d", socialFollowersKey, targetUid)
-	// 尝试从Redis ZSet拿：按 (score, member) 复合游标读取，避免 ZRange 的 offset 分页
-	if exists, err := s.cache.Exists(ctx, key); err == nil && exists {
-		total, zErr := s.cache.ZCard(ctx, key)
+	// 尝试从Redis ZSet拿：按 (score, member) 复合游标读取，避免 ZRange 的 offset 分页。
+	// key 不存在属于正常 miss，回源数据库；Redis 异常向上透传，由上层决定是否降级。
+	total, cacheHit, err := s.readSocialCacheCount(ctx, key)
+	if err != nil {
+		return nil, 0, nil, fmt.Errorf("get followers: %w", err)
+	}
+	if cacheHit {
+		// 空集合占位说明缓存已确认该用户没有粉丝，直接返回空页，避免穿透数据库
+		if total == 0 {
+			return []*dto.UserSocialSimpleResponse{}, 0, nil, nil
+		}
 		uidStrList, pageErr := s.socialCachePageByCursor(ctx, key, lastCreatedAt, lastUid, int(pageSize))
+		if pageErr != nil {
+			return nil, 0, nil, fmt.Errorf("get followers: read cache page key=%s: %w", key, pageErr)
+		}
 		nextCursor, cursorErr := s.socialCursorFromCache(ctx, key, uidStrList, int(pageSize))
-		if zErr == nil && pageErr == nil && cursorErr == nil {
+		if cursorErr != nil && !errors.Is(cursorErr, cache.ErrCacheMiss) {
+			return nil, 0, nil, fmt.Errorf("get followers: build cursor from cache key=%s: %w", key, cursorErr)
+		}
+		if cursorErr == nil {
 			// 转uint，批量拿用户信息
 			uidList := strSlice2UintSlice(uidStrList)
 			userList, err := s.batchGetUserSimple(ctx, uidList)
@@ -508,7 +600,8 @@ func (s *SocialService) GetFollowers(ctx context.Context, targetUid, uid uint, c
 			}
 			log.Printf("Failed to batch get user simple info: %v", err)
 		} else {
-			log.Printf("social cache read failed, fallback to db: key=%s zErr=%v pageErr=%v cursorErr=%v", key, zErr, pageErr, cursorErr)
+			// 分页游标成员在读取过程中过期，按缓存未命中原生回源数据库
+			log.Printf("social cache cursor expired, fallback to db: key=%s err=%v", key, cursorErr)
 		}
 	}
 
@@ -517,7 +610,7 @@ func (s *SocialService) GetFollowers(ctx context.Context, targetUid, uid uint, c
 	if err != nil {
 		return nil, 0, nil, err
 	}
-	total := int64(len(socials))
+	total = int64(len(socials))
 	pageSocials := socialPageByCursor(socials, lastCreatedAt, lastUid, int(pageSize), func(social *model.Social) uint {
 		return social.FollowerID
 	})
@@ -654,76 +747,80 @@ func (s *SocialService) IsFollow(ctx context.Context, uid, targetID uint) (bool,
 	return isFollow, isFan, nil
 }
 
-// GetCounts 获取关注和粉丝数量
+// GetCounts 获取关注和粉丝数量。
+// 缓存命中（包括缓存下来的真实 0）直接返回；只有 key 不存在时才回源数据库，
+// 回源后按方向写回 ZSet 或空集合占位，避免 0 关注/0 粉丝用户每次请求都穿透数据库。
 func (s *SocialService) GetCounts(ctx context.Context, targetID uint) (int64, int64, error) {
 	if targetID == 0 {
 		return 0, 0, errors.New("target id must be non-zero")
 	}
 
-	// 尝试从Redis ZSet拿
 	keyBloggers := fmt.Sprintf("%s%d", socialBloggersKey, targetID)
 	keyFollowers := fmt.Sprintf("%s%d", socialFollowersKey, targetID)
 
-	followCount, err := s.cache.ZCard(ctx, keyBloggers)
+	followCount, followKnown, err := s.readSocialCacheCount(ctx, keyBloggers)
 	if err != nil {
 		log.Printf("Failed to get follow count from cache: targetID=%d err=%v", targetID, err)
-		return 0, 0, err
+		return 0, 0, fmt.Errorf("get counts: %w", err)
 	}
-
-	fanCount, err := s.cache.ZCard(ctx, keyFollowers)
+	fanCount, fanKnown, err := s.readSocialCacheCount(ctx, keyFollowers)
 	if err != nil {
 		log.Printf("Failed to get fan count from cache: targetID=%d err=%v", targetID, err)
-		return 0, 0, err
+		return 0, 0, fmt.Errorf("get counts: %w", err)
+	}
+	if followKnown && fanKnown {
+		return followCount, fanCount, nil
 	}
 
-	// 如果缓存中没有数据，查库并回写缓存
-	if followCount == 0 || fanCount == 0 {
-		followCountDB, fanCountDB, err := s.SocialRepo.GetCounts(ctx, targetID)
+	followCountDB, fanCountDB, err := s.SocialRepo.GetCounts(ctx, targetID)
+	if err != nil {
+		log.Printf("Failed to get counts from DB: targetID=%d err=%v", targetID, err)
+		return 0, 0, fmt.Errorf("get counts from db: %w", err)
+	}
+
+	// 只回源缓存未知的一侧，已知的一侧继续使用缓存值。
+	if !followKnown {
+		followCount = followCountDB
+		socials, err := s.SocialRepo.ListAllBloggers(ctx, targetID, true)
 		if err != nil {
-			log.Printf("Failed to get counts from DB: targetID=%d err=%v", targetID, err)
-			return 0, 0, err
-		}
-
-		// 回写缓存
-		if followCount == 0 {
-			socials, err := s.SocialRepo.ListAllBloggers(ctx, targetID, true)
-			if err != nil {
-				log.Printf("Failed to list all bloggers for cache: targetID=%d err=%v", targetID, err)
-			} else {
-				var zList []redis.Z
-				for _, social := range socials {
-					zList = append(zList, redis.Z{
-						Score:  float64(social.CreatedAt.Unix()),
-						Member: social.BloggerID,
-					})
-				}
-				err = s.cache.ZAdd(ctx, keyBloggers, zList, socialUidsTTL)
-				if err != nil {
-					log.Printf("Failed to write follow count to cache: targetID=%d err=%v", targetID, err)
-				}
+			log.Printf("Failed to list all bloggers for cache: targetID=%d err=%v", targetID, err)
+		} else {
+			zList := make([]redis.Z, 0, len(socials))
+			for _, social := range socials {
+				zList = append(zList, redis.Z{
+					Score:  float64(social.CreatedAt.Unix()),
+					Member: social.BloggerID,
+				})
+			}
+			// 0 关注时写入空集合占位，下次请求直接命中缓存
+			if followCountDB > 0 && len(zList) == 0 {
+				log.Printf("WARN: follow count mismatch: targetID=%d db=%d cache_list=0", targetID, followCountDB)
+			} else if err := s.writeSocialZSet(ctx, keyBloggers, zList); err != nil {
+				log.Printf("Failed to write follow list to cache: targetID=%d err=%v", targetID, err)
 			}
 		}
+	}
 
-		if fanCount == 0 {
-			socials, err := s.SocialRepo.ListAllFollowers(ctx, targetID, true)
-			if err != nil {
-				log.Printf("Failed to list all followers for cache: targetID=%d err=%v", targetID, err)
-			} else {
-				var zList []redis.Z
-				for _, social := range socials {
-					zList = append(zList, redis.Z{
-						Score:  float64(social.CreatedAt.Unix()),
-						Member: social.FollowerID,
-					})
-				}
-				err = s.cache.ZAdd(ctx, keyFollowers, zList, socialUidsTTL)
-				if err != nil {
-					log.Printf("Failed to write fan count to cache: targetID=%d err=%v", targetID, err)
-				}
+	if !fanKnown {
+		fanCount = fanCountDB
+		socials, err := s.SocialRepo.ListAllFollowers(ctx, targetID, true)
+		if err != nil {
+			log.Printf("Failed to list all followers for cache: targetID=%d err=%v", targetID, err)
+		} else {
+			zList := make([]redis.Z, 0, len(socials))
+			for _, social := range socials {
+				zList = append(zList, redis.Z{
+					Score:  float64(social.CreatedAt.Unix()),
+					Member: social.FollowerID,
+				})
+			}
+			// 0 粉丝时写入空集合占位，下次请求直接命中缓存
+			if fanCountDB > 0 && len(zList) == 0 {
+				log.Printf("WARN: fan count mismatch: targetID=%d db=%d cache_list=0", targetID, fanCountDB)
+			} else if err := s.writeSocialZSet(ctx, keyFollowers, zList); err != nil {
+				log.Printf("Failed to write fan list to cache: targetID=%d err=%v", targetID, err)
 			}
 		}
-
-		return followCountDB, fanCountDB, nil
 	}
 
 	return followCount, fanCount, nil
@@ -735,11 +832,11 @@ func (s *SocialService) GetMyFollowUidList(ctx context.Context, uid uint) ([]uin
 	// 1. 先查Redis缓存
 	strUids, err := s.cache.ZRange(ctx, key, 0, -1, true)
 	if err == nil && len(strUids) > 0 {
-		// 缓存命中，字符串转uint数组直接返回
+		// 缓存命中，字符串转uint数组直接返回；占位成员 uid=0 不是真实用户，跳过
 		uidList := make([]uint, 0, len(strUids))
 		for _, suid := range strUids {
 			num, parseErr := strconv.ParseUint(suid, 10, 64)
-			if parseErr != nil {
+			if parseErr != nil || num == 0 {
 				continue
 			}
 			uidList = append(uidList, uint(num))
@@ -753,7 +850,10 @@ func (s *SocialService) GetMyFollowUidList(ctx context.Context, uid uint) ([]uin
 		return nil, err
 	}
 	if len(dbRecords) == 0 {
-		// 无关注数据，可写入空缓存防缓存穿透（可选）
+		// 无关注数据也写入空集合占位，避免 feed 每次请求都回源数据库
+		if err := s.writeSocialZSet(ctx, key, nil); err != nil {
+			log.Printf("Failed to write empty follow list cache: uid=%d err=%v", uid, err)
+		}
 		return []uint{}, nil
 	}
 
@@ -797,12 +897,74 @@ func (s *SocialService) BatchIsFollow(ctx context.Context, loginUid uint, author
 		return resMap, nil
 	}
 	key := fmt.Sprintf("%s%d", socialBloggersKey, loginUid)
+
+	// 关注集合整体不存在时，一次性回源全量关注列表并重建 ZSet。
+	// 不能按单个作者逐条 ZAdd，否则冷缓存下只写入部分成员，
+	// 会让 GetCounts/GetBloggers 把不完整的集合当成全量缓存。
+	keyExists, err := s.cache.Exists(ctx, key)
+	if err != nil {
+		return nil, fmt.Errorf("batch is follow: check cache key for user %d: %w", loginUid, err)
+	}
+	if !keyExists {
+		socials, err := s.SocialRepo.ListAllBloggers(ctx, loginUid, true)
+		if err != nil {
+			return nil, fmt.Errorf("batch is follow: list follow relations for user %d: %w", loginUid, err)
+		}
+		followSet := make(map[uint]struct{}, len(socials))
+		zList := make([]redis.Z, 0, len(socials))
+		for _, social := range socials {
+			followSet[social.BloggerID] = struct{}{}
+			zList = append(zList, redis.Z{
+				Score:  float64(social.CreatedAt.Unix()),
+				Member: social.BloggerID,
+			})
+		}
+		if err := s.writeSocialZSet(ctx, key, zList); err != nil {
+			log.Printf("Failed to rebuild follow cache: uid=%d err=%v", loginUid, err)
+		}
+		for _, auid := range authorUidList {
+			_, ok := followSet[auid]
+			resMap[auid] = ok
+		}
+		return resMap, nil
+	}
+
 	for _, auid := range authorUidList {
+		if auid == 0 {
+			resMap[auid] = false
+			continue
+		}
 		isMember, err := s.cache.ZIsMember(ctx, key, strconv.FormatUint(uint64(auid), 10))
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("batch is follow: check cache for user %d target %d: %w", loginUid, auid, err)
 		}
-		resMap[auid] = isMember
+		if isMember {
+			resMap[auid] = true
+			continue
+		}
+
+		// 缓存未命中（key 不存在或关注集合尚未同步）时回源数据库，避免把已关注误判为未关注
+		isFollowing, err := s.SocialRepo.IsFollowing(ctx, loginUid, auid)
+		if err != nil {
+			return nil, fmt.Errorf("batch is follow: query db for user %d target %d: %w", loginUid, auid, err)
+		}
+		resMap[auid] = isFollowing
+		if !isFollowing {
+			continue
+		}
+
+		// DB 确认已关注，按原有 ZSet 结构回填：member=博主uid，score=关注时间戳（秒）
+		social, err := s.SocialRepo.FindByFollowerAndBlogger(ctx, loginUid, auid)
+		if err != nil {
+			log.Printf("Failed to find follow relation for cache backfill: uid=%d bloggerID=%d err=%v", loginUid, auid, err)
+			continue
+		}
+		if err := s.cache.ZAdd(ctx, key, []redis.Z{{
+			Score:  float64(social.CreatedAt.Unix()),
+			Member: auid,
+		}}, socialUidsTTL); err != nil {
+			log.Printf("Failed to backfill follow cache: uid=%d bloggerID=%d err=%v", loginUid, auid, err)
+		}
 	}
 	return resMap, nil
 }

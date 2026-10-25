@@ -6,7 +6,6 @@ import (
 	"feedsystem/internal/service"
 	"feedsystem/internal/utils/jwt"
 	"feedsystem/internal/utils/response"
-	"fmt"
 	"log"
 
 	"github.com/gin-gonic/gin"
@@ -37,15 +36,29 @@ func (h *UserHandler) Register(ctx *gin.Context) {
 	if req.Username == "" || req.Password == "" {
 		// 屏蔽敏感信息，防止日志泄露
 		log.Printf("Username or password is empty: username='%s', password='[REDACTED]'", req.Username)
-		response.FailResponse(ctx, "Username and password cannot be empty")
+		response.FailResponse(ctx, "用户名和密码不能为空")
 		return
 	}
 
 	// 调用服务层注册用户
 	user, err := h.UserService.Register(ctx.Request.Context(), req.Username, req.Password)
 	if err != nil {
-		response.FailResponse(ctx, err.Error())
+		// 原始错误仅写服务端日志，前端只返回统一业务码与友好提示
 		log.Printf("Error registering user in UserHandler: %v", err)
+		switch {
+		case errors.Is(err, service.ErrUsernameInvalid):
+			response.FailResponse(ctx, "用户名长度需为3-32位，且只能包含字母、数字和下划线")
+		case errors.Is(err, service.ErrUsernameExists):
+			response.FailResponse(ctx, "用户名已存在")
+		case errors.Is(err, service.ErrPasswordTooShort):
+			response.FailResponse(ctx, "密码长度不能少于8位")
+		case errors.Is(err, service.ErrPasswordTooLong):
+			response.FailResponse(ctx, "密码不能超过72字节")
+		case errors.Is(err, service.ErrPasswordWeak):
+			response.FailResponse(ctx, "密码需同时包含字母和数字")
+		default:
+			response.ServerErrorResponse(ctx, "注册失败，请稍后重试")
+		}
 		return
 	}
 
@@ -215,7 +228,7 @@ func (h *UserHandler) GetProfile(ctx *gin.Context) {
 	profile, err := h.UserService.GetProfile(ctx.Request.Context(), userID)
 	if err != nil {
 		log.Printf("Error getting user profile in UserHandler: %v", err)
-		response.ServerErrorResponse(ctx, "Failed to get user profile")
+		response.ServerErrorResponse(ctx, "获取用户资料失败，请稍后重试")
 		return
 	}
 
@@ -244,7 +257,18 @@ func (h *UserHandler) UpdateProfile(ctx *gin.Context) {
 	updatedUser, err := h.UserService.UpdateProfile(ctx.Request.Context(), userID, req)
 	if err != nil {
 		log.Printf("Error updating user profile in UserHandler: %v", err)
-		response.FailResponse(ctx, fmt.Sprintf("Failed to update user profile: %v", err))
+		switch {
+		case errors.Is(err, service.ErrUsernameInvalid):
+			response.FailResponse(ctx, "用户名长度需为3-32位，且只能包含字母、数字和下划线")
+		case errors.Is(err, service.ErrUsernameExists):
+			response.FailResponse(ctx, "用户名已存在")
+		case errors.Is(err, service.ErrInvalidAvatarURL):
+			response.FailResponse(ctx, "头像地址不合法")
+		case errors.Is(err, service.ErrNoFieldsToUpdate):
+			response.FailResponse(ctx, "没有需要更新的字段")
+		default:
+			response.ServerErrorResponse(ctx, "更新资料失败，请稍后重试")
+		}
 		return
 	}
 
@@ -258,7 +282,7 @@ func (h *UserHandler) UploadAvatar(ctx *gin.Context) {
 	userID, _, err := getUserFromCtx(ctx)
 	if err != nil {
 		log.Printf("Failed to get user from context in UploadAvatar: %v", err)
-		response.FailAuthResponse(ctx, "Failed to get user ID from context")
+		response.FailAuthResponse(ctx, "未登录或登录已过期")
 		return
 	}
 
@@ -266,7 +290,7 @@ func (h *UserHandler) UploadAvatar(ctx *gin.Context) {
 	fh, err := ctx.FormFile("file") // 获取表单中key为"file"的文件
 	if err != nil {
 		log.Printf("Failed to get uploaded file in UploadAvatar: %v", err)
-		response.FailResponse(ctx, "Failed to get uploaded file: "+err.Error())
+		response.FailResponse(ctx, "文件上传参数错误")
 		return
 	}
 
@@ -274,7 +298,14 @@ func (h *UserHandler) UploadAvatar(ctx *gin.Context) {
 	avatarURL, err := h.UserService.UploadAvatar(ctx.Request.Context(), userID, fh)
 	if err != nil {
 		log.Printf("Failed to upload avatar in UploadAvatar: %v", err)
-		response.FailResponse(ctx, "Failed to upload avatar: "+err.Error())
+		switch {
+		case errors.Is(err, service.ErrInvalidFileSize):
+			response.FailResponse(ctx, "文件大小不符合要求")
+		case errors.Is(err, service.ErrInvalidFileType):
+			response.FailResponse(ctx, "仅支持 jpg/jpeg/png/webp 格式的图片")
+		default:
+			response.ServerErrorResponse(ctx, "头像上传失败，请稍后重试")
+		}
 		return
 	}
 
@@ -343,11 +374,18 @@ func (h *UserHandler) ChangePassword(ctx *gin.Context) {
 	err = h.UserService.ChangePassword(ctx.Request.Context(), userID, req.OldPassword, req.NewPassword, accessToken, remainingExpire)
 	if err != nil {
 		log.Printf("Error changing password in ChangePassword: %v", err)
-		if errors.Is(err, service.ErrOldPasswordIncorrect) {
+		switch {
+		case errors.Is(err, service.ErrOldPasswordIncorrect):
 			response.FailResponse(ctx, "旧密码错误")
-			return
+		case errors.Is(err, service.ErrPasswordTooShort):
+			response.FailResponse(ctx, "新密码长度不能少于8位")
+		case errors.Is(err, service.ErrPasswordTooLong):
+			response.FailResponse(ctx, "新密码不能超过72字节")
+		case errors.Is(err, service.ErrPasswordWeak):
+			response.FailResponse(ctx, "新密码需同时包含字母和数字")
+		default:
+			response.ServerErrorResponse(ctx, "修改密码失败，请稍后重试")
 		}
-		response.ServerErrorResponse(ctx, "修改密码失败，请稍后重试")
 		return
 	}
 

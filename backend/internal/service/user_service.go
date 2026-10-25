@@ -16,9 +16,12 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
@@ -34,7 +37,70 @@ var (
 	ErrRefreshTokenUnavailable = errors.New("refresh token service unavailable")
 	// ErrOldPasswordIncorrect 修改密码时旧密码校验失败
 	ErrOldPasswordIncorrect = errors.New("old password is incorrect")
+	// ErrUsernameInvalid 用户名格式不合法
+	ErrUsernameInvalid = errors.New("invalid username")
+	// ErrUsernameExists 用户名已被占用
+	ErrUsernameExists = errors.New("username already exists")
+	// ErrPasswordTooShort 密码长度不足
+	ErrPasswordTooShort = errors.New("password is too short")
+	// ErrPasswordTooLong 密码超过 bcrypt 可处理的 72 字节上限
+	ErrPasswordTooLong = errors.New("password exceeds 72 bytes")
+	// ErrPasswordWeak 密码强度不足
+	ErrPasswordWeak = errors.New("password is too weak")
+	// ErrInvalidFileSize 上传文件大小不合法
+	ErrInvalidFileSize = errors.New("invalid file size")
+	// ErrInvalidFileType 上传文件后缀或真实内容类型不合法
+	ErrInvalidFileType = errors.New("invalid file type")
+	// ErrInvalidAvatarURL 头像地址不是本服务静态资源路径
+	ErrInvalidAvatarURL = errors.New("invalid avatar url")
+	// ErrNoFieldsToUpdate 更新资料时没有任何可更新字段
+	ErrNoFieldsToUpdate = errors.New("no fields to update")
 )
+
+const (
+	minUsernameLen   = 3  // 用户名最小长度
+	maxUsernameLen   = 32 // 用户名最大长度
+	minPasswordLen   = 8  // 密码最小长度（按字符数）
+	maxPasswordBytes = 72 // bcrypt 输入上限，超过会被静默截断
+)
+
+// usernamePattern 用户名仅允许字母、数字、下划线
+var usernamePattern = regexp.MustCompile(`^[A-Za-z0-9_]+$`)
+
+// validateUsername 校验用户名长度与字符集，禁止首尾空白和特殊符号
+func validateUsername(username string) error {
+	if username != strings.TrimSpace(username) {
+		return fmt.Errorf("%w: leading or trailing whitespace", ErrUsernameInvalid)
+	}
+	length := utf8.RuneCountInString(username)
+	if length < minUsernameLen || length > maxUsernameLen || !usernamePattern.MatchString(username) {
+		return fmt.Errorf("%w: must be %d-%d chars of letters, digits or underscore", ErrUsernameInvalid, minUsernameLen, maxUsernameLen)
+	}
+	return nil
+}
+
+// validatePassword 校验密码强度与长度；超过 72 字节直接拒绝，避免 bcrypt 静默截断
+func validatePassword(password string) error {
+	if utf8.RuneCountInString(password) < minPasswordLen {
+		return fmt.Errorf("%w: at least %d characters", ErrPasswordTooShort, minPasswordLen)
+	}
+	if len(password) > maxPasswordBytes {
+		return fmt.Errorf("%w: max %d bytes", ErrPasswordTooLong, maxPasswordBytes)
+	}
+	var hasLetter, hasDigit bool
+	for _, r := range password {
+		if unicode.IsLetter(r) {
+			hasLetter = true
+		}
+		if unicode.IsDigit(r) {
+			hasDigit = true
+		}
+	}
+	if !hasLetter || !hasDigit {
+		return fmt.Errorf("%w: must contain both letters and digits", ErrPasswordWeak)
+	}
+	return nil
+}
 
 // UserService 用户服务
 type UserService struct {
@@ -52,19 +118,27 @@ func NewUserService(userRepo *repo.UserRepo, cache *cache.RedisCache) *UserServi
 
 // Register 注册用户
 func (s *UserService) Register(ctx context.Context, username, password string) (*model.User, error) {
-	// 查找用户是否存在
-	existingUser, err := s.UserRepo.FindByUsername(ctx, username)
-	if err != nil && err != gorm.ErrRecordNotFound {
+	// 用户名/密码格式校验在落库与 bcrypt 之前完成
+	if err := validateUsername(username); err != nil {
 		return nil, err
 	}
+	if err := validatePassword(password); err != nil {
+		return nil, err
+	}
+
+	// 查找用户是否存在
+	existingUser, err := s.UserRepo.FindByUsername(ctx, username)
+	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, fmt.Errorf("check username exists: %w", err)
+	}
 	if existingUser != nil {
-		return nil, fmt.Errorf("username already exists")
+		return nil, ErrUsernameExists
 	}
 
 	// 加密密码
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("hash password: %w", err)
 	}
 
 	// 注册直接填入默认头像和简介
@@ -81,7 +155,7 @@ func (s *UserService) Register(ctx context.Context, username, password string) (
 	err = s.UserRepo.Register(ctx, user)
 	if err != nil {
 		log.Printf("Error registering user in UserService: %v", err)
-		return nil, err
+		return nil, fmt.Errorf("register user: %w", err)
 	}
 	return user, nil
 }
@@ -148,9 +222,10 @@ func (s *UserService) Login(ctx context.Context, username, password string) (acc
 		return "", "", fmt.Errorf("save refresh token to redis failed: %w", err)
 	}
 	// 双向索引<userId, refreshToken>
-	if s.cache.AddUserRefreshSet(ctx, user.ID, refreshToken, ttl) != nil {
-		log.Printf("Error adding refresh token to user set in Redis in UserService: %v", err)
-		return "", "", fmt.Errorf("add refresh token to user set failed: %w", err)
+	if setErr := s.cache.AddUserRefreshSet(ctx, user.ID, refreshToken, ttl); setErr != nil {
+		// 捕获内部真实错误，避免打印外层通常为 nil 的 err 导致日志误导
+		log.Printf("Error adding refresh token to user set in Redis in UserService: userID=%d err=%v", user.ID, setErr)
+		return "", "", fmt.Errorf("add refresh token to user set failed: %w", setErr)
 	}
 
 	return accessToken, refreshToken, nil
@@ -357,26 +432,27 @@ func (s *UserService) UpdateProfile(ctx context.Context, userID uint, req dto.Up
 
 	// 逐个检查请求参数是否为空，如果不为空则加入更新映射
 	if req.UserName != nil {
-		if strings.TrimSpace(*req.UserName) == "" {
-			return nil, fmt.Errorf("username cannot be empty")
+		// 与注册共用同一套用户名规则，避免注册后改成非法用户名绕过校验
+		if err := validateUsername(*req.UserName); err != nil {
+			return nil, err
 		}
 		// 检查用户名是否已存在
 		existingUser, err := s.UserRepo.FindByUsername(ctx, *req.UserName)
-		if err != nil && err != gorm.ErrRecordNotFound {
+		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 			// 出现错误，并且不是记录未找到的错误，说明查询失败
 			log.Printf("Error checking existing username in UserService: %v", err)
-			return nil, fmt.Errorf("failed to check existing username")
+			return nil, fmt.Errorf("check existing username: %w", err)
 		}
 		if existingUser != nil && existingUser.ID != userID {
 			// 该用户名已被其他用户使用
-			return nil, fmt.Errorf("username already exists")
+			return nil, ErrUsernameExists
 		}
 		updateMap["user_name"] = *req.UserName
 	}
 	if req.AvatarURL != nil {
 		// 只允许本服务静态资源路径，拒绝外部http/https地址
 		if !strings.HasPrefix(*req.AvatarURL, "/upload/") {
-			return nil, fmt.Errorf("invalid avatar URL, must start with /upload/")
+			return nil, fmt.Errorf("%w: must start with /upload/", ErrInvalidAvatarURL)
 		}
 		updateMap["avatar_url"] = *req.AvatarURL
 	}
@@ -386,14 +462,14 @@ func (s *UserService) UpdateProfile(ctx context.Context, userID uint, req dto.Up
 
 	// 如果没有任何字段需要更新，直接返回错误
 	if len(updateMap) == 0 {
-		return nil, fmt.Errorf("no fields to update")
+		return nil, ErrNoFieldsToUpdate
 	}
 
 	// 调用仓库层更新用户资料
 	err := s.UserRepo.UpdateProfile(ctx, userID, updateMap)
 	if err != nil {
 		log.Printf("Error updating user profile in UserService: %v", err)
-		return nil, err
+		return nil, fmt.Errorf("update user profile: %w", err)
 	}
 
 	// 更新成功后，查询最新的用户资料并返回
@@ -405,7 +481,7 @@ func (s *UserService) UploadAvatar(ctx context.Context, userID uint, fh *multipa
 	const maxSize = 10 << 20 // 设置最大文件大小为10MB
 	if fh.Size <= 0 || fh.Size > maxSize {
 		log.Printf("File size is invalid in UploadAvatar: %v", fh.Size)
-		return "", fmt.Errorf("invalid file size")
+		return "", fmt.Errorf("%w: size=%d", ErrInvalidFileSize, fh.Size)
 	}
 
 	// 检查文件扩展名是否合法
@@ -414,7 +490,7 @@ func (s *UserService) UploadAvatar(ctx context.Context, userID uint, fh *multipa
 	case ".jpg", ".jpeg", ".png", ".webp":
 	default:
 		log.Printf("Invalid file type in UploadAvatar: %v", ext)
-		return "", fmt.Errorf("invalid file type")
+		return "", fmt.Errorf("%w: ext=%s", ErrInvalidFileType, ext)
 	}
 
 	// 创建用户头像存储目录
@@ -443,17 +519,32 @@ func (s *UserService) UploadAvatar(ctx context.Context, userID uint, fh *multipa
 	}
 	defer srcFile.Close() // 注册延迟关闭文件句柄
 
+	// 读取文件头嗅探真实 MIME，并与后缀交叉校验，防止伪造 .png 后缀上传任意内容
+	mimeType, body, err := detectUploadMIME(srcFile)
+	if err != nil {
+		return "", fmt.Errorf("detect uploaded avatar type failed: %w", err)
+	}
+	if !uploadMIMEMatchesExt(ext, mimeType) {
+		log.Printf("Invalid avatar content type in UploadAvatar: ext=%s mime=%s", ext, mimeType)
+		return "", fmt.Errorf("%w: ext=%s content=%s", ErrInvalidFileType, ext, mimeType)
+	}
+
 	// 创建本地目标文件
 	dstFile, err := os.Create(absPath)
 	if err != nil {
 		return "", fmt.Errorf("create target file failed: %w", err)
 	}
-	defer dstFile.Close()
 
-	// 拷贝流写入磁盘
-	_, err = io.Copy(dstFile, srcFile)
-	if err != nil {
-		return "", fmt.Errorf("copy file content failed: %w", err)
+	// 拷贝流写入磁盘；失败时清理半截文件，避免残留
+	_, copyErr := io.Copy(dstFile, body)
+	closeErr := dstFile.Close()
+	if copyErr != nil {
+		_ = os.Remove(absPath)
+		return "", fmt.Errorf("copy file content failed: %w", copyErr)
+	}
+	if closeErr != nil {
+		_ = os.Remove(absPath)
+		return "", fmt.Errorf("close target file failed: %w", closeErr)
 	}
 
 	// 返回相对路径，供handler层拼接成http可访问URL
@@ -464,6 +555,11 @@ func (s *UserService) UploadAvatar(ctx context.Context, userID uint, fh *multipa
 
 // ChangePassword 修改用户密码
 func (s *UserService) ChangePassword(ctx context.Context, userID uint, oldPassword, newPassword, access_token string, remainingExpire int64) error {
+	// 新密码沿用注册的强度与长度规则，避免绕过 72 字节上限
+	if err := validatePassword(newPassword); err != nil {
+		return err
+	}
+
 	// 查找用户
 	user, err := s.UserRepo.FindByID(ctx, userID)
 	if err != nil {

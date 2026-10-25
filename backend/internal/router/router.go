@@ -1,15 +1,21 @@
 package router
 
 import (
+	"feedsystem/internal/config"
 	"feedsystem/internal/handler"
 	"feedsystem/internal/handler/middleware"
 	"feedsystem/internal/infra/cache"
 	"feedsystem/internal/infra/mq"
+	"feedsystem/internal/infra/ratelimit"
 	"feedsystem/internal/repo"
 	"feedsystem/internal/service"
 	"feedsystem/internal/utils/response"
 	"log"
 	"net/http"
+	"os"
+	"path"
+	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -18,9 +24,78 @@ import (
 // maxRequestBodyBytes 全局请求体上限，略大于单个视频文件 100MB，预留 multipart 边界开销
 const maxRequestBodyBytes = 110 << 20
 
+// 接口限流策略：登录/注册/刷新严格限制，上传单独限流，feed 读取放宽。
+// 登录类按 IP 限流，已登录接口优先按 uid 限流。
+var (
+	registerRateLimit    = ratelimit.Config{Scope: "register", Limit: 5, Window: time.Minute}
+	loginRateLimit       = ratelimit.Config{Scope: "login", Limit: 10, Window: time.Minute}
+	refreshRateLimit     = ratelimit.Config{Scope: "refresh", Limit: 20, Window: time.Minute}
+	uploadVideoLimit     = ratelimit.Config{Scope: "upload_video", Limit: 5, Window: time.Minute, KeyByUID: true}
+	uploadImageLimit     = ratelimit.Config{Scope: "upload_image", Limit: 10, Window: time.Minute, KeyByUID: true}
+	feedReadRateLimitIP  = ratelimit.Config{Scope: "feed_read", Limit: 120, Window: time.Minute}
+	feedReadRateLimitUID = ratelimit.Config{Scope: "feed_read", Limit: 120, Window: time.Minute, KeyByUID: true}
+)
+
+// blockedStaticExt 静态资源目录中禁止直接访问的敏感后缀，防止源码/配置泄露
+var blockedStaticExt = map[string]struct{}{
+	".go": {}, ".env": {}, ".yaml": {}, ".yml": {}, ".toml": {}, ".ini": {},
+	".conf": {}, ".sql": {}, ".mod": {}, ".sum": {}, ".sh": {}, ".bak": {},
+	".swp": {}, ".pem": {}, ".key": {},
+}
+
+// safeStaticFS 包装 http.FileSystem：
+// 1. 拒绝目录请求，关闭目录列举；
+// 2. 拒绝隐藏路径（.git/.env 等）与敏感后缀文件。
+type safeStaticFS struct {
+	fs http.FileSystem
+}
+
+// Open 在打开文件前做路径安全检查，并拒绝目录，避免暴露目录结构
+func (s safeStaticFS) Open(name string) (http.File, error) {
+	if isForbiddenStaticPath(name) {
+		return nil, os.ErrNotExist
+	}
+	f, err := s.fs.Open(name)
+	if err != nil {
+		return nil, err
+	}
+	info, err := f.Stat()
+	if err != nil {
+		_ = f.Close()
+		return nil, err
+	}
+	if info.IsDir() {
+		_ = f.Close()
+		return nil, os.ErrNotExist
+	}
+	return f, nil
+}
+
+// isForbiddenStaticPath 判断静态资源路径是否命中敏感文件规则
+func isForbiddenStaticPath(name string) bool {
+	if strings.Contains(name, "..") {
+		return true
+	}
+	cleaned := path.Clean("/" + name)
+	// 隐藏文件/目录（.git、.env、.env.dev 等）一律拒绝
+	for _, seg := range strings.Split(strings.TrimPrefix(cleaned, "/"), "/") {
+		if strings.HasPrefix(seg, ".") {
+			return true
+		}
+	}
+	_, blocked := blockedStaticExt[strings.ToLower(path.Ext(cleaned))]
+	return blocked
+}
+
 func SetupRouter(sqlDB *gorm.DB, cache *cache.RedisCache, rmq *mq.RabbitMQ, authMiddleware *middleware.AuthMiddleware) *gin.Engine {
 	// 创建一个默认的Gin引擎
 	r := gin.Default()
+
+	// 默认不信任代理头，防止客户端伪造 X-Forwarded-For 绕过基于 IP 的登录限流。
+	// 若部署在可信反向代理后，需在此处配置实际代理网段。
+	if err := r.SetTrustedProxies(nil); err != nil {
+		log.Printf("WARN: set trusted proxies failed: %v", err)
+	}
 
 	// 全局请求体上限：Content-Length 超限直接拒绝，未知长度由 MaxBytesReader 在读取时截断兜底，
 	// 避免超大 multipart 表单在校验文件大小之前就落盘。
@@ -38,11 +113,15 @@ func SetupRouter(sqlDB *gorm.DB, cache *cache.RedisCache, rmq *mq.RabbitMQ, auth
 	})
 
 	// 注册全局中间件
-	r.Use(middleware.Cors()) // 跨域中间件
+	r.Use(middleware.Cors(config.AppConfig.CORS_allow_origins)) // 跨域白名单中间件
 
-	// 注册静态文件路由，用于访问默认头像等静态资源
-	r.Static("/static", "./assets/static")
-	r.Static("/upload", "./.run/upload")
+	// 限流器：Redis 故障时降级放行，不阻断业务
+	limiter := ratelimit.New(cache)
+
+	// 注册静态文件路由，用于访问默认头像等静态资源；
+	// safeStaticFS 关闭目录列举并拦截源码/配置等敏感文件
+	r.StaticFS("/static", safeStaticFS{fs: http.Dir("./assets/static")})
+	r.StaticFS("/upload", safeStaticFS{fs: http.Dir("./.run/upload")})
 
 	// 初始化各层组件
 	// User
@@ -92,20 +171,20 @@ func SetupRouter(sqlDB *gorm.DB, cache *cache.RedisCache, rmq *mq.RabbitMQ, auth
 	// 公共路由组
 	userGroup := r.Group("/user")
 	{
-		userGroup.POST("/register", userHandler.Register)               // 用户注册
-		userGroup.POST("/login", userHandler.Login)                     // 用户登录
-		userGroup.POST("/refresh", userHandler.RefreshToken)            // 刷新Token
-		userGroup.POST("/find_by_id", userHandler.FindByID)             // 根据ID查找用户
-		userGroup.POST("/find_by_username", userHandler.FindByUsername) // 根据用户名查找用户
+		userGroup.POST("/register", limiter.Middleware(registerRateLimit), userHandler.Register)   // 用户注册（按IP严格限流）
+		userGroup.POST("/login", limiter.Middleware(loginRateLimit), userHandler.Login)            // 用户登录（按IP严格限流）
+		userGroup.POST("/refresh", limiter.Middleware(refreshRateLimit), userHandler.RefreshToken) // 刷新Token（按IP严格限流）
+		userGroup.POST("/find_by_id", userHandler.FindByID)                                        // 根据ID查找用户
+		userGroup.POST("/find_by_username", userHandler.FindByUsername)                            // 根据用户名查找用户
 	}
 	// 受保护的路由组
 	protectedUserGroup := userGroup.Group("/").Use(authMiddleware.Auth()) // 使用Auth中间件鉴权
 	{
-		protectedUserGroup.POST("/logout", userHandler.Logout)                  // 用户登出
-		protectedUserGroup.GET("/profile", userHandler.GetProfile)              // 获取用户资料
-		protectedUserGroup.PATCH("/profile", userHandler.UpdateProfile)         // 更新用户资料
-		protectedUserGroup.POST("/upload_avatar", userHandler.UploadAvatar)     // 上传用户头像
-		protectedUserGroup.POST("/change_password", userHandler.ChangePassword) // 修改用户密码
+		protectedUserGroup.POST("/logout", userHandler.Logout)                                                    // 用户登出
+		protectedUserGroup.GET("/profile", userHandler.GetProfile)                                                // 获取用户资料
+		protectedUserGroup.PATCH("/profile", userHandler.UpdateProfile)                                           // 更新用户资料
+		protectedUserGroup.POST("/upload_avatar", limiter.Middleware(uploadImageLimit), userHandler.UploadAvatar) // 上传用户头像（按uid限流）
+		protectedUserGroup.POST("/change_password", userHandler.ChangePassword)                                   // 修改用户密码
 	}
 
 	// 视频相关路由
@@ -118,9 +197,9 @@ func SetupRouter(sqlDB *gorm.DB, cache *cache.RedisCache, rmq *mq.RabbitMQ, auth
 	// 受保护的路由组
 	protectedVideoGroup := videoGroup.Group("/").Use(authMiddleware.Auth()) // 使用Auth中间件鉴权
 	{
-		protectedVideoGroup.POST("/upload_video", videoHandler.UploadVideo) // 上传视频
-		protectedVideoGroup.POST("/upload_cover", videoHandler.UploadCover) // 上传视频封面
-		protectedVideoGroup.POST("/publish", videoHandler.PublishVideo)     // 发布视频
+		protectedVideoGroup.POST("/upload_video", limiter.Middleware(uploadVideoLimit), videoHandler.UploadVideo) // 上传视频（按uid限流）
+		protectedVideoGroup.POST("/upload_cover", limiter.Middleware(uploadImageLimit), videoHandler.UploadCover) // 上传视频封面（按uid限流）
+		protectedVideoGroup.POST("/publish", videoHandler.PublishVideo)                                           // 发布视频
 	}
 
 	// 点赞相关路由
@@ -160,15 +239,17 @@ func SetupRouter(sqlDB *gorm.DB, cache *cache.RedisCache, rmq *mq.RabbitMQ, auth
 		protectedSocialGroup.GET("/is_follow", socialHandler.IsFollow) // 获取两者关注关系
 	}
 
-	// feed流相关路由
+	// feed流相关路由：读多写少，公开接口按 IP、登录接口按 uid 放宽限流
+	feedIPLimiter := limiter.Middleware(feedReadRateLimitIP)
 	feedGroup := r.Group("/feed")
 	{
-		feedGroup.GET("/list", feedHandler.FeedListLatest)                   // 获取最新视频流
-		feedGroup.GET("/listByPopularity", feedHandler.FeedListByPopularity) // 获取按热度排序的视频流
-		feedGroup.GET("/listByLikesCount", feedHandler.FeedListLikesCount)   // 获取按点赞数排序的视频流
-		feedGroup.GET("/listByTag", feedHandler.FeedListByTag)               // 获取按标签过滤的视频流
+		feedGroup.GET("/list", feedIPLimiter, feedHandler.FeedListLatest)                   // 获取最新视频流
+		feedGroup.GET("/listByPopularity", feedIPLimiter, feedHandler.FeedListByPopularity) // 获取按热度排序的视频流
+		feedGroup.GET("/listByLikesCount", feedIPLimiter, feedHandler.FeedListLikesCount)   // 获取按点赞数排序的视频流
+		feedGroup.GET("/listByTag", feedIPLimiter, feedHandler.FeedListByTag)               // 获取按标签过滤的视频流
 	}
-	protectedFeedGroup := feedGroup.Group("/").Use(authMiddleware.Auth())
+	// 鉴权先执行，限流器随后才能拿到 uid
+	protectedFeedGroup := feedGroup.Group("/").Use(authMiddleware.Auth(), limiter.Middleware(feedReadRateLimitUID))
 	{
 		protectedFeedGroup.GET("/listByFollowing", feedHandler.FeedListByFollowing) // 获取关注博主的视频流
 	}
