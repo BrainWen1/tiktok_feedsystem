@@ -35,7 +35,8 @@ func (h *UserHandler) Register(ctx *gin.Context) {
 
 	// 判断用户名和密码是否为空
 	if req.Username == "" || req.Password == "" {
-		log.Printf("Username or password is empty: username='%s', password='%s'", req.Username, req.Password)
+		// 屏蔽敏感信息，防止日志泄露
+		log.Printf("Username or password is empty: username='%s', password='[REDACTED]'", req.Username)
 		response.FailResponse(ctx, "Username and password cannot be empty")
 		return
 	}
@@ -285,19 +286,22 @@ func (h *UserHandler) ChangePassword(ctx *gin.Context) {
 
 	// 判断三个字段是否有留空
 	if req.OldPassword == "" || req.NewPassword == "" || req.ConfirmPassword == "" {
-		log.Printf("Old password or new password or confirm password is empty: old='%s', new='%s', confirm='%s'", req.OldPassword, req.NewPassword, req.ConfirmPassword)
+		// 屏蔽敏感信息，防止日志泄露
+		log.Printf("Old password or new password or confirm password is empty: old='[REDACTED]', new='[REDACTED]', confirm='[REDACTED]'")
 		response.FailResponse(ctx, "Old password and new password and confirm password cannot be empty")
 		return
 	}
 	// 判断新密码和确认密码是否一致
 	if req.NewPassword != req.ConfirmPassword {
-		log.Printf("New password and confirm password do not match: new='%s', confirm='%s'", req.NewPassword, req.ConfirmPassword)
+		// 屏蔽敏感信息，防止日志泄露
+		log.Printf("New password and confirm password do not match: new='[REDACTED]', confirm='[REDACTED]'")
 		response.FailResponse(ctx, "New password and confirm password do not match")
 		return
 	}
 	// 判断新密码是否与旧密码相同
 	if req.OldPassword == req.NewPassword {
-		log.Printf("New password is the same as old password: old='%s', new='%s'", req.OldPassword, req.NewPassword)
+		// 屏蔽敏感信息，防止日志泄露
+		log.Printf("New password is the same as old password: old='[REDACTED]', new='[REDACTED]'")
 		response.FailResponse(ctx, "New password cannot be the same as old password")
 		return
 	}

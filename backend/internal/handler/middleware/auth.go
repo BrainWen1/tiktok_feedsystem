@@ -34,7 +34,8 @@ func (am *AuthMiddleware) Auth() gin.HandlerFunc {
 		// 拿到Authorization里的token字符串，通常格式是 "Bearer <token>"
 		parts := strings.SplitN(authHeader, " ", 2)
 		if len(parts) != 2 || parts[0] != "Bearer" {
-			log.Printf("Authorization header format is invalid: %s", authHeader)
+			// 屏蔽敏感信息，防止日志泄露（Authorization头内含Access Token）
+			log.Printf("Authorization header format is invalid: [REDACTED]")
 			response.FailAuthResponse(ctx, "Authorization头格式错误")
 			ctx.Abort()
 			return
@@ -59,7 +60,8 @@ func (am *AuthMiddleware) Auth() gin.HandlerFunc {
 			return
 		}
 		if isBlacklisted { // token在黑名单中，说明用户已经登出或token已被注销
-			log.Printf("Token is blacklisted: %s", token)
+			// 屏蔽敏感信息，防止日志泄露
+			log.Printf("Token is blacklisted: [REDACTED], userID=%d", claims.UserID)
 			response.FailAuthResponse(ctx, "token已被注销")
 			ctx.Abort()
 			return

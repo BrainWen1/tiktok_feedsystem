@@ -90,7 +90,8 @@ func (r *RedisCache) Delete(ctx context.Context, keys ...string) error {
 // AddTokenToBlacklist 将Access Token加入黑名单
 func (r *RedisCache) AddTokenToBlacklist(ctx context.Context, token string, expiration time.Duration) error {
 	// 将token加入黑名单，设置过期时间为token的剩余有效期
-	log.Printf("Adding token to blacklist: %s with expiration: %v", token, expiration)
+	// 屏蔽敏感信息，防止日志泄露
+	log.Printf("Adding token to blacklist: [REDACTED] with expiration: %v", expiration)
 	return r.Set(ctx, fmt.Sprintf("blacklist_token:%s", token), "blacklisted", expiration)
 }
 
