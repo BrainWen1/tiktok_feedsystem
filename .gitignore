@@ -1,3 +1,5 @@
 *.env.dev
 *how_to_do.md
 *.run/
+*CLAUDE.md
+*audit_report.md
