@@ -27,16 +27,17 @@ const (
 )
 
 func main() {
-	// 日志必须在加载配置、启动任何 goroutine 之前初始化，避免启动期日志丢失
-	if err := logger.Init(os.Getenv("LOG_LEVEL")); err != nil {
-		logger.Warn("invalid log level, fallback to info", logger.Err(err))
-	}
-	defer logger.Sync()
-
-	// 加载 .env（本地开发）
+	// 先加载 .env（本地开发），让 APP_ENV/LOG_LEVEL 在初始化 logger 前可见
 	if err := godotenv.Load(); err != nil {
 		logger.Info(".env not found; continuing")
 	}
+
+	// 日志必须在加载业务配置、启动任何 goroutine 之前初始化，避免启动期日志丢失。
+	// APP_ENV 决定编码器（dev=文本，prod=JSON）与 Gin 模式，LOG_LEVEL 可覆盖默认级别。
+	if err := logger.InitWithEnv(os.Getenv("APP_ENV"), os.Getenv("LOG_LEVEL")); err != nil {
+		logger.Warn("invalid logger config, fallback to default", logger.Err(err))
+	}
+	defer logger.Sync()
 
 	// 加载配置
 	err := config.LoadConfig()

@@ -24,9 +24,15 @@ import (
 const shutdownTimeout = 5 * time.Second
 
 func main() {
-	// 日志必须在启动消费者 goroutine 之前初始化，避免启动期日志丢失
-	if err := logger.Init(os.Getenv("LOG_LEVEL")); err != nil {
-		logger.Warn("invalid log level, fallback to info", logger.Err(err))
+	// 先加载 .env（本地开发），让 APP_ENV/LOG_LEVEL 在初始化 logger 前可见
+	if err := godotenv.Load(); err != nil {
+		logger.Info(".env not found; continuing")
+	}
+
+	// 日志必须在启动消费者 goroutine 之前初始化，避免启动期日志丢失。
+	// 与 API 服务保持一致：dev=文本日志，prod=JSON 日志 + Gin release 模式。
+	if err := logger.InitWithEnv(os.Getenv("APP_ENV"), os.Getenv("LOG_LEVEL")); err != nil {
+		logger.Warn("invalid logger config, fallback to default", logger.Err(err))
 	}
 	defer logger.Sync()
 
@@ -37,11 +43,6 @@ func main() {
 }
 
 func run() error {
-	// 加载 .env（本地开发）
-	if err := godotenv.Load(); err != nil {
-		logger.Info(".env not found; continuing")
-	}
-
 	// 加载配置
 	if err := config.LoadConfig(); err != nil {
 		return fmt.Errorf("load config: %w", err)
