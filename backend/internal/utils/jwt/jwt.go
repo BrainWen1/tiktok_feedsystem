@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"feedsystem/internal/config"
+	"fmt"
 	"log"
 	"strings"
 	"time"
@@ -14,17 +15,39 @@ import (
 	JWT "github.com/golang-jwt/jwt/v5"
 )
 
-// 返回JWT密钥和设置的过期时间
-func jwtSecret() ([]byte, int) {
+var (
+	// ErrInvalidSigningMethod 表示 token 使用了非预期的签名算法，拒绝解析以防止算法混淆攻击
+	ErrInvalidSigningMethod = errors.New("unexpected jwt signing method")
+	// ErrJWTNotConfigured 表示 JWT 密钥或过期时间配置缺失，由上层转换为业务错误
+	ErrJWTNotConfigured = errors.New("jwt is not configured")
+)
+
+// 返回JWT密钥和设置的过期时间；配置缺失时返回error，禁止在请求链路中退出进程
+func jwtSecret() ([]byte, int, error) {
 	key := config.AppConfig.JWT_secret
 	expireHour := config.AppConfig.JWT_expire_hour
 	if len(key) == 0 {
-		log.Fatal("JWT 密钥为空，请在环境变量中设置 JWT_SECRET")
+		return nil, 0, fmt.Errorf("%w: JWT_SECRET is empty", ErrJWTNotConfigured)
 	}
 	if expireHour == 0 {
-		log.Fatal("JWT 过期时间未设置，请在环境变量中设置 JWT_EXPIRE_HOUR")
+		return nil, 0, fmt.Errorf("%w: JWT_EXPIRE_HOUR is not set", ErrJWTNotConfigured)
 	}
-	return []byte(key), expireHour
+	return []byte(key), expireHour, nil
+}
+
+// validateSigningMethod 校验 token 头部算法与实际的签名方法，只允许 HS256
+func validateSigningMethod(token *JWT.Token) error {
+	if token == nil {
+		return errors.New("invalid token")
+	}
+	alg, ok := token.Header["alg"].(string)
+	if !ok || alg != JWT.SigningMethodHS256.Alg() {
+		return fmt.Errorf("%w: alg=%v", ErrInvalidSigningMethod, token.Header["alg"])
+	}
+	if token.Method != JWT.SigningMethodHS256 {
+		return fmt.Errorf("%w: method=%v", ErrInvalidSigningMethod, token.Method)
+	}
+	return nil
 }
 
 // Claims 结构体用于存储 JWT 的自定义声明
@@ -36,7 +59,10 @@ type Claims struct {
 
 // GenerateToken 生成 JWT token
 func GenerateToken(userID uint, userName string) (string, error) {
-	jwtSecretKey, expiration := jwtSecret() // 获取JWT密钥和过期时间
+	jwtSecretKey, expiration, err := jwtSecret() // 获取JWT密钥和过期时间
+	if err != nil {
+		return "", fmt.Errorf("generate access token: %w", err)
+	}
 	// 创建自定义声明
 	claims := Claims{
 		UserID:   userID,
@@ -55,13 +81,19 @@ func GenerateToken(userID uint, userName string) (string, error) {
 
 // ParseToken 解析和验证JWT令牌
 func ParseToken(tokenString string) (*Claims, error) {
-	// 解析令牌
+	// 解析令牌，仅允许 HS256，并在 keyfunc 中再次校验算法头部
 	token, err := JWT.ParseWithClaims(tokenString, &Claims{}, func(token *JWT.Token) (interface{}, error) {
-		jwtSecretKey, _ := jwtSecret()
+		if err := validateSigningMethod(token); err != nil {
+			return nil, err
+		}
+		jwtSecretKey, _, err := jwtSecret()
+		if err != nil {
+			return nil, err
+		}
 		return jwtSecretKey, nil // 使用配置中的JWT密钥进行验证
-	})
+	}, JWT.WithValidMethods([]string{JWT.SigningMethodHS256.Alg()}))
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("parse access token: %w", err)
 	}
 
 	// 验证令牌有效性
@@ -103,12 +135,18 @@ func ExtractBearerToken(ctx *gin.Context) (string, error) {
 func GetTokenRemainingExpire(tokenStr string) (int64, error) {
 	// 解析 token 并获取 claims
 	token, err := JWT.Parse(tokenStr, func(token *JWT.Token) (interface{}, error) {
-		jwtSecretKey, _ := jwtSecret()
+		if err := validateSigningMethod(token); err != nil {
+			return nil, err
+		}
+		jwtSecretKey, _, err := jwtSecret()
+		if err != nil {
+			return nil, err
+		}
 		return jwtSecretKey, nil
-	})
+	}, JWT.WithValidMethods([]string{JWT.SigningMethodHS256.Alg()}))
 	if err != nil {
 		log.Printf("Error parsing token: %v", err)
-		return 0, err
+		return 0, fmt.Errorf("parse token: %w", err)
 	}
 	// 检查 token 是否有效
 	if !token.Valid {
@@ -121,8 +159,16 @@ func GetTokenRemainingExpire(tokenStr string) (int64, error) {
 		log.Printf("Error asserting token claims: %v", err)
 		return 0, errors.New("invalid token claims")
 	}
-	// 获取 exp 字段并计算剩余时间
-	exp := int64(claims["exp"].(float64))
+	// 获取 exp 字段并计算剩余时间；先做类型断言，缺失或非法时返回错误而不是panic
+	expValue, exists := claims["exp"]
+	if !exists {
+		return 0, errors.New("token exp is missing")
+	}
+	expFloat, ok := expValue.(float64)
+	if !ok {
+		return 0, fmt.Errorf("invalid token exp type: %T", expValue)
+	}
+	exp := int64(expFloat)
 	now := time.Now().Unix()
 	remain := exp - now
 	// 如果剩余时间小于0，说明token已经过期，返回错误

@@ -69,8 +69,13 @@ func (h *UserHandler) Login(ctx *gin.Context) {
 	// 调用服务层进行登录
 	accessToken, refreshToken, err := h.UserService.Login(ctx.Request.Context(), req.Username, req.Password)
 	if err != nil {
-		response.FailResponse(ctx, err.Error())
 		log.Printf("Error logging in user in UserHandler: %v", err)
+		// 账号不存在与密码错误返回完全一致的提示，防止账号枚举
+		if errors.Is(err, service.ErrInvalidCredentials) {
+			response.FailAuthResponse(ctx, "用户名或密码错误")
+			return
+		}
+		response.ServerErrorResponse(ctx, "登录失败，请稍后重试")
 		return
 	}
 
@@ -94,8 +99,17 @@ func (h *UserHandler) RefreshToken(ctx *gin.Context) {
 	// 调用服务层刷新令牌
 	newAccessToken, newRefreshToken, uid, uname, err := h.UserService.RefreshToken(ctx.Request.Context(), req.RefreshToken, req.OldAccessToken)
 	if err != nil {
-		response.FailResponse(ctx, err.Error())
 		log.Printf("Error refreshing token in UserHandler: %v", err)
+		// refresh token无效属于鉴权失败返回401，服务不可用返回500
+		if errors.Is(err, service.ErrInvalidRefreshToken) {
+			response.FailAuthResponse(ctx, "refresh token无效或已过期")
+			return
+		}
+		if errors.Is(err, service.ErrRefreshTokenUnavailable) {
+			response.ServerErrorResponse(ctx, "刷新令牌服务暂不可用")
+			return
+		}
+		response.ServerErrorResponse(ctx, "刷新令牌失败")
 		return
 	}
 
@@ -149,7 +163,7 @@ func (h *UserHandler) Logout(ctx *gin.Context) {
 	userID, username, err := getUserFromCtx(ctx)
 	if err != nil {
 		log.Printf("Error getting user from context in UserHandler: %v", err)
-		response.FailResponse(ctx, "Failed to get user ID from context")
+		response.FailAuthResponse(ctx, "未登录或登录已过期")
 		return
 	}
 
@@ -157,22 +171,26 @@ func (h *UserHandler) Logout(ctx *gin.Context) {
 	accessToken, err := jwt.ExtractBearerToken(ctx)
 	if err != nil {
 		log.Printf("Error extracting access token in UserHandler: %v", err)
-		response.FailResponse(ctx, "Failed to extract access token")
+		response.FailAuthResponse(ctx, "未登录或登录已过期")
 		return
 	}
 	// 获取 access token 剩余有效期
 	remainingExpire, err := jwt.GetTokenRemainingExpire(accessToken)
 	if err != nil {
 		log.Printf("Error getting token remaining expire in UserHandler: %v", err)
-		response.FailResponse(ctx, "Failed to get token remaining expire")
+		response.FailAuthResponse(ctx, "无效的token")
 		return
 	}
 
 	// 调用服务层进行登出
 	err = h.UserService.Logout(ctx.Request.Context(), userID, req.RefreshToken, accessToken, remainingExpire)
 	if err != nil {
-		response.FailResponse(ctx, "Failed to logout user")
 		log.Printf("Error logging out user in UserHandler: %v", err)
+		if errors.Is(err, service.ErrInvalidRefreshToken) {
+			response.FailAuthResponse(ctx, "refresh token无效或已过期")
+			return
+		}
+		response.ServerErrorResponse(ctx, "登出失败，请稍后重试")
 		return
 	}
 
@@ -189,7 +207,7 @@ func (h *UserHandler) GetProfile(ctx *gin.Context) {
 	userID, _, err := getUserFromCtx(ctx)
 	if err != nil {
 		log.Printf("Error getting user from context in UserHandler: %v", err)
-		response.FailResponse(ctx, "Failed to get user ID from context")
+		response.FailAuthResponse(ctx, "未登录或登录已过期")
 		return
 	}
 
@@ -197,7 +215,7 @@ func (h *UserHandler) GetProfile(ctx *gin.Context) {
 	profile, err := h.UserService.GetProfile(ctx.Request.Context(), userID)
 	if err != nil {
 		log.Printf("Error getting user profile in UserHandler: %v", err)
-		response.FailResponse(ctx, "Failed to get user profile")
+		response.ServerErrorResponse(ctx, "Failed to get user profile")
 		return
 	}
 
@@ -210,7 +228,7 @@ func (h *UserHandler) UpdateProfile(ctx *gin.Context) {
 	userID, _, err := getUserFromCtx(ctx)
 	if err != nil {
 		log.Printf("Error getting user from context in UserHandler: %v", err)
-		response.FailResponse(ctx, "Failed to get user ID from context")
+		response.FailAuthResponse(ctx, "未登录或登录已过期")
 		return
 	}
 
@@ -272,7 +290,7 @@ func (h *UserHandler) ChangePassword(ctx *gin.Context) {
 	userID, _, err := getUserFromCtx(ctx)
 	if err != nil {
 		log.Printf("Error getting user from context in ChangePassword: %v", err)
-		response.FailResponse(ctx, "Failed to get user ID from context")
+		response.FailAuthResponse(ctx, "未登录或登录已过期")
 		return
 	}
 
@@ -310,14 +328,14 @@ func (h *UserHandler) ChangePassword(ctx *gin.Context) {
 	accessToken, err := jwt.ExtractBearerToken(ctx)
 	if err != nil {
 		log.Printf("Error extracting access token in UserHandler: %v", err)
-		response.FailResponse(ctx, "Failed to extract access token")
+		response.FailAuthResponse(ctx, "未登录或登录已过期")
 		return
 	}
 	// 获取access token剩余有效期
 	remainingExpire, err := jwt.GetTokenRemainingExpire(accessToken)
 	if err != nil {
 		log.Printf("Error getting token remaining expire in UserHandler: %v", err)
-		response.FailResponse(ctx, "Failed to get token remaining expire")
+		response.FailAuthResponse(ctx, "无效的token")
 		return
 	}
 
@@ -325,7 +343,11 @@ func (h *UserHandler) ChangePassword(ctx *gin.Context) {
 	err = h.UserService.ChangePassword(ctx.Request.Context(), userID, req.OldPassword, req.NewPassword, accessToken, remainingExpire)
 	if err != nil {
 		log.Printf("Error changing password in ChangePassword: %v", err)
-		response.FailResponse(ctx, "Failed to change password: "+err.Error())
+		if errors.Is(err, service.ErrOldPasswordIncorrect) {
+			response.FailResponse(ctx, "旧密码错误")
+			return
+		}
+		response.ServerErrorResponse(ctx, "修改密码失败，请稍后重试")
 		return
 	}
 
@@ -347,8 +369,8 @@ func (h *UserHandler) FindByID(ctx *gin.Context) {
 	// 调用服务层根据ID查找用户
 	user, err := h.UserService.FindByID(ctx.Request.Context(), req.UserID)
 	if err != nil {
-		response.FailResponse(ctx, err.Error())
 		log.Printf("Error finding user by ID in UserHandler: %v", err)
+		response.FailResponse(ctx, "用户不存在")
 		return
 	}
 
@@ -367,8 +389,8 @@ func (h *UserHandler) FindByUsername(ctx *gin.Context) {
 	// 调用服务层根据用户名查找用户
 	user, err := h.UserService.FindByUsername(ctx.Request.Context(), req.Username)
 	if err != nil {
-		response.FailResponse(ctx, err.Error())
 		log.Printf("Error finding user by username in UserHandler: %v", err)
+		response.FailResponse(ctx, "用户不存在")
 		return
 	}
 

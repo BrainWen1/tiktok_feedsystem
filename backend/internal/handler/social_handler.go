@@ -24,7 +24,7 @@ func (h *SocialHandler) Follow(ctx *gin.Context) {
 	var req dto.FollowRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
 		log.Printf("Failed to bind JSON: %v", err)
-		response.FailResponse(ctx, err.Error())
+		response.FailResponse(ctx, "请求参数错误")
 		return
 	}
 
@@ -32,14 +32,14 @@ func (h *SocialHandler) Follow(ctx *gin.Context) {
 	uid, _, err := getUserFromCtx(ctx)
 	if err != nil {
 		log.Printf("Failed to get user from context: %v", err)
-		response.FailResponse(ctx, err.Error())
+		response.FailAuthResponse(ctx, "未登录或登录已过期")
 		return
 	}
 
 	// 调用服务层的Follow方法
 	if err := h.SocialService.Follow(ctx.Request.Context(), uid, req.BloggerID); err != nil {
 		log.Printf("Failed to follow blogger: %v", err)
-		response.FailResponse(ctx, err.Error())
+		response.FailResponse(ctx, "关注失败")
 		return
 	}
 
@@ -52,7 +52,7 @@ func (h *SocialHandler) Unfollow(ctx *gin.Context) {
 	var req dto.UnfollowRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
 		log.Printf("Failed to bind JSON: %v", err)
-		response.FailResponse(ctx, err.Error())
+		response.FailResponse(ctx, "请求参数错误")
 		return
 	}
 
@@ -60,14 +60,14 @@ func (h *SocialHandler) Unfollow(ctx *gin.Context) {
 	uid, _, err := getUserFromCtx(ctx)
 	if err != nil {
 		log.Printf("Failed to get user from context: %v", err)
-		response.FailResponse(ctx, err.Error())
+		response.FailAuthResponse(ctx, "未登录或登录已过期")
 		return
 	}
 
 	// 调用服务层的Unfollow方法
 	if err := h.SocialService.Unfollow(ctx.Request.Context(), uid, req.BloggerID); err != nil {
 		log.Printf("Failed to unfollow blogger: %v", err)
-		response.FailResponse(ctx, err.Error())
+		response.FailResponse(ctx, "取消关注失败")
 		return
 	}
 
@@ -80,7 +80,7 @@ func (h *SocialHandler) GetBloggers(ctx *gin.Context) {
 	var GetBloggersReq dto.GetBloggersRequest
 	if err := ctx.ShouldBindQuery(&GetBloggersReq); err != nil {
 		log.Printf("Failed to bind query parameters: %v", err)
-		response.FailResponse(ctx, err.Error())
+		response.FailResponse(ctx, "请求参数错误")
 		return
 	}
 
@@ -91,7 +91,7 @@ func (h *SocialHandler) GetBloggers(ctx *gin.Context) {
 	bloggers, total, err := h.SocialService.GetBloggers(ctx.Request.Context(), GetBloggersReq.Uid, GetBloggersReq.PageNum, GetBloggersReq.PageSize, uid)
 	if err != nil {
 		log.Printf("Failed to get bloggers: %v", err)
-		response.FailResponse(ctx, err.Error())
+		response.FailResponse(ctx, "获取关注列表失败")
 		return
 	}
 
@@ -107,7 +107,7 @@ func (h *SocialHandler) GetFollowers(ctx *gin.Context) {
 	var GetFollowersReq dto.GetFollowersRequest
 	if err := ctx.ShouldBindQuery(&GetFollowersReq); err != nil {
 		log.Printf("Failed to bind query parameters: %v", err)
-		response.FailResponse(ctx, err.Error())
+		response.FailResponse(ctx, "请求参数错误")
 		return
 	}
 
@@ -118,7 +118,7 @@ func (h *SocialHandler) GetFollowers(ctx *gin.Context) {
 	followers, total, err := h.SocialService.GetFollowers(ctx.Request.Context(), GetFollowersReq.Uid, GetFollowersReq.PageNum, GetFollowersReq.PageSize, uid)
 	if err != nil {
 		log.Printf("Failed to get followers: %v", err)
-		response.FailResponse(ctx, err.Error())
+		response.FailResponse(ctx, "获取粉丝列表失败")
 		return
 	}
 
@@ -134,7 +134,7 @@ func (h *SocialHandler) IsFollow(ctx *gin.Context) {
 	var req dto.IsFollowRequest
 	if err := ctx.ShouldBindQuery(&req); err != nil {
 		log.Printf("Failed to bind query parameters: %v", err)
-		response.FailResponse(ctx, err.Error())
+		response.FailResponse(ctx, "请求参数错误")
 		return
 	}
 
@@ -142,7 +142,7 @@ func (h *SocialHandler) IsFollow(ctx *gin.Context) {
 	uid, _, err := getUserFromCtx(ctx)
 	if err != nil {
 		log.Printf("Failed to get user from context: %v", err)
-		response.FailResponse(ctx, err.Error())
+		response.FailAuthResponse(ctx, "未登录或登录已过期")
 		return
 	}
 
@@ -150,7 +150,7 @@ func (h *SocialHandler) IsFollow(ctx *gin.Context) {
 	isFollow, isFan, err := h.SocialService.IsFollow(ctx.Request.Context(), uid, uint(req.TargetID))
 	if err != nil {
 		log.Printf("Failed to check follow status: %v", err)
-		response.FailResponse(ctx, err.Error())
+		response.FailResponse(ctx, "获取关注关系失败")
 		return
 	}
 
@@ -166,7 +166,7 @@ func (h *SocialHandler) GetCounts(ctx *gin.Context) {
 	var req dto.GetCountsRequest
 	if err := ctx.ShouldBindQuery(&req); err != nil {
 		log.Printf("Failed to bind query parameters: %v", err)
-		response.FailResponse(ctx, err.Error())
+		response.FailResponse(ctx, "请求参数错误")
 		return
 	}
 
@@ -174,7 +174,7 @@ func (h *SocialHandler) GetCounts(ctx *gin.Context) {
 	followCount, fanCount, err := h.SocialService.GetCounts(ctx.Request.Context(), req.TargetID)
 	if err != nil {
 		log.Printf("Failed to get counts: %v", err)
-		response.FailResponse(ctx, err.Error())
+		response.FailResponse(ctx, "获取关注数量失败")
 		return
 	}
 

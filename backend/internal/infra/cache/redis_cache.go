@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"log"
 	"strconv"
@@ -12,6 +13,9 @@ import (
 
 	"github.com/redis/go-redis/v9"
 )
+
+// ErrCacheMiss 表示缓存key不存在，用于区分未命中与Redis故障
+var ErrCacheMiss = errors.New("cache miss")
 
 type RedisCache struct {
 	client  *redis.Client
@@ -71,6 +75,21 @@ func (r *RedisCache) Get(ctx context.Context, key string) (string, error) {
 		return "", err
 	}
 	return val, err
+}
+
+// GetDel 原子读取并删除key，用于一次性凭证（refresh token轮换），避免Get+Delete并发竞争
+func (r *RedisCache) GetDel(ctx context.Context, key string) (string, error) {
+	if !r.IsEnabled() {
+		return "", ErrCacheMiss // 缓存禁用，按未命中处理
+	}
+	val, err := r.client.GetDel(ctx, key).Result()
+	if errors.Is(err, redis.Nil) {
+		return "", ErrCacheMiss
+	}
+	if err != nil {
+		return "", fmt.Errorf("getdel: %w", err)
+	}
+	return val, nil
 }
 
 // ConvInt64 将 (valStr,err) 转 int64

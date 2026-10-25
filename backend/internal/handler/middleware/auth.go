@@ -6,9 +6,13 @@ import (
 	"feedsystem/internal/utils/response"
 	"log"
 	"strings"
+	"sync/atomic"
 
 	"github.com/gin-gonic/gin"
 )
+
+// sharedCache 供包级软鉴权函数TryGetUID复用，保证软鉴权也能校验token黑名单
+var sharedCache atomic.Pointer[cache.RedisCache]
 
 // 避免auth中间件和service层绑定，AuthMiddleware不直接依赖业务层UserService，而是依赖基础设施层的RedisCache
 type AuthMiddleware struct {
@@ -16,6 +20,9 @@ type AuthMiddleware struct {
 }
 
 func NewAuthMiddleware(cache *cache.RedisCache) *AuthMiddleware {
+	if cache != nil {
+		sharedCache.Store(cache)
+	}
 	return &AuthMiddleware{cache: cache}
 }
 
@@ -92,6 +99,20 @@ func TryGetUID(ctx *gin.Context) uint {
 	claims, err := jwt.ParseToken(tokenStr)
 	if err != nil {
 		return 0
+	}
+
+	// 软鉴权同样校验黑名单：已注销/拉黑的token只能按游客处理，禁止识别为登录用户
+	if c := sharedCache.Load(); c != nil && c.IsEnabled() {
+		isBlacklisted, err := c.IsTokenInBlacklist(ctx.Request.Context(), tokenStr)
+		if err != nil {
+			// 黑名单查询失败时按游客降级，避免把无法确认身份的请求当成已登录
+			log.Printf("Error checking token blacklist in TryGetUID: %v", err)
+			return 0
+		}
+		if isBlacklisted {
+			log.Printf("Soft auth token is blacklisted: [REDACTED], userID=%d", claims.UserID)
+			return 0
+		}
 	}
 	return claims.UserID
 }
