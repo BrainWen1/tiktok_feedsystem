@@ -19,6 +19,21 @@ type Video struct {
 	UpdatedAt time.Time `gorm:"autoUpdateTime"`
 }
 
+// VideoTag 视频-标签关联表。
+// 替代 videos.tags 上的 FIND_IN_SET 查询：tag 走联合索引 (tag, video_id)，
+// (video_id, tag) 唯一索引保证同一视频不会重复写入同一标签。
+type VideoTag struct {
+	ID        uint      `gorm:"primaryKey"`
+	VideoID   uint      `gorm:"not null;uniqueIndex:uk_video_tag,priority:1;index:idx_video_tag_tag_video,priority:2"`
+	Tag       string    `gorm:"type:varchar(64);not null;uniqueIndex:uk_video_tag,priority:2;index:idx_video_tag_tag_video,priority:1"`
+	CreatedAt time.Time `gorm:"autoCreateTime"`
+}
+
+// TableName 固定表名为 video_tag，避免 GORM 默认复数化成 video_tags
+func (VideoTag) TableName() string {
+	return "video_tag"
+}
+
 // OutboxMsg 本地消息表 outbox pattern，异步事件投递
 type OutboxMsg struct {
 	ID         uint      `gorm:"primaryKey"`

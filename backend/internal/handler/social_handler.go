@@ -87,18 +87,27 @@ func (h *SocialHandler) GetBloggers(ctx *gin.Context) {
 	// 软鉴权
 	uid := middleware.TryGetUID(ctx)
 
+	cursor := dto.FeedCursor{
+		LastUid:       GetBloggersReq.CursorLastUid,
+		LastCreatedAt: GetBloggersReq.CursorLastCreatedAt,
+	}
+
 	// 调用服务层的GetBloggers方法
-	bloggers, total, err := h.SocialService.GetBloggers(ctx.Request.Context(), GetBloggersReq.Uid, GetBloggersReq.PageNum, GetBloggersReq.PageSize, uid)
+	bloggers, total, nextCursor, err := h.SocialService.GetBloggers(ctx.Request.Context(), GetBloggersReq.Uid, uid, cursor, GetBloggersReq.PageSize)
 	if err != nil {
 		log.Printf("Failed to get bloggers: %v", err)
 		response.FailResponse(ctx, "获取关注列表失败")
 		return
 	}
 
-	response.SuccessResponse(ctx, gin.H{
+	payload := gin.H{
 		"bloggers": bloggers,
 		"total":    total,
-	})
+	}
+	if nextCursor != nil {
+		payload["next_cursor"] = nextCursor
+	}
+	response.SuccessResponse(ctx, payload)
 }
 
 // GetFollowers 获取用户的粉丝列表
@@ -114,18 +123,27 @@ func (h *SocialHandler) GetFollowers(ctx *gin.Context) {
 	// 软鉴权
 	uid := middleware.TryGetUID(ctx)
 
-	// 调用服务层的GetBloggers方法
-	followers, total, err := h.SocialService.GetFollowers(ctx.Request.Context(), GetFollowersReq.Uid, GetFollowersReq.PageNum, GetFollowersReq.PageSize, uid)
+	cursor := dto.FeedCursor{
+		LastUid:       GetFollowersReq.CursorLastUid,
+		LastCreatedAt: GetFollowersReq.CursorLastCreatedAt,
+	}
+
+	// 调用服务层的GetFollowers方法
+	followers, total, nextCursor, err := h.SocialService.GetFollowers(ctx.Request.Context(), GetFollowersReq.Uid, uid, cursor, GetFollowersReq.PageSize)
 	if err != nil {
 		log.Printf("Failed to get followers: %v", err)
 		response.FailResponse(ctx, "获取粉丝列表失败")
 		return
 	}
 
-	response.SuccessResponse(ctx, gin.H{
+	payload := gin.H{
 		"followers": followers,
 		"total":     total,
-	})
+	}
+	if nextCursor != nil {
+		payload["next_cursor"] = nextCursor
+	}
+	response.SuccessResponse(ctx, payload)
 }
 
 // IsFollow 获取两者关注关系

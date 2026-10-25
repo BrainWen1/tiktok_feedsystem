@@ -433,6 +433,46 @@ func (c *RedisCache) ZRange(ctx context.Context, key string, start, stop int64, 
 	return result, nil
 }
 
+// ZRangeByScore 按分数区间读取 ZSet 成员，参数语义与 Redis ZRANGE 一致：
+// reverse=false 时 start=min、stop=max；reverse=true 时 start=max、stop=min。
+// 支持 Redis 原生语法，如 "-inf"、"+inf"、"(123" 表示不包含 123。
+func (c *RedisCache) ZRangeByScore(ctx context.Context, key, start, stop string, offset, count int64, reverse bool) ([]string, error) {
+	if !c.IsEnabled() {
+		return nil, nil // 缓存禁用，按未命中处理
+	}
+
+	result, err := c.client.ZRangeArgs(ctx, redis.ZRangeArgs{
+		Key:     key,
+		Start:   start,
+		Stop:    stop,
+		ByScore: true,
+		Offset:  offset,
+		Count:   count,
+		Rev:     reverse,
+	}).Result()
+	if err != nil {
+		log.Printf("Error getting zset range by score for key %s: %v", key, err)
+		return nil, err
+	}
+	return result, nil
+}
+
+// ZScore 获取 ZSet 成员的分数，用于生成复合游标。
+func (c *RedisCache) ZScore(ctx context.Context, key, member string) (float64, error) {
+	if !c.IsEnabled() {
+		return 0, ErrCacheMiss // 缓存禁用，按未命中处理
+	}
+	score, err := c.client.ZScore(ctx, key, member).Result()
+	if err != nil {
+		if errors.Is(err, redis.Nil) {
+			return 0, ErrCacheMiss
+		}
+		log.Printf("Error getting zset score for key %s member %s: %v", key, member, err)
+		return 0, err
+	}
+	return score, nil
+}
+
 // ZIsMember 判断 zset 里面有没有这个 member
 func (c *RedisCache) ZIsMember(ctx context.Context, key string, member interface{}) (bool, error) {
 	if !c.IsEnabled() {

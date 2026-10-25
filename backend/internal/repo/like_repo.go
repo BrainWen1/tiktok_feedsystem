@@ -3,6 +3,8 @@ package repo
 import (
 	"context"
 	"feedsystem/internal/model"
+	"fmt"
+	"time"
 
 	"gorm.io/gorm"
 )
@@ -61,22 +63,31 @@ func (r *LikeRepo) FindUserIDsByVideo(ctx context.Context, vid uint) ([]uint, er
 	return userIDs, nil
 }
 
-// FindVidsByUserID 根据用户id和分页信息查询用户点赞过的视频id列表
-func (r *LikeRepo) FindVidsByUserID(ctx context.Context, uid, page_num, page_size uint) ([]uint, int64, error) {
-	var videoIDs []uint
+// FindLikedVideoPage 按点赞时间 + 视频ID复合游标分页查询用户点赞记录。
+// 返回完整 Like 记录，service 层据此同时拿到 video_id 和 created_at 生成下一页游标。
+func (r *LikeRepo) FindLikedVideoPage(ctx context.Context, uid uint, lastCreatedAt time.Time, lastVid uint, pageSize int) ([]model.Like, int64, error) {
+	var likes []model.Like
 	var total int64
-	var offset = (page_num - 1) * page_size
 
-	err := r.db.WithContext(ctx).Model(&model.Like{}).
-		Where(model.Like{UserID: uid}).
-		Count(&total).
-		Order("created_at DESC"). // 按点赞时间倒序排列
-		Offset(int(offset)).
-		Limit(int(page_size)).
-		Pluck("video_id", &videoIDs).Error
+	if uid == 0 {
+		return nil, 0, fmt.Errorf("find liked videos: empty user id: %w", ErrInvalidArgument)
+	}
 
-	if err != nil {
+	if err := r.db.WithContext(ctx).Model(&model.Like{}).
+		Where("user_id = ?", uid).
+		Count(&total).Error; err != nil {
 		return nil, 0, err
 	}
-	return videoIDs, total, nil
+
+	q := r.db.WithContext(ctx).Model(&model.Like{}).Where("user_id = ?", uid)
+	if lastVid != 0 {
+		q = q.Where("(created_at, video_id) < (?, ?)", lastCreatedAt, lastVid)
+	}
+	if err := q.Order("created_at DESC, video_id DESC"). // 按点赞时间倒序，video_id 兜底保证顺序稳定
+								Limit(pageSize).
+								Find(&likes).Error; err != nil {
+		return nil, 0, err
+	}
+
+	return likes, total, nil
 }

@@ -4,11 +4,18 @@ package repo
 
 import (
 	"context"
+	"errors"
 	"feedsystem/internal/model"
+	"fmt"
 	"log"
+	"strings"
 
 	"gorm.io/gorm"
 )
+
+// ErrInvalidArgument repo 层参数校验失败。
+// 用于拦截空用户名、零值主键等会导致 GORM 忽略零值条件、生成无 WHERE SQL 的请求。
+var ErrInvalidArgument = errors.New("invalid argument")
 
 // UserRepo 用户仓库
 type UserRepo struct {
@@ -30,10 +37,15 @@ func (r *UserRepo) Register(ctx context.Context, user *model.User) error {
 	return nil
 }
 
-// FindByUsername 根据用户名查找用户
+// FindByUsername 根据用户名查找用户。
+// 空用户名必须前置拦截：结构体条件会忽略空字符串，生成无 WHERE 的查询并返回第一条用户。
 func (r *UserRepo) FindByUsername(ctx context.Context, username string) (*model.User, error) {
+	if strings.TrimSpace(username) == "" {
+		return nil, fmt.Errorf("find user by username: empty username: %w", ErrInvalidArgument)
+	}
+
 	var user model.User
-	if err := r.db.WithContext(ctx).Where(&model.User{UserName: username}).First(&user).Error; err != nil {
+	if err := r.db.WithContext(ctx).Where("user_name = ?", username).First(&user).Error; err != nil {
 		return nil, err
 	}
 	return &user, nil
@@ -99,9 +111,17 @@ func (r *UserRepo) DeleteRefreshTokenByUserID(ctx context.Context, userID uint) 
 	return nil
 }
 
-// UpdateProfile 更新用户资料
+// UpdateProfile 更新用户资料。
+// userID 为 0 时必须拒绝，否则 GORM 会忽略结构体中的零值主键，更新到第一条用户。
 func (r *UserRepo) UpdateProfile(ctx context.Context, userID uint, updatedFields map[string]interface{}) error {
-	err := r.db.WithContext(ctx).Model(&model.User{}).Where(&model.User{ID: userID}).Updates(updatedFields).Error
+	if userID == 0 {
+		return fmt.Errorf("update user profile: empty user id: %w", ErrInvalidArgument)
+	}
+	if len(updatedFields) == 0 {
+		return fmt.Errorf("update user profile: no fields to update: %w", ErrInvalidArgument)
+	}
+
+	err := r.db.WithContext(ctx).Model(&model.User{}).Where("id = ?", userID).Updates(updatedFields).Error
 	if err != nil {
 		log.Printf("Error updating user profile in UserRepo: %v", err)
 		return err
@@ -111,12 +131,16 @@ func (r *UserRepo) UpdateProfile(ctx context.Context, userID uint, updatedFields
 
 // UpdatePassword 更新用户密码
 func (r *UserRepo) UpdatePassword(ctx context.Context, userID uint, newPasswordHash string) error {
+	if userID == 0 {
+		return fmt.Errorf("update user password: empty user id: %w", ErrInvalidArgument)
+	}
+
 	user := model.User{
 		Password: newPasswordHash,
 	}
 	err := r.db.WithContext(ctx).
 		Model(&model.User{}).
-		Where(&model.User{ID: userID}).
+		Where("id = ?", userID).
 		Select("Password").
 		Updates(user).
 		Error

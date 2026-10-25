@@ -2,10 +2,11 @@ package dto
 
 // 发布视频请求
 type PublishVideoRequest struct {
-	Title       string `json:"title"`
-	Description string `json:"description"`
-	VideoURL    string `json:"video_url"`
-	CoverURL    string `json:"cover_url"`
+	Title       string   `json:"title"`
+	Description string   `json:"description"`
+	VideoURL    string   `json:"video_url"`
+	CoverURL    string   `json:"cover_url"`
+	Tags        []string `json:"tags"` // 标签，写入 video_tag 关联表
 }
 
 // 发布视频响应
@@ -49,14 +50,17 @@ type AuthorBrief struct {
 
 // VideoListResponse 视频列表返回
 type VideoListResponse struct {
-	Total  int64                 `json:"total"`
-	Videos []VideoDetailResponse `json:"videos"`
+	Total      int64                 `json:"total"`
+	Videos     []VideoDetailResponse `json:"videos"`
+	NextCursor *FeedCursor           `json:"next_cursor,omitempty"` // 复合游标，为空表示没有下一页
 }
 
-// ListLikedVideosRequest 列出用户点赞过的视频请求
-// 分页参数限制上限，避免 page_num 过大导致 offset 溢出或超大偏移查询
+// ListLikedVideosRequest 列出用户点赞过的视频请求。
+// page_num 仅为兼容旧客户端保留，实际分页使用 cursor；
+// cursor.last_vid 为上一页最后一条点赞记录的 video_id，last_created_at 为对应点赞时间。
 type ListLikedVideosRequest struct {
-	UserID   uint `json:"user_id" binding:"required,min=1,max=4294967295"`
-	PageNum  int  `json:"page_num" binding:"required,min=1,max=100000"`
-	PageSize int  `json:"page_size" binding:"required,min=1,max=30"`
+	UserID   uint       `json:"user_id" binding:"required,min=1,max=4294967295"`
+	PageNum  int        `json:"page_num" binding:"omitempty,min=1,max=100000"`
+	PageSize int        `json:"page_size" binding:"required,min=1,max=30"`
+	Cursor   FeedCursor `json:"cursor"`
 }

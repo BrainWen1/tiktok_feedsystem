@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 	"strconv"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
@@ -97,7 +98,7 @@ func (h *VideoHandler) PublishVideo(ctx *gin.Context) {
 	}
 
 	// 调用服务层实现
-	videoID, err := h.VideoService.PublishVideo(ctx.Request.Context(), userID, req.Title, req.Description, req.VideoURL, req.CoverURL)
+	videoID, err := h.VideoService.PublishVideo(ctx.Request.Context(), userID, req.Title, req.Description, req.VideoURL, req.CoverURL, req.Tags)
 	if err != nil {
 		log.Printf("Failed to publish video: %v", err)
 		response.FailResponse(ctx, fmt.Sprintf("Failed to publish video: %v", err))
@@ -135,11 +136,13 @@ func (h *VideoHandler) VideoList(ctx *gin.Context) {
 	uid := middleware.TryGetUID(ctx)
 
 	//从url query拿参数
-	// 分页参数
+	// 分页参数：page_num 仅为兼容旧客户端保留，实际使用 cursor 复合游标
 	var req struct {
-		AuthorID uint `form:"author_id" binding:"required"`
-		PageNum  int  `form:"page_num" binding:"min=1"`
-		PageSize int  `form:"page_size" binding:"min=1"`
+		AuthorID            uint      `form:"author_id" binding:"required"`
+		PageNum             int       `form:"page_num" binding:"omitempty,min=1"`
+		PageSize            int       `form:"page_size" binding:"omitempty,min=1"`
+		CursorLastVid       string    `form:"cursor.last_vid"`
+		CursorLastCreatedAt time.Time `form:"cursor.last_created_at"`
 	}
 	if err := ctx.ShouldBindQuery(&req); err != nil {
 		log.Printf("Invalid query parameters: %v", err)
@@ -147,8 +150,13 @@ func (h *VideoHandler) VideoList(ctx *gin.Context) {
 		return
 	}
 
+	cursor := dto.FeedCursor{
+		LastVid:       req.CursorLastVid,
+		LastCreatedAt: req.CursorLastCreatedAt,
+	}
+
 	// 调用service处理
-	resp, err := h.VideoService.VideoList(ctx.Request.Context(), req.AuthorID, uid, req.PageNum, req.PageSize)
+	resp, err := h.VideoService.VideoList(ctx.Request.Context(), req.AuthorID, uid, cursor, req.PageSize)
 	if err != nil {
 		log.Printf("Failed to list videos: %v", err)
 		response.FailResponse(ctx, "Failed to list videos: "+err.Error())

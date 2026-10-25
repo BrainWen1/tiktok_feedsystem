@@ -3,6 +3,8 @@ package repo
 import (
 	"context"
 	"feedsystem/internal/model"
+	"fmt"
+	"time"
 
 	"gorm.io/gorm"
 )
@@ -48,29 +50,39 @@ func (r *SocialRepo) IsFollowing(ctx context.Context, followerID, bloggerID uint
 	return count > 0, nil
 }
 
-// ListBloggers 获取用户的关注列表，支持分页和按关注时间排序。
-func (r *SocialRepo) ListBloggers(ctx context.Context, followerID, pageNum, pageSize uint, orderByFollowTime bool) ([]*model.Social, int64, error) {
+// ListBloggers 获取用户的关注列表，按复合游标分页。
+// orderByFollowTime=true 时按 (created_at DESC, blogger_id DESC) 排序，游标为最近一条关注记录；
+// false 时按 blogger_id ASC 排序，游标为上一页最后一个博主ID。
+func (r *SocialRepo) ListBloggers(ctx context.Context, followerID uint, lastCreatedAt time.Time, lastUid uint, pageSize int, orderByFollowTime bool) ([]*model.Social, int64, error) {
+	if followerID == 0 {
+		return nil, 0, fmt.Errorf("list bloggers: empty follower id: %w", ErrInvalidArgument)
+	}
+
 	var socials []*model.Social
-	query := r.db.WithContext(ctx).Model(&model.Social{}).Where(&model.Social{FollowerID: followerID})
+	var total int64
 
 	// 获取总数
-	var total int64
-	if err := query.Count(&total).Error; err != nil {
+	if err := r.db.WithContext(ctx).Model(&model.Social{}).
+		Where("follower_id = ?", followerID).
+		Count(&total).Error; err != nil {
 		return nil, 0, err
 	}
 
-	// 排序
+	query := r.db.WithContext(ctx).Model(&model.Social{}).Where("follower_id = ?", followerID)
 	if orderByFollowTime {
-		// 按关注时间降序排序
-		query = query.Order("created_at DESC")
+		if lastUid != 0 {
+			query = query.Where("(created_at, blogger_id) < (?, ?)", lastCreatedAt, lastUid)
+		}
+		query = query.Order("created_at DESC, blogger_id DESC")
 	} else {
-		// 按博主ID升序排序
+		if lastUid != 0 {
+			// blogger_id 在同一 follower 下唯一，单独作为游标即可保证不重不漏
+			query = query.Where("blogger_id > ?", lastUid)
+		}
 		query = query.Order("blogger_id ASC")
 	}
 
-	// 分页
-	offset := (pageNum - 1) * pageSize
-	if err := query.Offset(int(offset)).Limit(int(pageSize)).Find(&socials).Error; err != nil {
+	if err := query.Limit(pageSize).Find(&socials).Error; err != nil {
 		return nil, 0, err
 	}
 
@@ -79,11 +91,15 @@ func (r *SocialRepo) ListBloggers(ctx context.Context, followerID, pageNum, page
 
 // ListAllBloggers 获取用户的全部关注列表，按关注时间排序。
 func (r *SocialRepo) ListAllBloggers(ctx context.Context, followerID uint, orderByFollowTime bool) ([]*model.Social, error) {
+	if followerID == 0 {
+		return nil, fmt.Errorf("list all bloggers: empty follower id: %w", ErrInvalidArgument)
+	}
+
 	var socials []*model.Social
-	query := r.db.WithContext(ctx).Model(&model.Social{}).Where(&model.Social{FollowerID: followerID})
+	query := r.db.WithContext(ctx).Model(&model.Social{}).Where("follower_id = ?", followerID)
 
 	if orderByFollowTime {
-		query = query.Order("created_at DESC")
+		query = query.Order("created_at DESC, blogger_id DESC")
 	} else {
 		query = query.Order("blogger_id ASC")
 	}
@@ -96,10 +112,15 @@ func (r *SocialRepo) ListAllBloggers(ctx context.Context, followerID uint, order
 }
 
 // FindByFollowerAndBlogger 查找特定关注关系。
+// 使用显式 WHERE 条件而不是结构体条件，避免 ID 为 0 时 GORM 忽略零值生成空 WHERE 查回第一条记录。
 func (r *SocialRepo) FindByFollowerAndBlogger(ctx context.Context, followerID, bloggerID uint) (*model.Social, error) {
+	if followerID == 0 || bloggerID == 0 {
+		return nil, fmt.Errorf("find follow relation: follower_id=%d blogger_id=%d: %w", followerID, bloggerID, ErrInvalidArgument)
+	}
+
 	var social model.Social
 	err := r.db.WithContext(ctx).
-		Where(&model.Social{FollowerID: followerID, BloggerID: bloggerID}).
+		Where("follower_id = ? AND blogger_id = ?", followerID, bloggerID).
 		First(&social).Error
 	if err != nil {
 		return nil, err
@@ -107,22 +128,36 @@ func (r *SocialRepo) FindByFollowerAndBlogger(ctx context.Context, followerID, b
 	return &social, nil
 }
 
-// ListFollowers 获取用户粉丝列表
-func (r *SocialRepo) ListFollowers(ctx context.Context, bloggerID, pageNum, pageSize uint, orderByFollowTime bool) ([]*model.Social, int64, error) {
+// ListFollowers 获取用户粉丝列表，按复合游标分页。
+func (r *SocialRepo) ListFollowers(ctx context.Context, bloggerID uint, lastCreatedAt time.Time, lastUid uint, pageSize int, orderByFollowTime bool) ([]*model.Social, int64, error) {
+	if bloggerID == 0 {
+		return nil, 0, fmt.Errorf("list followers: empty blogger id: %w", ErrInvalidArgument)
+	}
+
 	var socials []*model.Social
 	var total int64
-	query := r.db.WithContext(ctx).Model(&model.Social{}).Where(&model.Social{BloggerID: bloggerID})
 
-	if err := query.Count(&total).Error; err != nil {
+	if err := r.db.WithContext(ctx).Model(&model.Social{}).
+		Where("blogger_id = ?", bloggerID).
+		Count(&total).Error; err != nil {
 		return nil, 0, err
 	}
+
+	query := r.db.WithContext(ctx).Model(&model.Social{}).Where("blogger_id = ?", bloggerID)
 	if orderByFollowTime {
-		query = query.Order("created_at DESC")
+		if lastUid != 0 {
+			query = query.Where("(created_at, follower_id) < (?, ?)", lastCreatedAt, lastUid)
+		}
+		query = query.Order("created_at DESC, follower_id DESC")
 	} else {
+		if lastUid != 0 {
+			// follower_id 在同一 blogger 下唯一，单独作为游标即可保证不重不漏
+			query = query.Where("follower_id > ?", lastUid)
+		}
 		query = query.Order("follower_id ASC")
 	}
-	offset := (pageNum - 1) * pageSize
-	if err := query.Offset(int(offset)).Limit(int(pageSize)).Find(&socials).Error; err != nil {
+
+	if err := query.Limit(pageSize).Find(&socials).Error; err != nil {
 		return nil, 0, err
 	}
 	return socials, total, nil
@@ -130,11 +165,15 @@ func (r *SocialRepo) ListFollowers(ctx context.Context, bloggerID, pageNum, page
 
 // ListAllFollowers 获取用户的全部粉丝列表，按关注时间排序。
 func (r *SocialRepo) ListAllFollowers(ctx context.Context, bloggerID uint, orderByFollowTime bool) ([]*model.Social, error) {
+	if bloggerID == 0 {
+		return nil, fmt.Errorf("list all followers: empty blogger id: %w", ErrInvalidArgument)
+	}
+
 	var socials []*model.Social
-	query := r.db.WithContext(ctx).Model(&model.Social{}).Where(&model.Social{BloggerID: bloggerID})
+	query := r.db.WithContext(ctx).Model(&model.Social{}).Where("blogger_id = ?", bloggerID)
 
 	if orderByFollowTime {
-		query = query.Order("created_at DESC")
+		query = query.Order("created_at DESC, follower_id DESC")
 	} else {
 		query = query.Order("follower_id ASC")
 	}
@@ -148,12 +187,16 @@ func (r *SocialRepo) ListAllFollowers(ctx context.Context, bloggerID uint, order
 
 // GetCounts 获取用户的关注和粉丝数量
 func (r *SocialRepo) GetCounts(ctx context.Context, userID uint) (followCount int64, fanCount int64, err error) {
+	if userID == 0 {
+		return 0, 0, fmt.Errorf("get social counts: empty user id: %w", ErrInvalidArgument)
+	}
+
 	// 获取关注数量
-	if err = r.db.WithContext(ctx).Model(&model.Social{}).Where(&model.Social{FollowerID: userID}).Count(&followCount).Error; err != nil {
+	if err = r.db.WithContext(ctx).Model(&model.Social{}).Where("follower_id = ?", userID).Count(&followCount).Error; err != nil {
 		return
 	}
 	// 获取粉丝数量
-	if err = r.db.WithContext(ctx).Model(&model.Social{}).Where(&model.Social{BloggerID: userID}).Count(&fanCount).Error; err != nil {
+	if err = r.db.WithContext(ctx).Model(&model.Social{}).Where("blogger_id = ?", userID).Count(&fanCount).Error; err != nil {
 		return
 	}
 	return followCount, fanCount, nil
@@ -161,6 +204,10 @@ func (r *SocialRepo) GetCounts(ctx context.Context, userID uint) (followCount in
 
 // QueryMyFollowList 【纯DB】查询uid的所有关注记录，返回完整social记录（含CreatedAt）
 func (r *SocialRepo) QueryMyFollowList(ctx context.Context, uid uint) ([]model.Social, error) {
+	if uid == 0 {
+		return nil, fmt.Errorf("query my follow list: empty user id: %w", ErrInvalidArgument)
+	}
+
 	var list []model.Social
 	err := r.db.WithContext(ctx).
 		Where("follower_id = ?", uid).

@@ -88,6 +88,11 @@ func (s *UserService) Register(ctx context.Context, username, password string) (
 
 // Login 用户登录
 func (s *UserService) Login(ctx context.Context, username, password string) (accessToken string, refreshToken string, err error) {
+	// 空用户名/密码直接按凭证错误处理，禁止把空用户名下推到 repo 生成无 WHERE 查询
+	if strings.TrimSpace(username) == "" || password == "" {
+		return "", "", ErrInvalidCredentials
+	}
+
 	// 查找用户：账号不存在与底层错误分开处理，对外统一为凭证错误
 	user, err := s.UserRepo.FindByUsername(ctx, username)
 	if err != nil {
@@ -344,10 +349,17 @@ func (s *UserService) GetProfile(ctx context.Context, userID uint) (*dto.Profile
 
 // UpdateProfile 更新用户资料
 func (s *UserService) UpdateProfile(ctx context.Context, userID uint, req dto.UpdateProfileRequest) (*dto.ProfileResponse, error) {
+	if userID == 0 {
+		return nil, fmt.Errorf("update profile: invalid user id")
+	}
+
 	updateMap := make(map[string]interface{})
 
 	// 逐个检查请求参数是否为空，如果不为空则加入更新映射
 	if req.UserName != nil {
+		if strings.TrimSpace(*req.UserName) == "" {
+			return nil, fmt.Errorf("username cannot be empty")
+		}
 		// 检查用户名是否已存在
 		existingUser, err := s.UserRepo.FindByUsername(ctx, *req.UserName)
 		if err != nil && err != gorm.ErrRecordNotFound {
@@ -523,6 +535,10 @@ func (s *UserService) FindByID(ctx context.Context, id uint) (*dto.ProfileRespon
 
 // FindByUsername 根据用户名查找用户
 func (s *UserService) FindByUsername(ctx context.Context, username string) (*dto.ProfileResponse, error) {
+	if strings.TrimSpace(username) == "" {
+		return nil, fmt.Errorf("username is required")
+	}
+
 	user, err := s.UserRepo.FindByUsername(ctx, username)
 	if err != nil {
 		log.Printf("Error finding user by username in FindByUsername: %v", err)

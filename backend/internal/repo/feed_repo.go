@@ -3,6 +3,7 @@ package repo
 import (
 	"context"
 	"feedsystem/internal/model"
+	"time"
 
 	"gorm.io/gorm"
 )
@@ -15,14 +16,16 @@ func NewFeedRepo(db *gorm.DB) *FeedRepo {
 	return &FeedRepo{db: db}
 }
 
-// ListLatest 获取最新视频流
-func (r *FeedRepo) ListLatest(ctx context.Context, lastCreatedAt int64, lastVid string, limit int) ([]model.Video, error) {
+// ListLatest 获取最新视频流。
+// lastCreatedAt 直接使用 Go time.Time，由 GORM 绑定成 DATETIME，
+// 禁止转 Unix 秒后与 DATETIME 列比较，否则会触发隐式类型转换导致索引失效和翻页丢数据。
+func (r *FeedRepo) ListLatest(ctx context.Context, lastCreatedAt time.Time, lastVid uint, limit int) ([]model.Video, error) {
 	var videos []model.Video
 	db := r.db.WithContext(ctx)
 	q := db.Order("created_at DESC, id DESC")
 
 	// 非首页，带上复合游标过滤
-	if lastVid != "" {
+	if lastVid != 0 {
 		q = q.Where("(created_at, id) < (?, ?)", lastCreatedAt, lastVid)
 	}
 
@@ -31,12 +34,12 @@ func (r *FeedRepo) ListLatest(ctx context.Context, lastCreatedAt int64, lastVid 
 }
 
 // ListByFollowing 获取关注用户发布视频流
-func (r *FeedRepo) ListByFollowing(ctx context.Context, followUids []uint, lastCreatedAt int64, lastVid string, limit int) ([]model.Video, error) {
+func (r *FeedRepo) ListByFollowing(ctx context.Context, followUids []uint, lastCreatedAt time.Time, lastVid uint, limit int) ([]model.Video, error) {
 	var videos []model.Video
 	db := r.db.WithContext(ctx)
 	q := db.Where("author_id IN ?", followUids).Order("created_at DESC, id DESC")
 
-	if lastVid != "" {
+	if lastVid != 0 {
 		q = q.Where("(created_at, id) < (?, ?)", lastCreatedAt, lastVid)
 	}
 
@@ -45,12 +48,12 @@ func (r *FeedRepo) ListByFollowing(ctx context.Context, followUids []uint, lastC
 }
 
 // ListByPopularity 根据热度分页获取热门视频
-func (r *FeedRepo) ListByPopularity(ctx context.Context, lastPopularity int64, lastVid string, limit int) ([]model.Video, error) {
+func (r *FeedRepo) ListByPopularity(ctx context.Context, lastPopularity int64, lastVid uint, limit int) ([]model.Video, error) {
 	var videos []model.Video
 	db := r.db.WithContext(ctx)
 	q := db.Order("popularity DESC, id DESC")
 
-	if lastVid != "" {
+	if lastVid != 0 {
 		q = q.Where("(popularity, id) < (?, ?)", lastPopularity, lastVid)
 	}
 
@@ -59,12 +62,12 @@ func (r *FeedRepo) ListByPopularity(ctx context.Context, lastPopularity int64, l
 }
 
 // ListLikesCount 按点赞数量降序分页
-func (r *FeedRepo) ListByLikesCount(ctx context.Context, lastLikeCount int64, lastVid string, limit int) ([]model.Video, error) {
+func (r *FeedRepo) ListByLikesCount(ctx context.Context, lastLikeCount int64, lastVid uint, limit int) ([]model.Video, error) {
 	var videos []model.Video
 	db := r.db.WithContext(ctx)
 	q := db.Order("likes_count DESC, id DESC")
 
-	if lastVid != "" {
+	if lastVid != 0 {
 		q = q.Where("(likes_count, id) < (?, ?)", lastLikeCount, lastVid)
 	}
 
@@ -72,14 +75,19 @@ func (r *FeedRepo) ListByLikesCount(ctx context.Context, lastLikeCount int64, la
 	return videos, err
 }
 
-// ListByTag 根据标签筛选视频
-func (r *FeedRepo) ListByTag(ctx context.Context, tag string, lastCreatedAt int64, lastVid string, limit int) ([]model.Video, error) {
+// ListByTag 根据标签筛选视频。
+// 通过 video_tag 关联表查询，tag 命中联合索引 (tag, video_id)，避免 FIND_IN_SET 全表扫描。
+func (r *FeedRepo) ListByTag(ctx context.Context, tag string, lastCreatedAt time.Time, lastVid uint, limit int) ([]model.Video, error) {
 	var videos []model.Video
 	db := r.db.WithContext(ctx)
-	q := db.Where("FIND_IN_SET(?, tags)", tag).Order("created_at DESC, id DESC")
+	q := db.Model(&model.Video{}).
+		Joins("JOIN video_tag ON video_tag.video_id = videos.id").
+		Where("video_tag.tag = ?", tag).
+		Select("videos.*").
+		Order("videos.created_at DESC, videos.id DESC")
 
-	if lastVid != "" {
-		q = q.Where("(created_at, id) < (?, ?)", lastCreatedAt, lastVid)
+	if lastVid != 0 {
+		q = q.Where("(videos.created_at, videos.id) < (?, ?)", lastCreatedAt, lastVid)
 	}
 
 	err := q.Limit(limit).Find(&videos).Error

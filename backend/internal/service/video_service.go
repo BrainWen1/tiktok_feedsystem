@@ -1,6 +1,7 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"feedsystem/internal/dto"
@@ -12,6 +13,7 @@ import (
 	"io"
 	"log"
 	"mime/multipart"
+	"net/http"
 	"os"
 	"path"
 	"path/filepath"
@@ -22,6 +24,9 @@ import (
 
 const (
 	maxUploadSize = 100 << 20 // MaxUploadSize 最大上传文件大小，单位字节
+
+	// sniffLen http.DetectContentType 需要的最大嗅探字节数
+	sniffLen = 512
 )
 
 // 折中的耦合方案，后期解耦把部分用户信息写到video表里，配合mq做异步更新
@@ -80,23 +85,54 @@ func (s *VideoService) UploadVideo(ctx context.Context, userID uint, fh *multipa
 	}
 	defer srcFile.Close() // 注册延迟关闭文件句柄
 
+	// 以文件内容嗅探 MIME，避免仅依赖扩展名被伪造后缀绕过
+	mimeType, body, err := detectUploadMIME(srcFile)
+	if err != nil {
+		return "", fmt.Errorf("detect uploaded video type failed: %w", err)
+	}
+	if !strings.HasPrefix(mimeType, "video/") {
+		log.Printf("Invalid video content type in UploadVideo: %s", mimeType)
+		return "", fmt.Errorf("invalid file content type: %s", mimeType)
+	}
+
 	// 创建本地目标文件
 	dstFile, err := os.Create(absPath)
 	if err != nil {
 		return "", fmt.Errorf("create target file failed: %w", err)
 	}
-	defer dstFile.Close()
 
-	// 拷贝流写入磁盘
-	_, err = io.Copy(dstFile, srcFile)
-	if err != nil {
-		return "", fmt.Errorf("copy file content failed: %w", err)
+	// 拷贝流写入磁盘；失败时关闭并清理半截文件，避免残留
+	_, copyErr := io.Copy(dstFile, body)
+	closeErr := dstFile.Close()
+	if copyErr != nil {
+		if rmErr := os.Remove(absPath); rmErr != nil && !os.IsNotExist(rmErr) {
+			log.Printf("Failed to remove partial video file %s: %v", absPath, rmErr)
+		}
+		return "", fmt.Errorf("copy file content failed: %w", copyErr)
+	}
+	if closeErr != nil {
+		if rmErr := os.Remove(absPath); rmErr != nil && !os.IsNotExist(rmErr) {
+			log.Printf("Failed to remove incomplete video file %s: %v", absPath, rmErr)
+		}
+		return "", fmt.Errorf("close target file failed: %w", closeErr)
 	}
 
 	// 返回相对路径，供handler层拼接成http可访问URL
 	urlPath := path.Join("/upload", "videos", strconv.FormatUint(uint64(userID), 10), filename)
 
 	return urlPath, nil
+}
+
+// detectUploadMIME 读取文件头用于内容嗅探，并返回可继续读取完整内容的 Reader。
+// 调用方应基于嗅探结果做类型判断，而不是只看文件扩展名。
+func detectUploadMIME(src io.Reader) (string, io.Reader, error) {
+	head := make([]byte, sniffLen)
+	n, err := io.ReadFull(src, head)
+	if err != nil && err != io.ErrUnexpectedEOF && err != io.EOF {
+		return "", nil, fmt.Errorf("read upload header failed: %w", err)
+	}
+	head = head[:n]
+	return http.DetectContentType(head), io.MultiReader(bytes.NewReader(head), src), nil
 }
 
 // UploadCover 处理视频封面上传逻辑
@@ -142,17 +178,36 @@ func (s *VideoService) UploadCover(ctx context.Context, userID uint, fh *multipa
 	}
 	defer srcFile.Close() // 注册延迟关闭文件句柄
 
+	// 以文件内容嗅探 MIME，避免仅依赖扩展名被伪造后缀绕过
+	mimeType, body, err := detectUploadMIME(srcFile)
+	if err != nil {
+		return "", fmt.Errorf("detect uploaded cover type failed: %w", err)
+	}
+	if !strings.HasPrefix(mimeType, "image/") {
+		log.Printf("Invalid cover content type in UploadCover: %s", mimeType)
+		return "", fmt.Errorf("invalid file content type: %s", mimeType)
+	}
+
 	// 创建本地目标文件
 	dstFile, err := os.Create(absPath)
 	if err != nil {
 		return "", fmt.Errorf("create target file failed: %w", err)
 	}
-	defer dstFile.Close()
 
-	// 拷贝流写入磁盘
-	_, err = io.Copy(dstFile, srcFile)
-	if err != nil {
-		return "", fmt.Errorf("copy file content failed: %w", err)
+	// 拷贝流写入磁盘；失败时关闭并清理半截文件，避免残留
+	_, copyErr := io.Copy(dstFile, body)
+	closeErr := dstFile.Close()
+	if copyErr != nil {
+		if rmErr := os.Remove(absPath); rmErr != nil && !os.IsNotExist(rmErr) {
+			log.Printf("Failed to remove partial cover file %s: %v", absPath, rmErr)
+		}
+		return "", fmt.Errorf("copy file content failed: %w", copyErr)
+	}
+	if closeErr != nil {
+		if rmErr := os.Remove(absPath); rmErr != nil && !os.IsNotExist(rmErr) {
+			log.Printf("Failed to remove incomplete cover file %s: %v", absPath, rmErr)
+		}
+		return "", fmt.Errorf("close target file failed: %w", closeErr)
 	}
 
 	// 返回相对路径，供handler层拼接成http可访问URL
@@ -161,8 +216,39 @@ func (s *VideoService) UploadCover(ctx context.Context, userID uint, fh *multipa
 	return urlPath, nil
 }
 
+const (
+	maxVideoTags = 10 // 单条视频最多关联的标签数
+	maxTagLength = 64 // 单个标签最大字符数，与 video_tag.tag 字段长度一致
+)
+
+// normalizeVideoTags 清洗标签：去空白、去重、截断超长标签、限制标签总数。
+// 去重和限流属于业务规则，放在 service 层；repo 只负责写入。
+func normalizeVideoTags(tags []string) []string {
+	result := make([]string, 0, len(tags))
+	seen := make(map[string]struct{}, len(tags))
+
+	for _, tag := range tags {
+		tag = strings.TrimSpace(tag)
+		if tag == "" {
+			continue
+		}
+		if runes := []rune(tag); len(runes) > maxTagLength {
+			tag = string(runes[:maxTagLength])
+		}
+		if _, exists := seen[tag]; exists {
+			continue
+		}
+		seen[tag] = struct{}{}
+		result = append(result, tag)
+		if len(result) == maxVideoTags {
+			break
+		}
+	}
+	return result
+}
+
 // PublishVideo 处理视频发布逻辑
-func (s *VideoService) PublishVideo(ctx context.Context, userID uint, title, description, videoURL, coverURL string) (*dto.PublishVideoResponse, error) {
+func (s *VideoService) PublishVideo(ctx context.Context, userID uint, title, description, videoURL, coverURL string, tags []string) (*dto.PublishVideoResponse, error) {
 	// 验证输入参数
 	if title == "" || videoURL == "" || coverURL == "" {
 		log.Printf("Invalid input parameters in PublishVideo: title=%v, videoURL=%v, coverURL=%v", title, videoURL, coverURL)
@@ -183,8 +269,9 @@ func (s *VideoService) PublishVideo(ctx context.Context, userID uint, title, des
 		CoverURL:    coverURL,
 	}
 
-	// 保存视频信息到数据库
-	if err := s.VideoRepo.Create(ctx, video); err != nil {
+	// 保存视频信息及标签关联到数据库。标签写入与视频创建在同一事务内，
+	// 避免视频发布成功但标签丢失，导致标签流查不到该视频。
+	if err := s.VideoRepo.CreateWithTags(ctx, video, normalizeVideoTags(tags)); err != nil {
 		log.Printf("Failed to publish video in PublishVideo: %v", err)
 		return nil, fmt.Errorf("failed to publish video: %w", err)
 	}
@@ -394,18 +481,20 @@ func (s *VideoService) getDetail(ctx context.Context, vid uint) (*model.Video, e
 	return video, nil
 }
 
-// VideoList 获取视频列表
-func (s *VideoService) VideoList(ctx context.Context, authorID uint, uid uint, pageNum, pageSize int) (*dto.VideoListResponse, error) {
+// VideoList 获取视频列表，使用 (created_at, id) 复合游标分页。
+func (s *VideoService) VideoList(ctx context.Context, authorID uint, uid uint, cursor dto.FeedCursor, pageSize int) (*dto.VideoListResponse, error) {
 	// 参数保护，限制最大条数，防止恶意拉取大量数据
-	if pageSize > 20 {
+	if pageSize <= 0 || pageSize > 20 {
 		pageSize = 20
 	}
-	if pageNum < 1 {
-		pageNum = 1
+
+	lastCreatedAt, lastVid, _, err := parseTimeFeedCursor(cursor)
+	if err != nil {
+		return nil, err
 	}
 
 	// 查询视频列表
-	videos, total, err := s.VideoRepo.VideoList(ctx, authorID, pageNum, pageSize)
+	videos, total, err := s.VideoRepo.VideoList(ctx, authorID, lastCreatedAt, lastVid, pageSize)
 	if err != nil {
 		return nil, err
 	}
@@ -510,8 +599,17 @@ func (s *VideoService) VideoList(ctx context.Context, authorID uint, uid uint, p
 		}
 		itemList = append(itemList, item)
 	}
-	return &dto.VideoListResponse{
+	resp := &dto.VideoListResponse{
 		Total:  total,
 		Videos: itemList,
-	}, nil
+	}
+	// 只有取满一页才返回下一页游标，避免客户端多发一次空请求
+	if len(videos) == pageSize {
+		last := videos[len(videos)-1]
+		resp.NextCursor = &dto.FeedCursor{
+			LastVid:       strconv.FormatUint(uint64(last.ID), 10),
+			LastCreatedAt: last.CreatedAt,
+		}
+	}
+	return resp, nil
 }

@@ -40,7 +40,8 @@ type FeedListResp struct {
 // gin 的 query 绑定按字段自身的 form tag 取值，不会拼接嵌套结构体前缀，
 // 因此内层字段必须显式声明 cursor. 前缀，才能绑定 cursor.last_vid 等参数
 type FeedCursor struct {
-	LastVid        string    `json:"last_vid" form:"cursor.last_vid"`
+	LastVid        string    `json:"last_vid,omitempty" form:"cursor.last_vid"`
+	LastUid        string    `json:"last_uid,omitempty" form:"cursor.last_uid"` // 关注/粉丝列表使用，与 last_vid 语义一致，均为业务主键
 	LastPopularity int64     `json:"last_popularity" form:"cursor.last_popularity"`
 	LastCreatedAt  time.Time `json:"last_created_at" form:"cursor.last_created_at"`
 	LastLikesCount int64     `json:"last_likes_count" form:"cursor.last_likes_count"`

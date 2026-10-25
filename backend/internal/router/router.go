@@ -9,14 +9,33 @@ import (
 	"feedsystem/internal/service"
 	"feedsystem/internal/utils/response"
 	"log"
+	"net/http"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
 
+// maxRequestBodyBytes 全局请求体上限，略大于单个视频文件 100MB，预留 multipart 边界开销
+const maxRequestBodyBytes = 110 << 20
+
 func SetupRouter(sqlDB *gorm.DB, cache *cache.RedisCache, rmq *mq.RabbitMQ, authMiddleware *middleware.AuthMiddleware) *gin.Engine {
 	// 创建一个默认的Gin引擎
 	r := gin.Default()
+
+	// 全局请求体上限：Content-Length 超限直接拒绝，未知长度由 MaxBytesReader 在读取时截断兜底，
+	// 避免超大 multipart 表单在校验文件大小之前就落盘。
+	r.Use(func(c *gin.Context) {
+		if c.Request.ContentLength > maxRequestBodyBytes {
+			c.AbortWithStatusJSON(http.StatusRequestEntityTooLarge, response.Response{
+				Code:    http.StatusRequestEntityTooLarge,
+				Message: "request body too large",
+				Data:    nil,
+			})
+			return
+		}
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxRequestBodyBytes)
+		c.Next()
+	})
 
 	// 注册全局中间件
 	r.Use(middleware.Cors()) // 跨域中间件

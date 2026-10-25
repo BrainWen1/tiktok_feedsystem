@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log"
 	"strconv"
+	"time"
 )
 
 // VideoDetailer 只暴露 LikeService 需要的最小视频详情能力。
@@ -98,34 +99,59 @@ func (s *LikeService) IsLiked(ctx context.Context, uid, vid uint) (dto.IsLikedRe
 	return dto.IsLikedResponse{IsLiked: isLiked}, err
 }
 
-// ListLikedVideos 列出用户点赞过的视频
-func (s *LikeService) ListLikedVideos(ctx context.Context, targetUid uint, visitorUid, pageNum, pageSize uint) (*dto.VideoListResponse, error) {
+// ListLikedVideos 列出用户点赞过的视频，使用 (created_at, video_id) 复合游标分页。
+func (s *LikeService) ListLikedVideos(ctx context.Context, targetUid uint, visitorUid uint, cursor dto.FeedCursor, pageSize uint) (*dto.VideoListResponse, error) {
 	if s.videoDetailer == nil {
 		return nil, errors.New("video detail service is not initialized")
 	}
 
-	// 根据targetUid查询用户点赞过的vid列表
-	vids, total, err := s.likeRepo.FindVidsByUserID(ctx, targetUid, pageNum, pageSize)
+	if pageSize == 0 || pageSize > 30 {
+		pageSize = 20
+	}
+
+	lastVid, hasCursor, err := parseFeedCursorVid(cursor.LastVid)
+	if err != nil {
+		return nil, err
+	}
+	var lastCreatedAt time.Time
+	if hasCursor {
+		if cursor.LastCreatedAt.IsZero() {
+			return nil, errors.New("incomplete like cursor: last_created_at is required when last_vid is set")
+		}
+		lastCreatedAt = cursor.LastCreatedAt
+	}
+
+	// 根据 targetUid 查询用户点赞过的记录（含点赞时间，用于生成下一页游标）
+	likes, total, err := s.likeRepo.FindLikedVideoPage(ctx, targetUid, lastCreatedAt, lastVid, int(pageSize))
 	if err != nil {
 		return nil, err
 	}
 
 	// 根据vids查询视频详情，并组装返回结果
-	resList := make([]dto.VideoDetailResponse, 0, len(vids)) // 预分配容量，避免多次扩容
-	for _, vid := range vids {
-		videoDetail, err := s.videoDetailer.VideoDetail(ctx, vid, visitorUid)
+	resList := make([]dto.VideoDetailResponse, 0, len(likes)) // 预分配容量，避免多次扩容
+	for _, like := range likes {
+		videoDetail, err := s.videoDetailer.VideoDetail(ctx, like.VideoID, visitorUid)
 		if err != nil {
-			log.Printf("get video detail fail vid=%d", vid)
+			log.Printf("get video detail fail vid=%d", like.VideoID)
 			continue
 		}
 		// dto.VideoListResponse 里保存的是值类型，所以这里要解引用后再放入切片。
 		resList = append(resList, *videoDetail)
 	}
 
-	return &dto.VideoListResponse{
+	resp := &dto.VideoListResponse{
 		Videos: resList,
 		Total:  total,
-	}, nil
+	}
+	// 取满一页才返回下一页游标，游标使用最后一条点赞记录的时间 + video_id
+	if len(likes) == int(pageSize) {
+		last := likes[len(likes)-1]
+		resp.NextCursor = &dto.FeedCursor{
+			LastVid:       strconv.FormatUint(uint64(last.VideoID), 10),
+			LastCreatedAt: last.CreatedAt,
+		}
+	}
+	return resp, nil
 }
 
 // BatchGetIsLike 批量查询：loginUid 是否点赞 vidList 里的视频

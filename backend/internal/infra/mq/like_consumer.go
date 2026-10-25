@@ -4,18 +4,25 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"feedsystem/internal/infra/cache"
-	"feedsystem/internal/repo"
 	"fmt"
 	"log"
 	"strings"
+	"sync"
 	"time"
 
+	"feedsystem/internal/infra/cache"
+	"feedsystem/internal/repo"
+
+	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/redis/go-redis/v9"
 )
 
-// StartLikeConsumer 启动点赞消费，给worker调用
-func StartLikeConsumer(lmq *LikeMQ, likeRepo *repo.LikeRepo, redisCache *cache.RedisCache) error {
+// likeConsumerTag 点赞消费者标签，用于优雅退出时停止投递
+const likeConsumerTag = "like-consumer"
+
+// StartLikeConsumer 启动点赞消费，给worker调用。
+// ctx 取消后停止拉取新消息并等待在途消息处理完成；wg 用于通知调用方消费协程已退出。
+func StartLikeConsumer(ctx context.Context, lmq *LikeMQ, likeRepo *repo.LikeRepo, redisCache *cache.RedisCache, wg *sync.WaitGroup) error {
 	if !lmq.IsEnabled() {
 		log.Printf("WARN: LikeMQ disabled, skip like consumer")
 		return ErrMQDisabled // MQ禁用时不启动消费循环
@@ -29,6 +36,9 @@ func StartLikeConsumer(lmq *LikeMQ, likeRepo *repo.LikeRepo, redisCache *cache.R
 	if likeRepo == nil {
 		return errors.New("like repo is not initialized")
 	}
+	if wg == nil {
+		return errors.New("wait group is not initialized")
+	}
 
 	// 声明死信队列和绑定
 	ch := lmq.ch
@@ -37,112 +47,140 @@ func StartLikeConsumer(lmq *LikeMQ, likeRepo *repo.LikeRepo, redisCache *cache.R
 	}
 
 	// 开始消费点赞事件
-	msgs, err := ch.Consume(likeQueue, "", false, false, false, false, nil)
+	msgs, err := ch.Consume(likeQueue, likeConsumerTag, false, false, false, false, nil)
 	if err != nil {
 		return err
 	}
 
 	// 使用goroutine处理消息
+	wg.Add(1)
 	go func() {
-		for msg := range msgs {
-			// 设置一个超时上下文，避免消息处理时间过长导致阻塞
-			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-			defer cancel()
+		defer wg.Done()
 
-			log.Printf("received like event: %s", msg.Body)
-			var event LikeEvent
-			// 解析消息体为LikeEvent结构体s
-			if err := json.Unmarshal(msg.Body, &event); err != nil {
-				log.Println("parse like event failed:", err)
-				_ = msg.Ack(false) // 解析失败的消息直接ACK掉，避免无限重试
-				continue
+		// 消费者级上下文：与消费循环同生命周期，goroutine 退出时统一释放
+		consumerCtx, cancel := context.WithCancel(ctx)
+		defer cancel()
+		// 优雅退出时停止投递，避免关闭阶段继续拉取新消息
+		defer func() {
+			if err := ch.Cancel(likeConsumerTag, false); err != nil {
+				log.Printf("cancel like consumer failed: %v", err)
 			}
+		}()
 
-			// 引入Redis缓存消息ID，先检查是否已经处理过，没有的话再处理，处理完后将消息ID存入Redis，设置过期时间，避免重复消费
-			key := cache.LikeEventIDKey(event.EventID)
-			val, err := redisCache.Get(ctx, key)
-			if err != nil && err.Error() != "redis: nil" {
-				log.Printf("redis get error: %v", err)
-				_ = msg.Nack(false, true) // Redis异常，放回队列重试
-				continue
-			}
-			if val != "" {
-				// 如果Redis中存在该消息ID，说明已经处理过，直接ACK掉消息
-				log.Printf("like event already processed: %s", event.EventID)
-				_ = msg.Ack(false)
-				continue
-			}
-
-			// 根据事件类型调用相应的repo方法处理点赞或取消点赞
-			var consumeErr error
-			switch event.Action {
-			case "like":
-				consumeErr = likeRepo.CreateLike(ctx, event.UserID, event.VideoID)
-			case "unlike":
-				consumeErr = likeRepo.DeleteLike(ctx, event.UserID, event.VideoID)
-			default:
-				log.Printf("unknown like event action: %s", event.Action)
-				_ = msg.Ack(false) // 未知的事件类型直接ACK掉，避免无限重试
-				continue
-			}
-
-			if consumeErr != nil {
-				// 如果是数据库唯一键冲突（Duplicate entry / UNIQUE），说明这条点赞记录已存在，
-				// 这属于幂等场景，可以安全忽略并 ACK 掉消息，避免无意义重试。
-				// 不同数据库/驱动返回的错误字符串可能不同，这里做宽松字符串匹配。
-				errStr := consumeErr.Error()
-				if strings.Contains(errStr, "Duplicate entry") ||
-					strings.Contains(errStr, "duplicate key") ||
-					strings.Contains(errStr, "UNIQUE") {
-					log.Printf("like already exists, treat as success: user=%d video=%d, err=%v", event.UserID, event.VideoID, consumeErr)
-					_ = msg.Ack(false)
-
-					// 在这里尝试写入redis，即使第一次成功处理后redis写入失败，也可以在这里再次尝试写入，
-					// 避免后续所有重复消费全部缓存miss进入数据库
-					err = redisCache.Set(ctx, key, "1", cache.EventIDTTL) // 过期时间为24小时
-					if err != nil {
-						// 再次写入失败直接跳过，避免陷入死循环，后续重复消费会再次尝试写入redis
-						log.Printf("redis set error: %v", err)
-					}
-					// 重复消费说明该点赞已在库中，幂等重放一次缓存同步，修复首次消费可能漏写计数的问题
-					if err := syncLikeCaches(ctx, redisCache, likeRepo, event); err != nil {
-						log.Printf("sync like cache on duplicate failed: %v", err)
-					}
-
-					continue
+		for {
+			select {
+			case <-consumerCtx.Done():
+				log.Println("like consumer stopped")
+				return
+			case msg, ok := <-msgs:
+				if !ok {
+					log.Println("like consumer delivery channel closed")
+					return
 				}
-
-				// 永久错误：视频不存在或用户不存在，直接丢弃消息到死信队列
-				if strings.Contains(errStr, "video not found") || strings.Contains(errStr, "user not exist") {
-					log.Printf("permanent error, drop to DLX: %v", consumeErr)
-					_ = msg.Nack(false, false) //不再放回原队列，进入死信队列
-					continue
-				}
-				// 临时故障：数据库抖动、锁超时，放回队列重试
-				log.Printf("consume %s failed, retry, err=%v", event.Action, consumeErr)
-				_ = msg.Nack(false, true)
-
-				continue
+				handleLikeMessage(consumerCtx, ch, msg, likeRepo, redisCache)
 			}
-
-			// 成功处理后，将消息ID存入Redis，设置过期时间，避免重复消费
-			if err := redisCache.Set(ctx, key, "1", cache.EventIDTTL); err != nil {
-				// Redis异常，但数据库操作已经成功；继续同步缓存视图，最后仍 ACK 避免重复消费
-				log.Printf("redis set event id error: %v", err)
-			}
-
-			// 同步缓存视图：用户点赞集合、视频点赞明细 ZSet、视频点赞热度榜单 ZSet。
-			// 缓存失败不影响数据库已成功的结论，只记录日志，避免消息因缓存问题堆积。
-			if err := syncLikeCaches(ctx, redisCache, likeRepo, event); err != nil {
-				log.Printf("sync like cache failed: %v", err)
-			}
-
-			_ = msg.Ack(false) // 成功处理后 ACK 掉消息
 		}
 	}()
 
 	log.Println("like consumer running...")
 	return nil
+}
+
+// handleLikeMessage 处理单条点赞事件。
+// 每条消息使用独立的 2s 超时上下文；WithoutCancel 保证优雅关闭时不中断在途处理。
+func handleLikeMessage(parent context.Context, ch *amqp.Channel, msg amqp.Delivery, likeRepo *repo.LikeRepo, redisCache *cache.RedisCache) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), 2*time.Second)
+	defer cancel()
+
+	log.Printf("received like event: %s", msg.Body)
+	var event LikeEvent
+	// 解析消息体为LikeEvent结构体s
+	if err := json.Unmarshal(msg.Body, &event); err != nil {
+		log.Println("parse like event failed:", err)
+		_ = msg.Ack(false) // 解析失败的消息直接ACK掉，避免无限重试
+		return
+	}
+
+	// 引入Redis缓存消息ID，先检查是否已经处理过，没有的话再处理，处理完后将消息ID存入Redis，设置过期时间，避免重复消费
+	key := cache.LikeEventIDKey(event.EventID)
+	val, err := redisCache.Get(ctx, key)
+	if err != nil && err.Error() != "redis: nil" {
+		log.Printf("redis get error: %v", err)
+		RetryOrDeadLetter(ch, msg, err) // Redis异常，退避重试，超过上限转死信
+		return
+	}
+	if val != "" {
+		// 如果Redis中存在该消息ID，说明已经处理过，直接ACK掉消息
+		log.Printf("like event already processed: %s", event.EventID)
+		_ = msg.Ack(false)
+		return
+	}
+
+	// 根据事件类型调用相应的repo方法处理点赞或取消点赞
+	var consumeErr error
+	switch event.Action {
+	case "like":
+		consumeErr = likeRepo.CreateLike(ctx, event.UserID, event.VideoID)
+	case "unlike":
+		consumeErr = likeRepo.DeleteLike(ctx, event.UserID, event.VideoID)
+	default:
+		log.Printf("unknown like event action: %s", event.Action)
+		_ = msg.Ack(false) // 未知的事件类型直接ACK掉，避免无限重试
+		return
+	}
+
+	if consumeErr != nil {
+		// 如果是数据库唯一键冲突（Duplicate entry / UNIQUE），说明这条点赞记录已存在，
+		// 这属于幂等场景，可以安全忽略并 ACK 掉消息，避免无意义重试。
+		// 不同数据库/驱动返回的错误字符串可能不同，这里做宽松字符串匹配。
+		errStr := consumeErr.Error()
+		if strings.Contains(errStr, "Duplicate entry") ||
+			strings.Contains(errStr, "duplicate key") ||
+			strings.Contains(errStr, "UNIQUE") {
+			log.Printf("like already exists, treat as success: user=%d video=%d, err=%v", event.UserID, event.VideoID, consumeErr)
+			_ = msg.Ack(false)
+
+			// 在这里尝试写入redis，即使第一次成功处理后redis写入失败，也可以在这里再次尝试写入，
+			// 避免后续所有重复消费全部缓存miss进入数据库
+			err = redisCache.Set(ctx, key, "1", cache.EventIDTTL) // 过期时间为24小时
+			if err != nil {
+				// 再次写入失败直接跳过，避免陷入死循环，后续重复消费会再次尝试写入redis
+				log.Printf("redis set error: %v", err)
+			}
+			// 重复消费说明该点赞已在库中，幂等重放一次缓存同步，修复首次消费可能漏写计数的问题
+			if err := syncLikeCaches(ctx, redisCache, likeRepo, event); err != nil {
+				log.Printf("sync like cache on duplicate failed: %v", err)
+			}
+
+			return
+		}
+
+		// 永久错误：视频不存在或用户不存在，直接丢弃消息到死信队列
+		if strings.Contains(errStr, "video not found") || strings.Contains(errStr, "user not exist") {
+			log.Printf("permanent error, drop to DLX: %v", consumeErr)
+			_ = msg.Nack(false, false) //不再放回原队列，进入死信队列
+			return
+		}
+		// 临时故障：数据库抖动、锁超时，退避重试，超过上限转死信
+		log.Printf("consume %s failed, retry, err=%v", event.Action, consumeErr)
+		RetryOrDeadLetter(ch, msg, consumeErr)
+
+		return
+	}
+
+	// 成功处理后，将消息ID存入Redis，设置过期时间，避免重复消费
+	if err := redisCache.Set(ctx, key, "1", cache.EventIDTTL); err != nil {
+		// Redis异常，但数据库操作已经成功；继续同步缓存视图，最后仍 ACK 避免重复消费
+		log.Printf("redis set event id error: %v", err)
+	}
+
+	// 同步缓存视图：用户点赞集合、视频点赞明细 ZSet、视频点赞热度榜单 ZSet。
+	// 缓存失败不影响数据库已成功的结论，只记录日志，避免消息因缓存问题堆积。
+	if err := syncLikeCaches(ctx, redisCache, likeRepo, event); err != nil {
+		log.Printf("sync like cache failed: %v", err)
+	}
+
+	_ = msg.Ack(false) // 成功处理后 ACK 掉消息
 }
 
 // syncLikeCaches 把数据库已落库的点赞状态同步到 Redis：

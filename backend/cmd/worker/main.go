@@ -1,51 +1,69 @@
 package main
 
 import (
+	"context"
+	"fmt"
+	"log"
+	"os/signal"
+	"sync"
+	"syscall"
+	"time"
+
 	"feedsystem/internal/config"
 	"feedsystem/internal/infra/cache"
 	"feedsystem/internal/infra/database"
 	"feedsystem/internal/infra/mq"
 	"feedsystem/internal/model"
 	"feedsystem/internal/repo"
-	"log"
 
 	"github.com/joho/godotenv"
 )
 
+// shutdownTimeout 等待在途消费任务完成的最长时间
+const shutdownTimeout = 5 * time.Second
+
 func main() {
+	// run 返回后再 Fatal，保证 run 内注册的 defer（关闭 DB/Redis/MQ）一定执行
+	if err := run(); err != nil {
+		log.Fatalf("Worker exit: %v", err)
+	}
+}
+
+func run() error {
 	// 加载 .env（本地开发）
 	if err := godotenv.Load(); err != nil {
 		log.Println(".env not found; continuing")
 	}
 
 	// 加载配置
-	err := config.LoadConfig()
-	if err != nil {
-		log.Fatalf("Failed to load config: %v", err)
+	if err := config.LoadConfig(); err != nil {
+		return fmt.Errorf("load config: %w", err)
 	}
 
 	// 使用配置连接数据库服务
 	db, err := database.ConnectDB(config.AppConfig.DB_dsn)
 	if err != nil {
-		log.Fatalf("Failed to connect to database: %v", err)
+		return fmt.Errorf("connect database: %w", err)
 	}
 
-	database.AutoMigrate(db, &model.User{}, &model.Video{}, &model.Like{}, &model.Comment{}, &model.Social{}) // 自动迁移数据库表结构
+	database.AutoMigrate(db, &model.User{}, &model.Video{}, &model.Like{}, &model.Comment{}, &model.Social{}, &model.VideoTag{}) // 自动迁移数据库表结构
 
 	defer database.CloseDB() // 注册关闭数据库连接的延迟调用
 
 	// 初始化MQ
 	rmq, err := mq.NewRabbitMQ()
 	if err != nil {
-		log.Fatalf("Failed to initialize RabbitMQ: %v", err)
+		return fmt.Errorf("initialize RabbitMQ: %w", err)
 	}
+	defer rmq.Close() // 退出时释放MQ连接
+
 	likeMQ, err := mq.NewLikeMQ(rmq)
 	if err != nil {
-		log.Fatalf("Failed to initialize LikeMQ: %v", err)
+		return fmt.Errorf("initialize LikeMQ: %w", err)
 	}
 	commentMQ, err := mq.NewCommentMQ(rmq)
 	if err != nil {
-		log.Fatalf("Failed to initialize CommentMQ: %v", err)
+		return fmt.Errorf("initialize CommentMQ: %w", err)
 	}
 
 	// 初始化仓库
@@ -53,23 +71,52 @@ func main() {
 	commentRepo := repo.NewCommentRepo(db)
 
 	// 初始化Redis缓存
-	cache := cache.NewRedisCache(config.AppConfig.Redis_addr, config.AppConfig.Redis_password, config.AppConfig.Redis_db)
-	if cache == nil {
-		log.Fatalf("Failed to initialize Redis cache")
+	redisCache := cache.NewRedisCache(config.AppConfig.Redis_addr, config.AppConfig.Redis_password, config.AppConfig.Redis_db)
+	defer redisCache.Close() // 退出时释放Redis连接
+
+	// worker 强依赖 Redis 做消费幂等与缓存同步，启动前必须校验连通性，
+	// 否则消费者会在 Redis 故障期间反复重试，无法正常消费。
+	pingCtx, pingCancel := context.WithTimeout(context.Background(), 3*time.Second)
+	err = redisCache.Ping(pingCtx)
+	pingCancel()
+	if err != nil {
+		return fmt.Errorf("redis unavailable: %w", err)
 	}
+	log.Println("Redis connected")
+
+	// 信号监听：SIGINT/SIGTERM 触发优雅退出
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	// 等待点赞、评论消费协程退出
+	var wg sync.WaitGroup
 
 	// 启动点赞消费
-	err = mq.StartLikeConsumer(likeMQ, likeRepo, cache)
-	if err != nil {
-		log.Fatalf("Failed to start like consumer: %v", err)
+	if err := mq.StartLikeConsumer(ctx, likeMQ, likeRepo, redisCache, &wg); err != nil {
+		return fmt.Errorf("start like consumer: %w", err)
 	}
 
 	// 启动评论消费
-	err = mq.StartCommentConsumer(commentMQ, commentRepo, cache)
-	if err != nil {
-		log.Fatalf("Failed to start comment consumer: %v", err)
+	if err := mq.StartCommentConsumer(ctx, commentMQ, commentRepo, redisCache, &wg); err != nil {
+		return fmt.Errorf("start comment consumer: %w", err)
 	}
 
 	log.Println("Worker is running for like and comment events...")
-	select {} // 阻塞主线程，保持worker运行
+	<-ctx.Done()
+	log.Println("Shutdown signal received, stopping consumers...")
+
+	// 等待在途消息处理完成，超时后强制退出
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		log.Println("Consumers stopped gracefully")
+	case <-time.After(shutdownTimeout):
+		log.Println("WARN: consumer shutdown timed out")
+	}
+	// run 返回后按 LIFO 顺序执行 defer：关闭 MQ -> Redis -> DB
+	return nil
 }
