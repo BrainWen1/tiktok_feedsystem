@@ -93,12 +93,12 @@ func main() {
 	// RabbitMQ
 	rmq, err := mq.NewRabbitMQ()
 	if err != nil {
-		log.Printf("RabbitMQ config error (disabled): %v", err)
-		rmq = nil
+		// MQ不可用时降级运行：NewRabbitMQ已返回禁用的合法实例，投递由service层回退数据库
+		log.Printf("WARN: RabbitMQ unavailable, mq disabled, service continues: %v", err)
 	} else {
-		defer rmq.Close()
 		log.Printf("RabbitMQ connected")
 	}
+	defer rmq.Close() // 禁用实例的Close为空操作，统一延迟关闭
 
 	// 初始化中间件
 	authMiddleware := middleware.NewAuthMiddleware(cache)

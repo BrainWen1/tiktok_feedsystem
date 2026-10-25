@@ -22,7 +22,11 @@ const (
 
 // StartLikeConsumer 启动点赞消费，给worker调用
 func StartLikeConsumer(lmq *LikeMQ, likeRepo *repo.LikeRepo, cache *cache.RedisCache) error {
-	if lmq == nil || lmq.ch == nil {
+	if !lmq.IsEnabled() {
+		log.Printf("WARN: LikeMQ disabled, skip like consumer")
+		return ErrMQDisabled // MQ禁用时不启动消费循环
+	}
+	if lmq.ch == nil {
 		return errors.New("like mq is not initialized")
 	}
 	if cache == nil {

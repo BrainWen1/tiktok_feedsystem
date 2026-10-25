@@ -5,13 +5,34 @@ import (
 	"errors"
 	"feedsystem/internal/model"
 	"log"
+	"sync/atomic"
 	"time"
 
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
 type CommentMQ struct {
-	ch *amqp.Channel // AMQP Channel，用于与RabbitMQ进行通信
+	ch      *amqp.Channel // AMQP Channel，用于与RabbitMQ进行通信
+	enabled atomic.Bool   // MQ是否可用；禁用时投递入口直接短路
+}
+
+// IsEnabled 返回CommentMQ是否可用，nil实例视为不可用
+func (c *CommentMQ) IsEnabled() bool {
+	return c != nil && c.enabled.Load()
+}
+
+// Enable 启用CommentMQ
+func (c *CommentMQ) Enable() {
+	if c != nil {
+		c.enabled.Store(true)
+	}
+}
+
+// Disable 禁用CommentMQ，后续投递全部跳过
+func (c *CommentMQ) Disable() {
+	if c != nil {
+		c.enabled.Store(false)
+	}
 }
 
 const (
@@ -31,26 +52,33 @@ type CommentEvent struct {
 	OccurredAt time.Time      `json:"occurred_at"`
 }
 
+// NewCommentMQ 创建CommentMQ；初始化失败时返回已禁用的合法实例而非nil
 func NewCommentMQ(base *RabbitMQ) (*CommentMQ, error) {
-	if base == nil {
-		log.Println("RabbitMQ base is nil, cannot create CommentMQ")
-		return nil, errors.New("rabbitmq base is nil")
+	c := &CommentMQ{}
+	if base == nil || !base.IsEnabled() {
+		log.Printf("WARN: RabbitMQ disabled, CommentMQ disabled")
+		c.Disable()
+		return c, ErrMQDisabled
 	}
 
 	// 创建一个新的 channel
 	ch, err := base.NewChannel()
 	if err != nil {
-		log.Printf("Failed to create channel for CommentMQ: %v", err)
-		return nil, err
+		log.Printf("ERROR: failed to create channel for CommentMQ, CommentMQ disabled: %v", err)
+		c.Disable()
+		return c, err
 	}
 	// 声明交换机和队列，并绑定它们
 	if err := DeclareTopic(ch, commentExchange, commentQueue, commentBindingKey); err != nil {
 		ch.Close()
-		log.Printf("Failed to declare exchange/queue for CommentMQ: %v", err)
-		return nil, err
+		log.Printf("ERROR: failed to declare exchange/queue for CommentMQ, CommentMQ disabled: %v", err)
+		c.Disable()
+		return c, err
 	}
 
-	return &CommentMQ{ch: ch}, nil
+	c.ch = ch
+	c.Enable()
+	return c, nil
 }
 
 // PublishComment 发布创建评论事件到 RabbitMQ
@@ -65,7 +93,10 @@ func (c *CommentMQ) DeleteComment(ctx context.Context, comment *model.Comment) e
 
 // publish 发布评论事件到 RabbitMQ
 func (c *CommentMQ) publish(ctx context.Context, action, routingKey string, comment *model.Comment) error {
-	if c == nil || c.ch == nil {
+	if !c.IsEnabled() {
+		return ErrMQDisabled // MQ已禁用，跳过投递，由service层降级写数据库
+	}
+	if c.ch == nil {
 		return errors.New("comment mq is not initialized")
 	}
 	if comment == nil {

@@ -4,13 +4,34 @@ import (
 	"context"
 	"errors"
 	"log"
+	"sync/atomic"
 	"time"
 
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
 type LikeMQ struct {
-	ch *amqp.Channel // AMQP Channel，用于与RabbitMQ进行通信
+	ch      *amqp.Channel // AMQP Channel，用于与RabbitMQ进行通信
+	enabled atomic.Bool   // MQ是否可用；禁用时投递入口直接短路
+}
+
+// IsEnabled 返回LikeMQ是否可用，nil实例视为不可用
+func (l *LikeMQ) IsEnabled() bool {
+	return l != nil && l.enabled.Load()
+}
+
+// Enable 启用LikeMQ
+func (l *LikeMQ) Enable() {
+	if l != nil {
+		l.enabled.Store(true)
+	}
+}
+
+// Disable 禁用LikeMQ，后续投递全部跳过
+func (l *LikeMQ) Disable() {
+	if l != nil {
+		l.enabled.Store(false)
+	}
 }
 
 const (
@@ -31,26 +52,33 @@ type LikeEvent struct {
 	OccurredAt time.Time `json:"occurred_at"`
 }
 
+// NewLikeMQ 创建LikeMQ；初始化失败时返回已禁用的合法实例而非nil
 func NewLikeMQ(base *RabbitMQ) (*LikeMQ, error) {
-	if base == nil {
-		log.Println("RabbitMQ base is nil, cannot create LikeMQ")
-		return nil, errors.New("rabbitmq base is nil")
+	l := &LikeMQ{}
+	if base == nil || !base.IsEnabled() {
+		log.Printf("WARN: RabbitMQ disabled, LikeMQ disabled")
+		l.Disable()
+		return l, ErrMQDisabled
 	}
 
 	// 创建一个新的 channel
 	ch, err := base.NewChannel()
 	if err != nil {
-		log.Printf("Failed to create channel for LikeMQ: %v", err)
-		return nil, err
+		log.Printf("ERROR: failed to create channel for LikeMQ, LikeMQ disabled: %v", err)
+		l.Disable()
+		return l, err
 	}
 	// 声明交换机和队列，并绑定它们
 	if err := DeclareTopic(ch, likeExchange, likeQueue, likeBindingKey); err != nil {
 		ch.Close()
-		log.Printf("Failed to declare exchange/queue for LikeMQ: %v", err)
-		return nil, err
+		log.Printf("ERROR: failed to declare exchange/queue for LikeMQ, LikeMQ disabled: %v", err)
+		l.Disable()
+		return l, err
 	}
 
-	return &LikeMQ{ch: ch}, nil
+	l.ch = ch
+	l.Enable()
+	return l, nil
 }
 
 // Like 发布点赞事件到 RabbitMQ
@@ -65,7 +93,10 @@ func (l *LikeMQ) Unlike(ctx context.Context, userID, videoID uint) error {
 
 // publish 发布点赞或取消点赞事件到 RabbitMQ
 func (l *LikeMQ) publish(ctx context.Context, action, routingKey string, userID, videoID uint) error {
-	if l == nil || l.ch == nil {
+	if !l.IsEnabled() {
+		return ErrMQDisabled // MQ已禁用，跳过投递，由service层降级写数据库
+	}
+	if l.ch == nil {
 		return errors.New("like mq is not initialized")
 	}
 	if userID == 0 || videoID == 0 {

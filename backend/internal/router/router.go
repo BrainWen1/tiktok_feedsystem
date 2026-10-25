@@ -33,8 +33,8 @@ func SetupRouter(sqlDB *gorm.DB, cache *cache.RedisCache, rmq *mq.RabbitMQ, auth
 	// Like
 	likeMQ, err := mq.NewLikeMQ(rmq)
 	if err != nil {
-		log.Printf("Failed to initialize LikeMQ: %v", err)
-		return nil
+		// MQ降级：保留已禁用的合法实例，点赞投递由service层回退数据库
+		log.Printf("WARN: LikeMQ disabled, like events fallback to database: %v", err)
 	}
 	likeRepo := repo.NewLikeRepo(sqlDB)
 	likeService := service.NewLikeService(likeRepo, likeMQ, userService, cache)
@@ -48,8 +48,8 @@ func SetupRouter(sqlDB *gorm.DB, cache *cache.RedisCache, rmq *mq.RabbitMQ, auth
 	// Comment
 	commentMQ, err := mq.NewCommentMQ(rmq)
 	if err != nil {
-		log.Printf("Failed to initialize CommentMQ: %v", err)
-		return nil
+		// MQ降级：保留已禁用的合法实例，评论投递由service层回退数据库
+		log.Printf("WARN: CommentMQ disabled, comment events fallback to database: %v", err)
 	}
 	commentRepo := repo.NewCommentRepo(sqlDB)
 	commentService := service.NewCommentService(commentRepo, commentMQ, cache, likeService, videoService)

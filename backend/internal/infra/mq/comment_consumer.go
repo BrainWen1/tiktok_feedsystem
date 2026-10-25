@@ -14,7 +14,11 @@ import (
 
 // StartCommentConsumer 启动评论消费，给worker调用
 func StartCommentConsumer(cmq *CommentMQ, commentRepo *repo.CommentRepo, cache *cache.RedisCache) error {
-	if cmq == nil || cmq.ch == nil {
+	if !cmq.IsEnabled() {
+		log.Printf("WARN: CommentMQ disabled, skip comment consumer")
+		return ErrMQDisabled // MQ禁用时不启动消费循环
+	}
+	if cmq.ch == nil {
 		return errors.New("comment mq is not initialized")
 	}
 	if commentRepo == nil {

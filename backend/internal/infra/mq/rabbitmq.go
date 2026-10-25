@@ -9,17 +9,41 @@ import (
 	"feedsystem/internal/config"
 	"log"
 	"strconv"
+	"sync/atomic"
 	"time"
 
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
+// ErrMQDisabled MQ已禁用时的降级错误，调用方据此走数据库兜底
+var ErrMQDisabled = errors.New("mq is disabled")
+
 // RabbitMQ 只管理 Connection，Channel 由各组件按需创建
 type RabbitMQ struct {
-	Conn *amqp.Connection
+	Conn    *amqp.Connection
+	enabled atomic.Bool // MQ是否可用；连接失败时禁用，投递/消费入口直接短路
 }
 
-// NewRabbitMQ 创建一个新的 RabbitMQ 连接实例
+// IsEnabled 返回MQ组件是否可用，nil实例视为不可用
+func (r *RabbitMQ) IsEnabled() bool {
+	return r != nil && r.enabled.Load()
+}
+
+// Enable 启用MQ
+func (r *RabbitMQ) Enable() {
+	if r != nil {
+		r.enabled.Store(true)
+	}
+}
+
+// Disable 禁用MQ，后续投递/消费全部跳过
+func (r *RabbitMQ) Disable() {
+	if r != nil {
+		r.enabled.Store(false)
+	}
+}
+
+// NewRabbitMQ 创建一个新的 RabbitMQ 连接实例；连接失败时返回已禁用的合法实例而非nil
 func NewRabbitMQ() (*RabbitMQ, error) {
 	// 从全局配置中获取 RabbitMQ 连接信息
 	cfg := &config.AppConfig
@@ -27,12 +51,18 @@ func NewRabbitMQ() (*RabbitMQ, error) {
 	url := "amqp://" + cfg.MQ_Username + ":" + cfg.MQ_Password + "@" + cfg.MQ_Host + ":" + strconv.Itoa(cfg.MQ_Port) + "/"
 	// 屏蔽敏感信息，防止日志泄露：不打印含账号密码的AMQP URL
 	log.Printf("Connecting to RabbitMQ: %s:%d", cfg.MQ_Host, cfg.MQ_Port)
+
+	r := &RabbitMQ{}
+	r.Enable() // 默认启用，连接失败后再禁用
 	// 建立连接
 	conn, err := amqp.Dial(url)
 	if err != nil {
-		return nil, err
+		log.Printf("ERROR: RabbitMQ connect failed, mq disabled: %v", err)
+		r.Disable()
+		return r, err // 返回禁用实例，调用方可继续启动服务
 	}
-	return &RabbitMQ{Conn: conn}, nil
+	r.Conn = conn
+	return r, nil
 }
 
 // Close 关闭 RabbitMQ 连接
@@ -48,7 +78,10 @@ func (r *RabbitMQ) Close() error {
 
 // NewChannel 创建一个新的 AMQP Channel
 func (r *RabbitMQ) NewChannel() (*amqp.Channel, error) {
-	if r == nil || r.Conn == nil {
+	if !r.IsEnabled() {
+		return nil, ErrMQDisabled // MQ已禁用，不发起channel创建
+	}
+	if r.Conn == nil {
 		return nil, errors.New("rabbitmq connection is not initialized")
 	}
 	return r.Conn.Channel()
