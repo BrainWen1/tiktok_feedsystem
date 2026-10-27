@@ -23,7 +23,7 @@ func (h *SocialHandler) Follow(c *gin.Context) {
 	// 解析请求参数
 	var req dto.FollowRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		logger.Warn("bind social request failed", logger.Err(err))
+		logger.Ctx(c.Request.Context()).Warn("bind social request failed", logger.Err(err))
 		response.FailResponse(c, "请求参数错误")
 		return
 	}
@@ -36,7 +36,7 @@ func (h *SocialHandler) Follow(c *gin.Context) {
 
 	// 调用服务层的Follow方法
 	if err := h.SocialService.Follow(c.Request.Context(), userID, req.BloggerID); err != nil {
-		logger.Error("follow blogger failed", logger.Uint("user_id", userID), logger.Uint("blogger_id", req.BloggerID), logger.Err(err))
+		logger.Ctx(c.Request.Context()).Error("follow blogger failed", logger.Uint("user_id", userID), logger.Uint("blogger_id", req.BloggerID), logger.Err(err))
 		response.FailResponse(c, "关注失败")
 		return
 	}
@@ -49,7 +49,7 @@ func (h *SocialHandler) Unfollow(c *gin.Context) {
 	// 解析请求参数
 	var req dto.UnfollowRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		logger.Warn("bind social request failed", logger.Err(err))
+		logger.Ctx(c.Request.Context()).Warn("bind social request failed", logger.Err(err))
 		response.FailResponse(c, "请求参数错误")
 		return
 	}
@@ -62,7 +62,7 @@ func (h *SocialHandler) Unfollow(c *gin.Context) {
 
 	// 调用服务层的Unfollow方法
 	if err := h.SocialService.Unfollow(c.Request.Context(), userID, req.BloggerID); err != nil {
-		logger.Error("unfollow blogger failed", logger.Uint("user_id", userID), logger.Uint("blogger_id", req.BloggerID), logger.Err(err))
+		logger.Ctx(c.Request.Context()).Error("unfollow blogger failed", logger.Uint("user_id", userID), logger.Uint("blogger_id", req.BloggerID), logger.Err(err))
 		response.FailResponse(c, "取消关注失败")
 		return
 	}
@@ -89,7 +89,7 @@ func (h *SocialHandler) GetBloggers(c *gin.Context) {
 	// 调用服务层的GetBloggers方法
 	bloggers, total, nextCursor, err := h.SocialService.GetBloggers(c.Request.Context(), getBloggersReq.UserID, loginUserID, cursor, getBloggersReq.PageSize)
 	if err != nil {
-		logger.Error("get bloggers failed", logger.Uint("target_user_id", getBloggersReq.UserID), logger.Err(err))
+		logger.Ctx(c.Request.Context()).Error("get bloggers failed", logger.Uint("target_user_id", getBloggersReq.UserID), logger.Err(err))
 		response.FailResponse(c, "获取关注列表失败")
 		return
 	}
@@ -116,7 +116,7 @@ func (h *SocialHandler) GetFollowers(c *gin.Context) {
 	// 调用服务层的GetFollowers方法
 	followers, total, nextCursor, err := h.SocialService.GetFollowers(c.Request.Context(), getFollowersReq.UserID, loginUserID, cursor, getFollowersReq.PageSize)
 	if err != nil {
-		logger.Error("get followers failed", logger.Uint("target_user_id", getFollowersReq.UserID), logger.Err(err))
+		logger.Ctx(c.Request.Context()).Error("get followers failed", logger.Uint("target_user_id", getFollowersReq.UserID), logger.Err(err))
 		response.FailResponse(c, "获取粉丝列表失败")
 		return
 	}
@@ -141,7 +141,7 @@ func (h *SocialHandler) IsFollow(c *gin.Context) {
 	// 调用服务层的IsFollow方法
 	isFollow, isFan, err := h.SocialService.IsFollow(c.Request.Context(), userID, uint(req.TargetID))
 	if err != nil {
-		logger.Error("check follow status failed", logger.Uint("user_id", userID), logger.Uint("target_user_id", req.TargetID), logger.Err(err))
+		logger.Ctx(c.Request.Context()).Error("check follow status failed", logger.Uint("user_id", userID), logger.Uint("target_user_id", req.TargetID), logger.Err(err))
 		response.FailResponse(c, "获取关注关系失败")
 		return
 	}
@@ -163,7 +163,7 @@ func (h *SocialHandler) GetCounts(c *gin.Context) {
 	// 调用服务层的GetCounts方法
 	followCount, fanCount, err := h.SocialService.GetCounts(c.Request.Context(), req.TargetID)
 	if err != nil {
-		logger.Error("get social counts failed", logger.Uint("target_user_id", req.TargetID), logger.Err(err))
+		logger.Ctx(c.Request.Context()).Error("get social counts failed", logger.Uint("target_user_id", req.TargetID), logger.Err(err))
 		response.FailResponse(c, "获取关注数量失败")
 		return
 	}

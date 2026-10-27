@@ -150,7 +150,7 @@ func (s *UserService) Register(ctx context.Context, username, password string) (
 	}
 	err = s.UserRepo.Register(ctx, user)
 	if err != nil {
-		logger.Error("register user failed", logger.Err(err))
+		logger.Ctx(ctx).Error("register user failed", logger.Err(err))
 		return nil, fmt.Errorf("register user: %w", err)
 	}
 	return user, nil
@@ -167,7 +167,7 @@ func (s *UserService) Login(ctx context.Context, username, password string) (acc
 	user, err := s.UserRepo.FindByUsername(ctx, username)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			logger.Warn("login failed: user not found")
+			logger.Ctx(ctx).Warn("login failed: user not found")
 			return "", "", ErrInvalidCredentials
 		}
 		return "", "", fmt.Errorf("find user for login: %w", err)
@@ -175,7 +175,7 @@ func (s *UserService) Login(ctx context.Context, username, password string) (acc
 
 	// 验证密码：失败时返回与账号不存在完全一致的错误
 	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(password)); err != nil {
-		logger.Warn("login failed: invalid password")
+		logger.Ctx(ctx).Warn("login failed: invalid password")
 		return "", "", ErrInvalidCredentials
 	}
 
@@ -192,7 +192,7 @@ func (s *UserService) Login(ctx context.Context, username, password string) (acc
 
 	// 缓存禁用时无法持久化refresh token，仅返回令牌，不阻断登录主流程
 	if !s.cache.IsEnabled() {
-		logger.Warn("cache disabled, refresh token not persisted", logger.Uint("user_id", user.ID))
+		logger.Ctx(ctx).Warn("cache disabled, refresh token not persisted", logger.Uint("user_id", user.ID))
 		return accessToken, refreshToken, nil
 	}
 
@@ -202,13 +202,13 @@ func (s *UserService) Login(ctx context.Context, username, password string) (acc
 	ttl := cache.RefreshTokenTTL
 	err = s.cache.Set(ctx, redisKey, user.ID, ttl)
 	if err != nil {
-		logger.Error("save refresh token to redis failed", logger.Err(err))
+		logger.Ctx(ctx).Error("save refresh token to redis failed", logger.Err(err))
 		return "", "", fmt.Errorf("save refresh token to redis failed: %w", err)
 	}
 	// 双向索引<userID, refreshToken>
 	if setErr := s.cache.AddUserRefreshSet(ctx, user.ID, refreshToken, ttl); setErr != nil {
 		// 捕获内部真实错误，避免打印外层通常为 nil 的 err 导致日志误导
-		logger.Error("add refresh token to user set failed", logger.Uint("user_id", user.ID), logger.Err(setErr))
+		logger.Ctx(ctx).Error("add refresh token to user set failed", logger.Uint("user_id", user.ID), logger.Err(setErr))
 		return "", "", fmt.Errorf("add refresh token to user set failed: %w", setErr)
 	}
 
@@ -222,7 +222,7 @@ func (s *UserService) RefreshToken(ctx context.Context, refreshToken string, old
 	}
 	// refresh token仅存储于Redis，缓存禁用时无法校验，返回明确错误而不是误判为令牌失效
 	if !s.cache.IsEnabled() {
-		logger.Error("cache disabled, cannot validate refresh token")
+		logger.Ctx(ctx).Error("cache disabled, cannot validate refresh token")
 		return "", "", 0, "", ErrRefreshTokenUnavailable
 	}
 
@@ -235,12 +235,12 @@ func (s *UserService) RefreshToken(ctx context.Context, refreshToken string, old
 			return "", "", 0, "", fmt.Errorf("%w: token not found", ErrInvalidRefreshToken)
 		}
 		// Redis故障不能当成token失效，避免把服务异常误报为401
-		logger.Error("get refresh token from redis failed", logger.Err(err))
+		logger.Ctx(ctx).Error("get refresh token from redis failed", logger.Err(err))
 		return "", "", 0, "", fmt.Errorf("%w: get refresh token failed", ErrRefreshTokenUnavailable)
 	}
 	userIDUint64, err := strconv.ParseUint(valStr, 10, 64) // 将字符串转换为uint64
 	if err != nil {
-		logger.Error("parse userID from redis value failed", logger.Err(err))
+		logger.Ctx(ctx).Error("parse userID from redis value failed", logger.Err(err))
 		return "", "", 0, "", fmt.Errorf("%w: invalid token data", ErrInvalidRefreshToken)
 	}
 	userID = uint(userIDUint64)
@@ -256,7 +256,7 @@ func (s *UserService) RefreshToken(ctx context.Context, refreshToken string, old
 
 	err = s.cache.RemoveUserRefreshSetItem(ctx, userID, refreshToken) // 从用户的refresh token集合中移除旧的refresh token
 	if err != nil {
-		logger.Error("remove refresh token from user set failed", logger.Err(err))
+		logger.Ctx(ctx).Error("remove refresh token from user set failed", logger.Err(err))
 		return "", "", 0, "", fmt.Errorf("failed remove old refresh token from user set: %w", err)
 	}
 
@@ -269,12 +269,12 @@ func (s *UserService) RefreshToken(ctx context.Context, refreshToken string, old
 			err = s.cache.AddTokenToBlacklist(ctx, oldAccessToken, time.Duration(remainingExpire)*time.Second)
 			if err != nil {
 				// 解析成功，但加入黑名单失败，记录日志并返回错误
-				logger.Error("add old access token to blacklist failed", logger.Err(err))
+				logger.Ctx(ctx).Error("add old access token to blacklist failed", logger.Err(err))
 				return "", "", 0, "", fmt.Errorf("failed to blacklist old access token: %w", err)
 			}
 		} else {
 			// 解析失败，直接忽略，不要返回错误
-			logger.Error("get remaining expire for old access token failed", logger.Err(err))
+			logger.Ctx(ctx).Error("get remaining expire for old access token failed", logger.Err(err))
 		}
 	}
 
@@ -299,7 +299,7 @@ func (s *UserService) RefreshToken(ctx context.Context, refreshToken string, old
 	// 双向索引<userID, refreshToken>
 	err = s.cache.AddUserRefreshSet(ctx, user.ID, newRefreshToken, ttl)
 	if err != nil {
-		logger.Error("add refresh token to user set failed", logger.Err(err))
+		logger.Ctx(ctx).Error("add refresh token to user set failed", logger.Err(err))
 		return "", "", 0, "", fmt.Errorf("failed add refresh token to user set: %w", err)
 	}
 
@@ -313,7 +313,7 @@ func (s *UserService) Logout(ctx context.Context, userID uint, refreshToken, acc
 
 	// 缓存禁用时无法校验与撤销refresh token，跳过缓存操作，登出本身不返回错误
 	if !s.cache.IsEnabled() {
-		logger.Warn("cache disabled, skip refresh token revocation on logout", logger.Uint("user_id", userID))
+		logger.Ctx(ctx).Warn("cache disabled, skip refresh token revocation on logout", logger.Uint("user_id", userID))
 		return nil
 	}
 
@@ -321,41 +321,41 @@ func (s *UserService) Logout(ctx context.Context, userID uint, refreshToken, acc
 	redisKey := cache.RefreshTokenKey(refreshToken)
 	valStr, err := s.cache.Get(ctx, redisKey)
 	if err != nil {
-		logger.Error("get refresh token from redis failed", logger.Err(err))
+		logger.Ctx(ctx).Error("get refresh token from redis failed", logger.Err(err))
 		return fmt.Errorf("%w: token not found", ErrInvalidRefreshToken)
 	}
 	userIDUint64, err := strconv.ParseUint(valStr, 10, 64) // 将字符串转换为uint64
 	if err != nil {
-		logger.Error("parse userID from redis value failed", logger.Err(err))
+		logger.Ctx(ctx).Error("parse userID from redis value failed", logger.Err(err))
 		return fmt.Errorf("%w: invalid token data", ErrInvalidRefreshToken)
 	}
 	if uint(userIDUint64) != userID { // 对比用户ID
-		logger.Warn("user ID mismatch during logout", logger.Uint64("stored_user_id", userIDUint64), logger.Uint("context_user_id", userID))
+		logger.Ctx(ctx).Warn("user ID mismatch during logout", logger.Uint64("stored_user_id", userIDUint64), logger.Uint("context_user_id", userID))
 		return fmt.Errorf("%w: user ID mismatch", ErrInvalidRefreshToken)
 	}
 
 	// 删除refresh token缓存
 	err = s.cache.Delete(ctx, redisKey)
 	if err != nil {
-		logger.Error("delete refresh token from redis failed", logger.Err(err))
+		logger.Ctx(ctx).Error("delete refresh token from redis failed", logger.Err(err))
 		return fmt.Errorf("delete refresh token for user %d: %w", userID, err)
 	}
 	err = s.cache.RemoveUserRefreshSetItem(ctx, userID, refreshToken) // 从用户的refresh token集合中移除旧的refresh token
 	if err != nil {
-		logger.Error("remove refresh token from user set failed", logger.Err(err))
+		logger.Ctx(ctx).Error("remove refresh token from user set failed", logger.Err(err))
 		return fmt.Errorf("failed remove refresh token from user set: %w", err)
 	}
 
 	// 将access token加入黑名单，设置过期时间为剩余有效期
 	ttl := time.Duration(remainingExpire) * time.Second // time.Duration是以纳秒为单位的，所以需要乘以time.Second
 	if ttl <= 0 {                                       // 如果剩余有效期小于等于0，说明token已经过期，无需加入黑名单
-		logger.Debug("access token already expired, no need to blacklist")
+		logger.Ctx(ctx).Debug("access token already expired, no need to blacklist")
 		return nil
 	}
 
 	err = s.cache.AddTokenToBlacklist(ctx, accessToken, ttl)
 	if err != nil {
-		logger.Error("add access token to blacklist failed", logger.Err(err))
+		logger.Ctx(ctx).Error("add access token to blacklist failed", logger.Err(err))
 		return fmt.Errorf("blacklist access token for user %d: %w", userID, err)
 	}
 
@@ -367,7 +367,7 @@ func (s *UserService) GetProfile(ctx context.Context, userID uint) (*dto.Profile
 	// 根据用户ID查询数据库
 	user, err := s.UserRepo.FindByID(ctx, userID)
 	if err != nil {
-		logger.Error("get user profile failed", logger.Uint("user_id", userID), logger.Err(err))
+		logger.Ctx(ctx).Error("get user profile failed", logger.Uint("user_id", userID), logger.Err(err))
 		return nil, fmt.Errorf("get user profile %d: %w", userID, err)
 	}
 
@@ -398,7 +398,7 @@ func (s *UserService) UpdateProfile(ctx context.Context, userID uint, req dto.Up
 		existingUser, err := s.UserRepo.FindByUsername(ctx, *req.UserName)
 		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 			// 出现错误，并且不是记录未找到的错误，说明查询失败
-			logger.Error("check existing username failed", logger.Err(err))
+			logger.Ctx(ctx).Error("check existing username failed", logger.Err(err))
 			return nil, fmt.Errorf("check existing username: %w", err)
 		}
 		if existingUser != nil && existingUser.ID != userID {
@@ -426,7 +426,7 @@ func (s *UserService) UpdateProfile(ctx context.Context, userID uint, req dto.Up
 	// 调用仓库层更新用户资料
 	err := s.UserRepo.UpdateProfile(ctx, userID, updateMap)
 	if err != nil {
-		logger.Error("update user profile failed", logger.Err(err))
+		logger.Ctx(ctx).Error("update user profile failed", logger.Err(err))
 		return nil, fmt.Errorf("update user profile: %w", err)
 	}
 
@@ -451,40 +451,40 @@ func (s *UserService) ChangePassword(ctx context.Context, userID uint, oldPasswo
 	// 查找用户
 	user, err := s.UserRepo.FindByID(ctx, userID)
 	if err != nil {
-		logger.Error("find user in change password failed", logger.Uint("user_id", userID), logger.Err(err))
+		logger.Ctx(ctx).Error("find user in change password failed", logger.Uint("user_id", userID), logger.Err(err))
 		return fmt.Errorf("find user %d for change password: %w", userID, err)
 	}
 
 	// 验证旧密码
 	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(oldPassword)); err != nil {
-		logger.Warn("old password does not match", logger.Uint("user_id", userID))
+		logger.Ctx(ctx).Warn("old password does not match", logger.Uint("user_id", userID))
 		return ErrOldPasswordIncorrect
 	}
 
 	// 加密新密码
 	hashedNewPassword, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
 	if err != nil {
-		logger.Error("hash new password failed", logger.Err(err))
+		logger.Ctx(ctx).Error("hash new password failed", logger.Err(err))
 		return fmt.Errorf("hash new password for user %d: %w", userID, err)
 	}
 
 	// 更新密码
 	err = s.UserRepo.UpdatePassword(ctx, userID, string(hashedNewPassword))
 	if err != nil {
-		logger.Error("update password failed", logger.Uint("user_id", userID), logger.Err(err))
+		logger.Ctx(ctx).Error("update password failed", logger.Uint("user_id", userID), logger.Err(err))
 		return fmt.Errorf("update password for user %d: %w", userID, err)
 	}
 
 	// 缓存禁用时无法写入黑名单/清理refresh token，跳过缓存操作，密码已在数据库更新完成
 	if !s.cache.IsEnabled() {
-		logger.Warn("cache disabled, skip token revocation after password change", logger.Uint("user_id", userID))
+		logger.Ctx(ctx).Warn("cache disabled, skip token revocation after password change", logger.Uint("user_id", userID))
 		return nil
 	}
 
 	// 先删除该用户名下全部refresh token，保证改密后旧refresh无法继续换取access。
 	// Redis 操作失败必须向上返回，不能吞掉错误让接口误报成功。
 	if err := s.cache.CleanAllUserRefresh(ctx, userID); err != nil {
-		logger.Error("clean all refresh tokens failed", logger.Uint("user_id", userID), logger.Err(err))
+		logger.Ctx(ctx).Error("clean all refresh tokens failed", logger.Uint("user_id", userID), logger.Err(err))
 		return fmt.Errorf("failed to revoke refresh tokens: %w", err)
 	}
 
@@ -493,7 +493,7 @@ func (s *UserService) ChangePassword(ctx context.Context, userID uint, oldPasswo
 	if ttl > 0 { // 如果剩余有效期大于0，才加入黑名单
 		err = s.cache.AddTokenToBlacklist(ctx, accessToken, ttl)
 		if err != nil {
-			logger.Error("add access token to blacklist failed", logger.Uint("user_id", userID), logger.Err(err))
+			logger.Ctx(ctx).Error("add access token to blacklist failed", logger.Uint("user_id", userID), logger.Err(err))
 			return fmt.Errorf("blacklist access token for user %d: %w", userID, err)
 		}
 	}
@@ -505,7 +505,7 @@ func (s *UserService) ChangePassword(ctx context.Context, userID uint, oldPasswo
 func (s *UserService) FindByID(ctx context.Context, userID uint) (*dto.ProfileResponse, error) {
 	user, err := s.UserRepo.FindByID(ctx, userID)
 	if err != nil {
-		logger.Error("find user by ID failed", logger.Uint("user_id", userID), logger.Err(err))
+		logger.Ctx(ctx).Error("find user by ID failed", logger.Uint("user_id", userID), logger.Err(err))
 		return nil, fmt.Errorf("find user %d: %w", userID, err)
 	}
 
@@ -525,7 +525,7 @@ func (s *UserService) FindByUsername(ctx context.Context, username string) (*dto
 
 	user, err := s.UserRepo.FindByUsername(ctx, username)
 	if err != nil {
-		logger.Error("find user by username failed", logger.String("username", username), logger.Err(err))
+		logger.Ctx(ctx).Error("find user by username failed", logger.String("username", username), logger.Err(err))
 		return nil, fmt.Errorf("find user by username %q: %w", username, err)
 	}
 

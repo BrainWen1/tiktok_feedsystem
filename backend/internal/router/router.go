@@ -91,6 +91,12 @@ func SetupRouter(sqlDB *gorm.DB, cache *cache.RedisCache, rmq *mq.RabbitMQ, auth
 	// 创建一个默认的Gin引擎
 	r := gin.Default()
 
+	// RequestID 必须紧跟在引擎创建之后、所有业务中间件之前注册：
+	// 这样后续 handler/service/repo 的 ctx 都携带 requestId，日志可全链路关联；
+	// 响应头 X-Request-Id 也会覆盖包括鉴权失败、限流、413 在内的所有响应。
+	// 注意：gin.Default() 自带的访问日志中间件先于本中间件执行，故其访问日志不含 requestId。
+	r.Use(middleware.RequestID())
+
 	// 默认不信任代理头，防止客户端伪造 X-Forwarded-For 绕过基于 IP 的登录限流。
 	// 若部署在可信反向代理后，需在此处配置实际代理网段。
 	if err := r.SetTrustedProxies(nil); err != nil {

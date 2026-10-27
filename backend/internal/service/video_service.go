@@ -91,12 +91,12 @@ func normalizeVideoTags(tags []string) []string {
 func (s *VideoService) PublishVideo(ctx context.Context, userID uint, title, description, videoURL, coverURL string, tags []string) (*dto.PublishVideoResponse, error) {
 	// 验证输入参数
 	if title == "" || videoURL == "" || coverURL == "" {
-		logger.Warn("invalid publish video parameters", logger.String("title", title), logger.String("video_url", videoURL), logger.String("cover_url", coverURL))
+		logger.Ctx(ctx).Warn("invalid publish video parameters", logger.String("title", title), logger.String("video_url", videoURL), logger.String("cover_url", coverURL))
 		return nil, fmt.Errorf("title, video URL, and cover URL cannot be empty")
 	}
 
 	if !strings.HasPrefix(videoURL, "/upload/videos/") || !strings.HasPrefix(coverURL, "/upload/covers/") {
-		logger.Warn("invalid publish video URL format", logger.String("video_url", videoURL), logger.String("cover_url", coverURL))
+		logger.Ctx(ctx).Warn("invalid publish video URL format", logger.String("video_url", videoURL), logger.String("cover_url", coverURL))
 		return nil, fmt.Errorf("invalid video or cover URL format")
 	}
 
@@ -112,7 +112,7 @@ func (s *VideoService) PublishVideo(ctx context.Context, userID uint, title, des
 	// 保存视频信息及标签关联到数据库。标签写入与视频创建在同一事务内，
 	// 避免视频发布成功但标签丢失，导致标签流查不到该视频。
 	if err := s.VideoRepo.CreateWithTags(ctx, video, normalizeVideoTags(tags)); err != nil {
-		logger.Error("publish video failed", logger.Err(err))
+		logger.Ctx(ctx).Error("publish video failed", logger.Err(err))
 		return nil, fmt.Errorf("failed to publish video: %w", err)
 	}
 
@@ -157,12 +157,12 @@ func (s *VideoService) VideoDetail(ctx context.Context, videoID uint, userID uin
 		// 用户在空占位缓存未过期的时间里再次点赞的话，worker会在点赞集合里写入这个vid，再次查询会直接在这里命中缓存，不会被空占位误判
 		isLiked, err := s.cache.IsMemberOfSet(ctx, key, videoID)
 		if err != nil {
-			logger.Error("check like status in redis failed", logger.Uint("user_id", userID), logger.Uint("video_id", videoID), logger.Err(err))
+			logger.Ctx(ctx).Error("check like status in redis failed", logger.Uint("user_id", userID), logger.Uint("video_id", videoID), logger.Err(err))
 			// Redis异常，兜底查数据库
 			isLikedResp, dbErr := s.LikeService.IsLiked(ctx, userID, videoID)
 			isLiked = isLikedResp.IsLiked
 			if dbErr != nil {
-				logger.Error("check like status in DB failed", logger.Uint("user_id", userID), logger.Uint("video_id", videoID), logger.Err(dbErr))
+				logger.Ctx(ctx).Error("check like status in DB failed", logger.Uint("user_id", userID), logger.Uint("video_id", videoID), logger.Err(dbErr))
 				return nil, fmt.Errorf("failed to check like status: %w", dbErr)
 			}
 		} else if !isLiked {
@@ -177,32 +177,32 @@ func (s *VideoService) VideoDetail(ctx context.Context, videoID uint, userID uin
 				// 要么是Redis异常，要么是缓存未命中，兜底查数据库
 				isLikedResp, dbErr := s.LikeService.IsLiked(ctx, userID, videoID)
 				if dbErr != nil {
-					logger.Error("check like status in DB failed", logger.Uint("user_id", userID), logger.Uint("video_id", videoID), logger.Err(dbErr))
+					logger.Ctx(ctx).Error("check like status in DB failed", logger.Uint("user_id", userID), logger.Uint("video_id", videoID), logger.Err(dbErr))
 					return nil, fmt.Errorf("failed to check like status: %w", dbErr)
 				}
 				isLiked = isLikedResp.IsLiked
 
 				// 如果redis正常才尝试写回redis
 				if err == nil {
-					logger.Debug("write like status back to redis", logger.Uint("user_id", userID), logger.Uint("video_id", videoID))
+					logger.Ctx(ctx).Debug("write like status back to redis", logger.Uint("user_id", userID), logger.Uint("video_id", videoID))
 					if isLikedResp.IsLiked {
 						// 已点赞，写入点赞集合，TTL 兜底过期，避免脏 member 永久驻留
 						err = s.cache.AddToSet(ctx, key, videoID, cache.LikeUserSetTTL)
 						if err != nil {
-							logger.Error("add video to like set failed", logger.Uint("video_id", videoID), logger.Uint("user_id", userID), logger.Err(err))
+							logger.Ctx(ctx).Error("add video to like set failed", logger.Uint("video_id", videoID), logger.Uint("user_id", userID), logger.Err(err))
 						}
 					} else {
 						// 未点赞，写入空占位
 						err = s.cache.Set(ctx, placeholderKey, "1", cache.LikePlaceholderTTL)
 						if err != nil {
-							logger.Error("set like placeholder failed", logger.String("key", placeholderKey), logger.Err(err))
+							logger.Ctx(ctx).Error("set like placeholder failed", logger.String("key", placeholderKey), logger.Err(err))
 						}
 					}
 				}
 			}
 		}
 		// Redis缓存命中，直接使用
-		logger.Debug("like status resolved", logger.Bool("is_liked", isLiked))
+		logger.Ctx(ctx).Debug("like status resolved", logger.Bool("is_liked", isLiked))
 		resp.IsLiked = isLiked
 	}
 	return resp, nil
@@ -217,7 +217,7 @@ func (s *VideoService) getCached(ctx context.Context, cacheKey string) (*model.V
 	val, err := s.cache.Get(opCtx, cacheKey)
 	if err != nil {
 		if !errors.Is(err, cache.ErrCacheMiss) {
-			logger.Warn("get video cache failed", logger.String("key", cacheKey), logger.Err(err))
+			logger.Ctx(ctx).Warn("get video cache failed", logger.String("key", cacheKey), logger.Err(err))
 		}
 		return nil, false
 	}
@@ -225,7 +225,7 @@ func (s *VideoService) getCached(ctx context.Context, cacheKey string) (*model.V
 	b := []byte(val)
 	var cached model.Video
 	if err := json.Unmarshal(b, &cached); err != nil {
-		logger.Error("unmarshal cached video failed", logger.Err(err))
+		logger.Ctx(ctx).Error("unmarshal cached video failed", logger.Err(err))
 		return nil, false
 	}
 	return &cached, true
@@ -236,7 +236,7 @@ func (s *VideoService) setCached(ctx context.Context, cacheKey string, video *mo
 	// 序列化视频结构体
 	b, err := json.Marshal(video)
 	if err != nil {
-		logger.Error("marshal video for cache failed", logger.Err(err))
+		logger.Ctx(ctx).Error("marshal video for cache failed", logger.Err(err))
 		return fmt.Errorf("marshal video for cache: %w", err)
 	}
 	opCtx, cancel := context.WithTimeout(ctx, videoCacheOpTimeout)
@@ -244,7 +244,7 @@ func (s *VideoService) setCached(ctx context.Context, cacheKey string, video *mo
 	// 写入Redis缓存
 	err = s.cache.Set(opCtx, cacheKey, b, videoDetailCacheTTL)
 	if err != nil {
-		logger.Error("set video cache failed", logger.Err(err))
+		logger.Ctx(ctx).Error("set video cache failed", logger.Err(err))
 		return fmt.Errorf("set video cache key %s: %w", cacheKey, err)
 	}
 	return nil
@@ -258,10 +258,10 @@ func (s *VideoService) getDetail(ctx context.Context, vid uint) (*model.Video, e
 	if s.cache.IsEnabled() {
 		//第一次读取缓存
 		if v, ok := s.getCached(ctx, cacheKey); ok {
-			logger.Debug("video cache hit", logger.Uint("video_id", vid))
+			logger.Ctx(ctx).Debug("video cache hit", logger.Uint("video_id", vid))
 			return v, nil
 		}
-		logger.Debug("video cache miss, acquiring lock", logger.Uint("video_id", vid))
+		logger.Ctx(ctx).Debug("video cache miss, acquiring lock", logger.Uint("video_id", vid))
 		//缓存未命中，加分布式锁防止缓存击穿
 		lockKey := fmt.Sprintf("lock:%d", vid)
 		lockCtx, lockCancel := context.WithTimeout(ctx, videoLockWaitTimeout)
@@ -270,14 +270,14 @@ func (s *VideoService) getDetail(ctx context.Context, vid uint) (*model.Video, e
 
 		if lockErr == nil && locked {
 			// 拿到锁，查询数据库并更新缓存
-			logger.Debug("video cache lock acquired, querying database", logger.Uint("video_id", vid))
+			logger.Ctx(ctx).Debug("video cache lock acquired, querying database", logger.Uint("video_id", vid))
 			defer func() { // 注册延迟释放锁
 				// 解锁不能被上游请求取消打断：沿用上游 ctx 的值（trace 等），仅剥离 cancel，
 				// 并追加短超时兜底，避免 Redis 抖动时 Unlock 长时间阻塞请求返回。
 				unlockCtx, unlockCancel := context.WithTimeout(context.WithoutCancel(ctx), videoUnlockTimeout)
 				defer unlockCancel()
 				if err := s.cache.Unlock(unlockCtx, lockKey, token); err != nil {
-					logger.Error("unlock failed", logger.String("key", lockKey), logger.Err(err))
+					logger.Ctx(ctx).Error("unlock failed", logger.String("key", lockKey), logger.Err(err))
 				}
 			}()
 			//拿到锁后二次校验缓存
@@ -290,12 +290,12 @@ func (s *VideoService) getDetail(ctx context.Context, vid uint) (*model.Video, e
 			if err != nil {
 				return nil, fmt.Errorf("query video %d: %w", vid, err)
 			}
-			logger.Debug("video fetched from database, updating cache", logger.Uint("video_id", vid))
+			logger.Ctx(ctx).Debug("video fetched from database, updating cache", logger.Uint("video_id", vid))
 			// 将查询到的视频数据写入缓存；写缓存失败只告警，不能影响本次数据库读取结果
 			if err := s.setCached(ctx, cacheKey, video); err != nil {
-				logger.Warn("set video cache failed", logger.String("key", cacheKey), logger.Uint("video_id", vid), logger.Err(err))
+				logger.Ctx(ctx).Warn("set video cache failed", logger.String("key", cacheKey), logger.Uint("video_id", vid), logger.Err(err))
 			}
-			logger.Debug("video cache miss, fetched from DB", logger.Uint("video_id", vid))
+			logger.Ctx(ctx).Debug("video cache miss, fetched from DB", logger.Uint("video_id", vid))
 			return video, nil
 		}
 		//抢锁失败，轮询等待缓存构建完成
@@ -312,7 +312,7 @@ func (s *VideoService) getDetail(ctx context.Context, vid uint) (*model.Video, e
 		}
 	}
 	//兜底：缓存不可用/重试失败直接查库
-	logger.Warn("cache wait timeout, fallback to DB", logger.Uint("video_id", vid))
+	logger.Ctx(ctx).Warn("cache wait timeout, fallback to DB", logger.Uint("video_id", vid))
 	video, err := s.VideoRepo.FindByID(ctx, vid)
 	if err != nil {
 		return nil, fmt.Errorf("query video %d: %w", vid, err)
@@ -320,7 +320,7 @@ func (s *VideoService) getDetail(ctx context.Context, vid uint) (*model.Video, e
 	if s.cache.IsEnabled() {
 		// 缓存只是加速层，写入失败保留数据库读取结果，仅记录告警
 		if err := s.setCached(ctx, cacheKey, video); err != nil {
-			logger.Warn("set video cache failed", logger.String("key", cacheKey), logger.Uint("video_id", vid), logger.Err(err))
+			logger.Ctx(ctx).Warn("set video cache failed", logger.String("key", cacheKey), logger.Uint("video_id", vid), logger.Err(err))
 		}
 	}
 	return video, nil
@@ -372,23 +372,23 @@ func (s *VideoService) VideoList(ctx context.Context, authorID uint, userID uint
 		// 批量查询
 		isLikedList, err := s.cache.MIsMemberOfSet(ctx, key, vidList)
 		if err != nil {
-			logger.Error("check like status in redis failed", logger.Uint("user_id", userID), logger.Err(err))
+			logger.Ctx(ctx).Error("check like status in redis failed", logger.Uint("user_id", userID), logger.Err(err))
 			// Redis异常，兜底查数据库
 			for _, vid := range vidList {
 				isLikedResp, dbErr := s.LikeService.IsLiked(ctx, userID, vid.(uint))
 				if dbErr != nil {
-					logger.Error("check like status in DB failed", logger.Uint("user_id", userID), logger.Any("video_id", vid), logger.Err(dbErr))
+					logger.Ctx(ctx).Error("check like status in DB failed", logger.Uint("user_id", userID), logger.Any("video_id", vid), logger.Err(dbErr))
 					return nil, fmt.Errorf("failed to check like status: %w", dbErr)
 				}
 				likedMap[vid.(uint)] = isLikedResp.IsLiked
 			}
 		} else {
-			logger.Debug("redis like status batch query succeeded", logger.Uint("user_id", userID))
+			logger.Ctx(ctx).Debug("redis like status batch query succeeded", logger.Uint("user_id", userID))
 			for i, vid := range vidList {
 				isLiked := isLikedList[i]
 				if !isLiked {
 					// 点赞集合的缓存未命中
-					logger.Debug("like status cache miss", logger.Uint("user_id", userID), logger.Any("video_id", vid))
+					logger.Ctx(ctx).Debug("like status cache miss", logger.Uint("user_id", userID), logger.Any("video_id", vid))
 					// 检查空占位缓存，避免缓存穿透
 					placeholderKey := cache.LikePlaceholderKey(userID, vid.(uint))
 					exists, err := s.cache.Exists(ctx, placeholderKey)
@@ -400,7 +400,7 @@ func (s *VideoService) VideoList(ctx context.Context, authorID uint, userID uint
 					// 空占位缓存也未命中，兜底查数据库
 					isLikedResp, dbErr := s.LikeService.IsLiked(ctx, userID, vid.(uint))
 					if dbErr != nil {
-						logger.Error("check like status in DB failed", logger.Uint("user_id", userID), logger.Any("video_id", vid), logger.Err(dbErr))
+						logger.Ctx(ctx).Error("check like status in DB failed", logger.Uint("user_id", userID), logger.Any("video_id", vid), logger.Err(dbErr))
 						return nil, fmt.Errorf("failed to check like status: %w", dbErr)
 					}
 					likedMap[vid.(uint)] = isLikedResp.IsLiked
@@ -408,22 +408,22 @@ func (s *VideoService) VideoList(ctx context.Context, authorID uint, userID uint
 					// 将数据库查询结果写入Redis缓存，避免下次重复查询
 					if isLikedResp.IsLiked {
 						// 已点赞，写入点赞集合缓存，TTL 兜底过期，避免脏 member 永久驻留
-						logger.Debug("write like status back to redis", logger.Uint("user_id", userID), logger.Any("video_id", vid))
+						logger.Ctx(ctx).Debug("write like status back to redis", logger.Uint("user_id", userID), logger.Any("video_id", vid))
 						err = s.cache.AddToSet(ctx, key, vid.(uint), cache.LikeUserSetTTL)
 						if err != nil {
-							logger.Error("add video to like set failed", logger.Any("video_id", vid), logger.Uint("user_id", userID), logger.Err(err))
+							logger.Ctx(ctx).Error("add video to like set failed", logger.Any("video_id", vid), logger.Uint("user_id", userID), logger.Err(err))
 						}
 					} else {
 						// 未点赞，写入空占位缓存
 						err = s.cache.Set(ctx, placeholderKey, "1", cache.LikePlaceholderTTL)
 						if err != nil {
-							logger.Error("set like placeholder failed", logger.String("key", placeholderKey), logger.Err(err))
+							logger.Ctx(ctx).Error("set like placeholder failed", logger.String("key", placeholderKey), logger.Err(err))
 						}
 					}
 				} else {
 					// Redis缓存命中，直接使用
 					likedMap[vid.(uint)] = true
-					logger.Debug("like status cache hit", logger.Uint("user_id", userID), logger.Any("video_id", vid))
+					logger.Ctx(ctx).Debug("like status cache hit", logger.Uint("user_id", userID), logger.Any("video_id", vid))
 				}
 			}
 		}

@@ -13,7 +13,7 @@ import (
 func bindQuery[T any](c *gin.Context, logMsg string) (T, bool) {
 	var req T
 	if err := c.ShouldBindQuery(&req); err != nil {
-		logger.Warn(logMsg, logger.Err(err))
+		logger.Ctx(c.Request.Context()).Warn(logMsg, logger.Err(err))
 		response.FailResponse(c, "请求参数错误")
 		return req, false
 	}
@@ -33,7 +33,7 @@ func bindFeedListQuery(c *gin.Context) (dto.FeedListReq, uint, bool) {
 func requireUserID(c *gin.Context) (uint, bool) {
 	userID, _, err := getUserFromCtx(c)
 	if err != nil {
-		logger.Error("get user from context failed", logger.Err(err))
+		logger.Ctx(c.Request.Context()).Error("get user from context failed", logger.Err(err))
 		response.FailAuthResponse(c, "未登录或登录已过期")
 		return 0, false
 	}

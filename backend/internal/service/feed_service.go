@@ -83,7 +83,7 @@ func parseTimeFeedCursor(cursor dto.FeedCursor) (time.Time, uint, bool, error) {
 func (s *FeedService) buildAuthorInfoMap(ctx context.Context, authorIDs []uint) map[uint]authorInfo {
 	authorMap := make(map[uint]authorInfo)
 	if s.userService == nil {
-		logger.Warn("user service unavailable, feed author info will be empty")
+		logger.Ctx(ctx).Warn("user service unavailable, feed author info will be empty")
 		return authorMap
 	}
 
@@ -95,7 +95,7 @@ func (s *FeedService) buildAuthorInfoMap(ctx context.Context, authorIDs []uint) 
 		author, err := s.userService.FindByID(ctx, authorID)
 		if err != nil {
 			// 单个作者信息缺失不影响整条 feed 读取，降级为空作者字段
-			logger.Warn("get feed author info failed", logger.Uint("author_id", authorID), logger.Err(err))
+			logger.Ctx(ctx).Warn("get feed author info failed", logger.Uint("author_id", authorID), logger.Err(err))
 			continue
 		}
 		authorMap[authorID] = authorInfo{

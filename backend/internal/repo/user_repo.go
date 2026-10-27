@@ -32,7 +32,7 @@ func NewUserRepo(db *gorm.DB) *UserRepo {
 func (r *UserRepo) Register(ctx context.Context, user *model.User) error {
 	err := r.db.WithContext(ctx).Create(user).Error
 	if err != nil {
-		logger.Error("register user failed", logger.Err(err))
+		logger.Ctx(ctx).Error("register user failed", logger.Err(err))
 		return err
 	}
 	return nil
@@ -86,7 +86,7 @@ func (r *UserRepo) GetRefreshToken(ctx context.Context, tokenStr string) (*model
 func (r *UserRepo) DeleteRefreshToken(ctx context.Context, tokenStr string) error {
 	err := r.db.WithContext(ctx).Where(&model.UserRefreshToken{TokenHash: tokenStr}).Delete(&model.UserRefreshToken{}).Error
 	if err != nil {
-		logger.Error("delete refresh token failed", logger.Err(err))
+		logger.Ctx(ctx).Error("delete refresh token failed", logger.Err(err))
 		return err
 	}
 	return nil
@@ -97,7 +97,7 @@ func (r *UserRepo) DeleteRefreshToken(ctx context.Context, tokenStr string) erro
 func (r *UserRepo) CleanExpiredRefreshToken(ctx context.Context, userID uint) error {
 	err := r.db.WithContext(ctx).Where(&model.UserRefreshToken{UserID: userID}).Where("expires_at <= now()").Delete(&model.UserRefreshToken{}).Error
 	if err != nil {
-		logger.Error("clean expired refresh tokens failed", logger.Err(err))
+		logger.Ctx(ctx).Error("clean expired refresh tokens failed", logger.Err(err))
 		return err
 	}
 	return nil
@@ -110,7 +110,7 @@ func (r *UserRepo) DeleteRefreshTokenByUserID(ctx context.Context, userID uint) 
 		Where(&model.UserRefreshToken{UserID: userID}).
 		Delete(&model.UserRefreshToken{}).Error
 	if err != nil {
-		logger.Error("delete refresh tokens by user id failed", logger.Err(err))
+		logger.Ctx(ctx).Error("delete refresh tokens by user id failed", logger.Err(err))
 		return err
 	}
 	return nil
@@ -128,7 +128,7 @@ func (r *UserRepo) UpdateProfile(ctx context.Context, userID uint, updatedFields
 
 	err := r.db.WithContext(ctx).Model(&model.User{}).Where("id = ?", userID).Updates(updatedFields).Error
 	if err != nil {
-		logger.Error("update user profile failed", logger.Err(err))
+		logger.Ctx(ctx).Error("update user profile failed", logger.Err(err))
 		return err
 	}
 	return nil
@@ -150,7 +150,7 @@ func (r *UserRepo) UpdatePassword(ctx context.Context, userID uint, newPasswordH
 		Updates(user).
 		Error
 	if err != nil {
-		logger.Error("update user password failed", logger.Err(err))
+		logger.Ctx(ctx).Error("update user password failed", logger.Err(err))
 		return err
 	}
 	return nil

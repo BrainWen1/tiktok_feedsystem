@@ -8,6 +8,9 @@
 //
 // 业务代码只依赖本包的 Info/Debug/Error 等方法，不感知底层编码器；
 // 所有日志写入前由 redactCore 自动脱敏 password、token 等敏感字段。
+//
+// 需要全链路追踪时，请求内日志改用 Ctx(ctx).Info/Debug/...，
+// 会自动从 ctx 提取 requestId 并追加 request_id 字段，无需手动拼装。
 package logger
 
 import (

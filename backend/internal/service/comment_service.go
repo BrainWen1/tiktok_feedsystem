@@ -43,19 +43,19 @@ func NewCommentService(commentRepo *repo.CommentRepo, commentMQ *mq.CommentMQ, c
 // 非法评论在入口即被拒绝，不会进入 MQ 或数据库。
 func (s *CommentService) PublishComment(ctx context.Context, vid, userID, pid uint, username, content string) error {
 	if vid == 0 || userID == 0 {
-		logger.Warn("invalid parameters", logger.Uint("video_id", vid), logger.Uint("user_id", userID))
+		logger.Ctx(ctx).Warn("invalid parameters", logger.Uint("video_id", vid), logger.Uint("user_id", userID))
 		return errors.New("video ID and user ID must be non-zero")
 	}
 
 	// 去掉首尾空白后再校验和入库，避免纯空白评论
 	content = strings.TrimSpace(content)
 	if err := validateCommentContent(content); err != nil {
-		logger.Warn("invalid comment content", logger.Uint("video_id", vid), logger.Uint("user_id", userID), logger.Err(err))
+		logger.Ctx(ctx).Warn("invalid comment content", logger.Uint("video_id", vid), logger.Uint("user_id", userID), logger.Err(err))
 		return err
 	}
 	// 校验视频存在性以及二级评论的父评论归属
 	if err := s.validateCommentTarget(ctx, vid, pid); err != nil {
-		logger.Warn("invalid comment target", logger.Uint("video_id", vid), logger.Uint("user_id", userID), logger.Uint("parent_id", pid), logger.Err(err))
+		logger.Ctx(ctx).Warn("invalid comment target", logger.Uint("video_id", vid), logger.Uint("user_id", userID), logger.Uint("parent_id", pid), logger.Err(err))
 		return err
 	}
 
@@ -69,7 +69,7 @@ func (s *CommentService) PublishComment(ctx context.Context, vid, userID, pid ui
 	}
 	err := s.CommentMQ.PublishComment(ctx, comment)
 	if err != nil {
-		logger.Error("publish comment event to MQ failed", logger.Err(err))
+		logger.Ctx(ctx).Error("publish comment event to MQ failed", logger.Err(err))
 		// MQ投递失败，降级方案：同步直接写数据库
 		if createErr := s.CommentRepo.CreateComment(ctx, comment); createErr != nil {
 			return fmt.Errorf("create comment fallback for video %d user %d: %w", vid, userID, createErr)
@@ -128,14 +128,14 @@ func (s *CommentService) validateCommentTarget(ctx context.Context, vid, pid uin
 
 func (s *CommentService) DeleteComment(ctx context.Context, userID, commentID uint) error {
 	if userID == 0 || commentID == 0 {
-		logger.Warn("invalid parameters", logger.Uint("user_id", userID), logger.Uint("comment_id", commentID))
+		logger.Ctx(ctx).Warn("invalid parameters", logger.Uint("user_id", userID), logger.Uint("comment_id", commentID))
 		return errors.New("user ID and comment ID must be non-zero")
 	}
 
 	// 获取comment实例
 	comment, err := s.CommentRepo.FindByID(ctx, commentID)
 	if err != nil {
-		logger.Error("find comment failed", logger.Uint("comment_id", commentID), logger.Err(err))
+		logger.Ctx(ctx).Error("find comment failed", logger.Uint("comment_id", commentID), logger.Err(err))
 		return fmt.Errorf("find comment %d: %w", commentID, err)
 	}
 
@@ -145,12 +145,12 @@ func (s *CommentService) DeleteComment(ctx context.Context, userID, commentID ui
 		// 获取视频信息
 		video, err := s.videoService.getDetail(ctx, comment.VideoID)
 		if err != nil {
-			logger.Error("get video detail failed", logger.Uint("video_id", comment.VideoID), logger.Err(err))
+			logger.Ctx(ctx).Error("get video detail failed", logger.Uint("video_id", comment.VideoID), logger.Err(err))
 			return fmt.Errorf("get video %d detail for comment %d: %w", comment.VideoID, commentID, err)
 		}
 		// 2. 视频作者
 		if video.AuthorID != userID {
-			logger.Warn("user is not authorized to delete comment", logger.Uint("user_id", userID), logger.Uint("comment_id", commentID))
+			logger.Ctx(ctx).Warn("user is not authorized to delete comment", logger.Uint("user_id", userID), logger.Uint("comment_id", commentID))
 			return errors.New("user is not authorized to delete this comment")
 		}
 	}
@@ -158,7 +158,7 @@ func (s *CommentService) DeleteComment(ctx context.Context, userID, commentID ui
 	//组装消息
 	err = s.CommentMQ.DeleteComment(ctx, comment)
 	if err != nil {
-		logger.Error("publish comment event to MQ failed", logger.Err(err))
+		logger.Ctx(ctx).Error("publish comment event to MQ failed", logger.Err(err))
 		// MQ投递失败，降级方案：同步直接写数据库
 		if deleteErr := s.CommentRepo.DeleteComment(ctx, commentID); deleteErr != nil {
 			return fmt.Errorf("delete comment %d fallback: %w", commentID, deleteErr)
@@ -182,7 +182,7 @@ func (s *CommentService) getCommentCount(ctx context.Context, vid uint, refreshT
 	// 尝试读取redis；未命中属于正常路径，其余异常记录日志后回源数据库
 	val, err := s.cache.Get(ctx, key)
 	if err != nil && !errors.Is(err, cache.ErrCacheMiss) {
-		logger.Warn("get comment count cache failed", logger.Uint("video_id", vid), logger.Err(err))
+		logger.Ctx(ctx).Warn("get comment count cache failed", logger.Uint("video_id", vid), logger.Err(err))
 	}
 	if err == nil && val != "" {
 		count, parseErr := strconv.ParseInt(val, 10, 64)
@@ -190,25 +190,25 @@ func (s *CommentService) getCommentCount(ctx context.Context, vid uint, refreshT
 			// 成功读取到redis计数器，按需刷新TTL，避免热视频缓存过期
 			if refreshTTL {
 				if err := s.cache.Set(ctx, key, val, cache.CommentVideoCntTTL); err != nil {
-					logger.Error("refresh comment count TTL failed", logger.Uint("video_id", vid), logger.Err(err))
+					logger.Ctx(ctx).Error("refresh comment count TTL failed", logger.Uint("video_id", vid), logger.Err(err))
 				}
 			}
 			return count, nil
 		}
-		logger.Warn("invalid comment count cache value", logger.Uint("video_id", vid), logger.Err(parseErr))
+		logger.Ctx(ctx).Warn("invalid comment count cache value", logger.Uint("video_id", vid), logger.Err(parseErr))
 	}
 
 	// redis异常/key不存在/缓存脏数据，回数据库count兜底
 	cnt, err := s.CommentRepo.CountByVideo(ctx, vid)
 	if err != nil {
-		logger.Error("count comments failed", logger.Uint("video_id", vid), logger.Err(err))
+		logger.Ctx(ctx).Error("count comments failed", logger.Uint("video_id", vid), logger.Err(err))
 		return 0, fmt.Errorf("failed to count comments for video %d: %w", vid, err)
 	}
 
 	// 回填redis，冷视频自动失效，下次访问重新count
 	err = s.cache.Set(ctx, key, strconv.FormatInt(cnt, 10), cache.CommentVideoCntTTL)
 	if err != nil {
-		logger.Error("set comment count cache failed", logger.Uint("video_id", vid), logger.Err(err))
+		logger.Ctx(ctx).Error("set comment count cache failed", logger.Uint("video_id", vid), logger.Err(err))
 	}
 	return cnt, nil
 }

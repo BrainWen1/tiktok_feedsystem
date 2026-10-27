@@ -46,7 +46,7 @@ func (s *LikeService) SetVideoDetailer(videoDetailer VideoDetailer) {
 // LikeVideo 点赞视频
 func (s *LikeService) LikeVideo(ctx context.Context, userID, vid uint) error {
 	if userID == 0 || vid == 0 {
-		logger.Warn("invalid userID or vid", logger.Uint("user_id", userID), logger.Uint("video_id", vid))
+		logger.Ctx(ctx).Warn("invalid userID or vid", logger.Uint("user_id", userID), logger.Uint("video_id", vid))
 		return errors.New("uid and vid must be non-zero")
 	}
 	// 前置查询：拦截重复点击，减少无效MQ消息
@@ -61,7 +61,7 @@ func (s *LikeService) LikeVideo(ctx context.Context, userID, vid uint) error {
 	//组装消息
 	err = s.likeMQ.Like(ctx, userID, vid)
 	if err != nil {
-		logger.Error("publish like event to MQ failed", logger.Err(err))
+		logger.Ctx(ctx).Error("publish like event to MQ failed", logger.Err(err))
 		// MQ投递失败，降级方案：同步直接写数据库
 		if createErr := s.likeRepo.CreateLike(ctx, userID, vid); createErr != nil {
 			return fmt.Errorf("create like fallback for user %d video %d: %w", userID, vid, createErr)
@@ -76,7 +76,7 @@ func (s *LikeService) LikeVideo(ctx context.Context, userID, vid uint) error {
 // UnlikeVideo 取消点赞视频
 func (s *LikeService) UnlikeVideo(ctx context.Context, userID, vid uint) error {
 	if userID == 0 || vid == 0 {
-		logger.Warn("invalid userID or vid", logger.Uint("user_id", userID), logger.Uint("video_id", vid))
+		logger.Ctx(ctx).Warn("invalid userID or vid", logger.Uint("user_id", userID), logger.Uint("video_id", vid))
 		return errors.New("uid and vid must be non-zero")
 	}
 	// 前置查询：拦截重复点击，减少无效MQ消息
@@ -91,7 +91,7 @@ func (s *LikeService) UnlikeVideo(ctx context.Context, userID, vid uint) error {
 	//组装消息
 	err = s.likeMQ.Unlike(ctx, userID, vid)
 	if err != nil {
-		logger.Error("publish unlike event to MQ failed", logger.Err(err))
+		logger.Ctx(ctx).Error("publish unlike event to MQ failed", logger.Err(err))
 		// MQ投递失败，降级方案：同步直接写数据库
 		if deleteErr := s.likeRepo.DeleteLike(ctx, userID, vid); deleteErr != nil {
 			return fmt.Errorf("delete like fallback for user %d video %d: %w", userID, vid, deleteErr)
@@ -145,7 +145,7 @@ func (s *LikeService) ListLikedVideos(ctx context.Context, targetUserID uint, vi
 	for _, like := range likes {
 		videoDetail, err := s.videoDetailer.VideoDetail(ctx, like.VideoID, visitorUserID)
 		if err != nil {
-			logger.Error("get video detail failed", logger.Uint("video_id", like.VideoID), logger.Err(err))
+			logger.Ctx(ctx).Error("get video detail failed", logger.Uint("video_id", like.VideoID), logger.Err(err))
 			continue
 		}
 		// dto.VideoListResponse 里保存的是值类型，所以这里要解引用后再放入切片。
