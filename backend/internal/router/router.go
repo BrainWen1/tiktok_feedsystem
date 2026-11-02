@@ -9,6 +9,7 @@ import (
 	"feedsystem/internal/infra/ratelimit"
 	"feedsystem/internal/repo"
 	"feedsystem/internal/service"
+	"feedsystem/internal/utils/file"
 	"feedsystem/internal/utils/logger"
 	"feedsystem/internal/utils/response"
 	"net/http"
@@ -124,10 +125,10 @@ func SetupRouter(sqlDB *gorm.DB, cache *cache.RedisCache, rmq *mq.RabbitMQ, auth
 	// 限流器：Redis 故障时降级放行，不阻断业务
 	limiter := ratelimit.New(cache)
 
-	// 注册静态文件路由，用于访问默认头像等静态资源；
-	// safeStaticFS 关闭目录列举并拦截源码/配置等敏感文件
-	r.StaticFS("/static", safeStaticFS{fs: http.Dir("./assets/static")})
-	r.StaticFS("/upload", safeStaticFS{fs: http.Dir("./.run/upload")})
+	// 注册项目内置静态资源路由（默认头像、占位图），目录来自 StorageRoot；
+	// safeStaticFS 关闭目录列举并拦截源码/配置等敏感文件。
+	// 用户上传资源 /upload/ 由 Nginx 直接托管，Go 不注册静态路由、不转发文件流。
+	r.StaticFS("/static", safeStaticFS{fs: http.Dir(file.StaticRoot())})
 
 	// 初始化各层组件
 	// User
@@ -166,6 +167,10 @@ func SetupRouter(sqlDB *gorm.DB, cache *cache.RedisCache, rmq *mq.RabbitMQ, auth
 	feedRepo := repo.NewFeedRepo(sqlDB)
 	feedService := service.NewFeedService(feedRepo, likeService, socialService, commentService, userService)
 	feedHandler := handler.NewFeedHandler(feedService)
+	// Chunk
+	chunkRepo := repo.NewChunkRepo(cache)
+	chunkService := service.NewChunkService(chunkRepo)
+	chunkHandler := handler.NewChunkHandler(chunkService)
 
 	// 设置路由
 	// 健康检查路由
@@ -258,6 +263,16 @@ func SetupRouter(sqlDB *gorm.DB, cache *cache.RedisCache, rmq *mq.RabbitMQ, auth
 	protectedFeedGroup := feedGroup.Group("/").Use(authMiddleware.Auth(), limiter.Middleware(feedReadRateLimitUserID))
 	{
 		protectedFeedGroup.GET("/listByFollowing", feedHandler.FeedListByFollowing) // 获取关注博主的视频流
+	}
+
+	// chunk 分片上传相关路由：必须登录，会话按 userID 隔离
+	chunkGroup := videoGroup.Group("/chunk", authMiddleware.Auth())
+	{
+		chunkGroup.POST("/create", chunkHandler.CreateUploadSession) // 创建/恢复上传会话
+		chunkGroup.POST("/upload", chunkHandler.UploadChunk)         // 上传单个分片（body 为分片二进制）
+		chunkGroup.POST("/merge", chunkHandler.Merge)                // 合并分片并生成成品视频
+		chunkGroup.GET("/status", chunkHandler.GetSessionStatus)     // 查询已上传分片，用于断点续传
+		chunkGroup.POST("/cancel", chunkHandler.CancelUpload)        // 取消上传并清理碎片
 	}
 
 	// 返回配置好的路由引擎

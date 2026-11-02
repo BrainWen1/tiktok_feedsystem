@@ -16,7 +16,10 @@ import (
 	"feedsystem/internal/infra/database"
 	"feedsystem/internal/infra/mq"
 	"feedsystem/internal/model"
+	"feedsystem/internal/repo"
 	"feedsystem/internal/router"
+	"feedsystem/internal/service"
+	"feedsystem/internal/utils/file"
 	"feedsystem/internal/utils/logger"
 
 	"github.com/gin-gonic/gin"
@@ -48,6 +51,13 @@ func main() {
 		logger.Warn("invalid logger config, fallback to default", logger.Err(err))
 	}
 	defer logger.Sync()
+
+	// 初始化 StorageRoot/RuntimeRoot 目录结构，并清理上次进程残留的一次性临时文件。
+	// 必须在任何上传/日志写入前完成，确保目录权限为 0755。
+	if err := file.EnsureStorageDirs(); err != nil {
+		logger.Fatal("failed to initialize storage directories", logger.Err(err))
+	}
+	file.CleanupTempDir()
 
 	// Gin 模式必须在 gin.Default() 之前确定，而 gin.Default() 由 router.SetupRouter 内部调用。
 	// 配置加载后 APP_ENV 已可用，这里据此设置：prod => release（关闭 [GIN-debug] 路由打印），
@@ -97,6 +107,15 @@ func main() {
 	// 初始化中间件
 	authMiddleware := middleware.NewAuthMiddleware(redisCache)
 
+	// 信号监听：SIGINT/SIGTERM 触发优雅退出；同时作为后台任务的生命周期控制
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	// 分片上传垃圾回收：定期删除超过 24h 未完成合并的 chunks/{upload_id}，
+	// 并同步清理 Redis 会话。多实例同时运行也安全（删除操作幂等）。
+	chunkService := service.NewChunkService(repo.NewChunkRepo(redisCache))
+	go chunkService.RunGarbageCollector(ctx, time.Hour)
+
 	// 设置路由
 	r := router.SetupRouter(db, redisCache, rmq, authMiddleware)
 
@@ -109,10 +128,6 @@ func main() {
 		WriteTimeout:      120 * time.Second, // 覆盖大文件上传的响应写入
 		IdleTimeout:       60 * time.Second,  // keep-alive 空闲连接上限
 	}
-
-	// 信号监听：SIGINT/SIGTERM 触发优雅退出
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
 
 	serverErr := make(chan error, 1)
 	go func() {

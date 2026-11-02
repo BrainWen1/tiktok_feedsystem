@@ -2,12 +2,20 @@ package config
 
 import (
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 
 	"feedsystem/internal/utils/logger"
 
 	"github.com/joho/godotenv"
+)
+
+const (
+	// DefaultStorageRoot 持久化存储根目录默认值：用户上传资产 + 项目内置静态资源，需要备份
+	DefaultStorageRoot = "./assets"
+	// DefaultRuntimeRoot 运行时目录默认值：日志、pid、一次性临时文件，容器重建可直接清空
+	DefaultRuntimeRoot = "./.run"
 )
 
 type Config struct {
@@ -27,6 +35,22 @@ type Config struct {
 
 	// CORS_allow_origins 允许跨域携带凭证的来源白名单，从 CORS_ALLOW_ORIGINS 读取（逗号分隔）
 	CORS_allow_origins []string
+
+	// StorageRoot 持久化存储根目录，存放用户上传资产与项目内置静态资源。
+	// 该目录需要备份，后续可整体迁移到 OSS/MinIO 等对象存储。
+	StorageRoot string
+	// RuntimeRoot 程序运行时目录，存放日志、pid、一次性临时文件。
+	// 容器/机器重建时可直接清空，禁止存放任何用户持久上传资源。
+	RuntimeRoot string
+}
+
+// resolveRoot 归一化目录配置：空值回退默认目录，并清理多余路径分隔符。
+func resolveRoot(raw, fallback string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return fallback
+	}
+	return filepath.Clean(raw)
 }
 
 // splitCSV 解析逗号分隔配置，去掉空白项；空字符串返回空切片
@@ -69,7 +93,15 @@ func LoadConfig() error {
 		MQ_Username:        os.Getenv("MQ_USERNAME"),
 		MQ_Password:        os.Getenv("MQ_PASSWORD"),
 		CORS_allow_origins: splitCSV(os.Getenv("CORS_ALLOW_ORIGINS")),
+		StorageRoot:        resolveRoot(os.Getenv("STORAGE_ROOT"), DefaultStorageRoot),
+		RuntimeRoot:        resolveRoot(os.Getenv("RUNTIME_ROOT"), DefaultRuntimeRoot),
 	}
+
+	// 两个根目录职责必须分离：StorageRoot 存放需要备份的用户资产，
+	// RuntimeRoot 存放可随时清空的运行时文件，启动时打印便于确认部署路径。
+	logger.Info("storage roots configured",
+		logger.String("storage_root", AppConfig.StorageRoot),
+		logger.String("runtime_root", AppConfig.RuntimeRoot))
 
 	// 白名单为空时不允许任何跨域携带凭证请求，避免退化成 AllowOrigins=*
 	if len(AppConfig.CORS_allow_origins) == 0 {

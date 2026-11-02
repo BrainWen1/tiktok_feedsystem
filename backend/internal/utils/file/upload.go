@@ -8,9 +8,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"os"
-	"path"
 	"path/filepath"
-	"strconv"
 	"strings"
 
 	"feedsystem/internal/utils/logger"
@@ -79,9 +77,9 @@ func SaveUpload(fh *multipart.FileHeader, userID uint, spec UploadSpec) (string,
 		return "", fmt.Errorf("%w: ext=%s", ErrInvalidFileType, ext)
 	}
 
-	// 按用户隔离存储目录
-	dir := filepath.Join(".run", "upload", spec.SubDir, strconv.FormatUint(uint64(userID), 10))
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	// 按用户隔离存储目录：StorageRoot/upload/{subDir}/{userID}
+	dir := UserUploadDir(spec.SubDir, userID)
+	if err := EnsureDir(dir); err != nil {
 		logger.Error("create upload directory failed",
 			logger.String("kind", spec.Label),
 			logger.String("dir", dir), logger.Err(err))
@@ -119,7 +117,9 @@ func SaveUpload(fh *multipart.FileHeader, userID uint, spec UploadSpec) (string,
 		return "", fmt.Errorf("%w: ext=%s content=%s", ErrInvalidFileType, ext, mimeType)
 	}
 
-	dstFile, err := os.Create(absPath)
+	// O_EXCL 防止随机文件名碰撞时覆盖已有资源；显式 0644，落盘后再校正一次，
+	// 避免进程 umask 让文件带上组写/执行权限。
+	dstFile, err := os.OpenFile(absPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
 	if err != nil {
 		logger.Error("create upload target file failed", logger.String("path", absPath), logger.Err(err))
 		return "", fmt.Errorf("create upload target file: %w", err)
@@ -136,9 +136,18 @@ func SaveUpload(fh *multipart.FileHeader, userID uint, spec UploadSpec) (string,
 		removePartialFile(absPath, spec.Label)
 		return "", fmt.Errorf("close upload target file: %w", closeErr)
 	}
+	if err := SetFilePermission(absPath); err != nil {
+		removePartialFile(absPath, spec.Label)
+		return "", fmt.Errorf("set upload file permission: %w", err)
+	}
 
-	// 返回相对路径，供 handler 层拼接成 http 可访问 URL
-	return path.Join("/upload", spec.SubDir, strconv.FormatUint(uint64(userID), 10), filename), nil
+	// 返回 HTTP 访问路径（/upload/...），实际落盘位置由 StorageRoot 决定
+	return PublicUploadPath(spec.SubDir, userID, filename), nil
+}
+
+// IsAllowedExt 判断后缀是否在允许列表中。
+func IsAllowedExt(ext string, allowed []string) bool {
+	return isAllowedExt(ext, allowed)
 }
 
 // isAllowedExt 判断后缀是否在允许列表中。

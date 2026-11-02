@@ -137,9 +137,10 @@ func (s *UserService) Register(ctx context.Context, username, password string) (
 		return nil, fmt.Errorf("hash password: %w", err)
 	}
 
-	// 注册直接填入默认头像和简介
-	avatarURL := "/static/default_avatar.png" // 默认头像URL
-	bio := "这个人很懒，什么都没有留下。"                   // 默认简介
+	// 注册直接填入默认头像和简介。头像字段存的是对外 URL 而非文件系统路径，
+	// 实际文件位于 StorageRoot/static/，由 Nginx 或 Go 的 /static 路由托管。
+	avatarURL := "/static/default_avatar.png"
+	bio := "这个人很懒，什么都没有留下。"
 
 	// 创建用户
 	user := &model.User{

@@ -3,3 +3,6 @@
 *.run/
 *CLAUDE.md
 *audit_report.md
+
+# 用户上传资源不入库（StorageRoot 默认为 backend/assets）
+backend/assets/upload/
