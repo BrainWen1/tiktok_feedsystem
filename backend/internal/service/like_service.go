@@ -57,9 +57,19 @@ func (s *LikeService) LikeVideo(ctx context.Context, userID, vid uint) error {
 	if isLiked {
 		return errors.New("video already liked by user")
 	}
+	// 检查视频是否存在
+	_, err = s.videoDetailer.VideoDetail(ctx, vid, userID)
+	if err != nil {
+		return fmt.Errorf("get video detail for user %d video %d: %w", userID, vid, err)
+	}
 
 	//组装消息
-	err = s.likeMQ.Like(ctx, userID, vid)
+	user, err := s.UserService.FindByID(ctx, userID)
+	if err != nil {
+		return fmt.Errorf("find user by ID: %w", err)
+	}
+
+	err = s.likeMQ.Like(ctx, userID, vid, user.Username)
 	if err != nil {
 		logger.Ctx(ctx).Error("publish like event to MQ failed", logger.Err(err))
 		// MQ投递失败，降级方案：同步直接写数据库

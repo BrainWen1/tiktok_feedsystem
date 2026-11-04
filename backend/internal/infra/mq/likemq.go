@@ -49,6 +49,7 @@ type LikeEvent struct {
 	EventID    string    `json:"event_id"` // 全局唯一的消息ID，用于幂等处理，避免MQ重复投递
 	Action     string    `json:"action"`
 	UserID     uint      `json:"user_id"`
+	UserName   string    `json:"user_name"` // 点赞用户的昵称，用于通知内容
 	VideoID    uint      `json:"video_id"`
 	OccurredAt time.Time `json:"occurred_at"`
 }
@@ -83,17 +84,17 @@ func NewLikeMQ(base *RabbitMQ) (*LikeMQ, error) {
 }
 
 // Like 发布点赞事件到 RabbitMQ
-func (l *LikeMQ) Like(ctx context.Context, userID, videoID uint) error {
-	return l.publish(ctx, "like", likeLikeRK, userID, videoID)
+func (l *LikeMQ) Like(ctx context.Context, userID, videoID uint, userName string) error {
+	return l.publish(ctx, "like", likeLikeRK, userID, videoID, userName)
 }
 
 // Unlike 发布取消点赞事件到 RabbitMQ
 func (l *LikeMQ) Unlike(ctx context.Context, userID, videoID uint) error {
-	return l.publish(ctx, "unlike", likeUnlikeRK, userID, videoID)
+	return l.publish(ctx, "unlike", likeUnlikeRK, userID, videoID, "")
 }
 
 // publish 发布点赞或取消点赞事件到 RabbitMQ
-func (l *LikeMQ) publish(ctx context.Context, action, routingKey string, userID, videoID uint) error {
+func (l *LikeMQ) publish(ctx context.Context, action, routingKey string, userID, videoID uint, userName string) error {
 	if !l.IsEnabled() {
 		return ErrMQDisabled // MQ已禁用，跳过投递，由service层降级写数据库
 	}
@@ -114,6 +115,7 @@ func (l *LikeMQ) publish(ctx context.Context, action, routingKey string, userID,
 		EventID:    id,
 		Action:     action,
 		UserID:     userID,
+		UserName:   userName,
 		VideoID:    videoID,
 		OccurredAt: time.Now(),
 	}

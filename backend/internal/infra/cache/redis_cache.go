@@ -496,3 +496,25 @@ func (c *RedisCache) ZIsMember(ctx context.Context, key string, member interface
 	// 没报错，说明查到了，存在
 	return true, nil
 }
+
+// Publish 向Redis发布消息，用于SSE推送通知
+func (c *RedisCache) Publish(ctx context.Context, channel string, message interface{}) error {
+	if !c.IsEnabled() {
+		return nil // 缓存禁用，跳过发布
+	}
+	// 使用Redis的Publish方法向指定频道发布消息
+	err := c.client.Publish(ctx, channel, message).Err()
+	if err != nil {
+		logger.Error("publish message failed", logger.String("channel", channel), logger.Err(err))
+		return fmt.Errorf("publish message to channel %s: %w", channel, err)
+	}
+	return nil
+}
+
+// Subscribe 订阅Redis频道，用于SSE推送通知
+func (c *RedisCache) Subscribe(ctx context.Context, channel string) (*redis.PubSub, error) {
+	if !c.IsEnabled() {
+		return nil, fmt.Errorf("cache is disabled") // 缓存禁用，返回明确错误
+	}
+	return c.client.Subscribe(ctx, channel), nil
+}

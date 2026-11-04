@@ -54,7 +54,15 @@ func run() error {
 		return fmt.Errorf("connect database: %w", err)
 	}
 
-	database.AutoMigrate(db, &model.User{}, &model.Video{}, &model.Like{}, &model.Comment{}, &model.Social{}, &model.VideoTag{}) // 自动迁移数据库表结构
+	database.AutoMigrate(db,
+		&model.User{},
+		&model.Video{},
+		&model.Like{},
+		&model.Comment{},
+		&model.Social{},
+		&model.VideoTag{},
+		&model.Notification{},
+	) // 自动迁移数据库表结构
 
 	defer database.CloseDB() // 注册关闭数据库连接的延迟调用
 
@@ -77,6 +85,8 @@ func run() error {
 	// 初始化仓库
 	likeRepo := repo.NewLikeRepo(db)
 	commentRepo := repo.NewCommentRepo(db)
+	videoRepo := repo.NewVideoRepo(db)               // 用户视频仓库，用于获取视频作者ID
+	notificationRepo := repo.NewNotificationRepo(db) // 通知仓库，用于创建通知记录
 
 	// 初始化Redis缓存
 	redisCache := cache.NewRedisCache(config.AppConfig.Redis_addr, config.AppConfig.Redis_password, config.AppConfig.Redis_db)
@@ -100,7 +110,7 @@ func run() error {
 	var wg sync.WaitGroup
 
 	// 启动点赞消费
-	if err := mq.StartLikeConsumer(ctx, likeMQ, likeRepo, redisCache, &wg); err != nil {
+	if err := mq.StartLikeConsumer(ctx, likeMQ, likeRepo, redisCache, videoRepo, notificationRepo, &wg); err != nil {
 		return fmt.Errorf("start like consumer: %w", err)
 	}
 

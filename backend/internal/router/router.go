@@ -171,6 +171,8 @@ func SetupRouter(sqlDB *gorm.DB, cache *cache.RedisCache, rmq *mq.RabbitMQ, auth
 	chunkRepo := repo.NewChunkRepo(cache)
 	chunkService := service.NewChunkService(chunkRepo)
 	chunkHandler := handler.NewChunkHandler(chunkService)
+	// SSE
+	sseHandler := handler.NewSSEHandler(cache)
 
 	// 设置路由
 	// 健康检查路由
@@ -274,6 +276,18 @@ func SetupRouter(sqlDB *gorm.DB, cache *cache.RedisCache, rmq *mq.RabbitMQ, auth
 		chunkGroup.GET("/status", chunkHandler.GetSessionStatus)     // 查询已上传分片，用于断点续传
 		chunkGroup.POST("/cancel", chunkHandler.CancelUpload)        // 取消上传并清理碎片
 	}
+
+	// notification 相关路由：必须登录，按 userID 隔离
+	// notificationGroup := r.Group("/notification", authMiddleware.Auth())
+	// {
+	// 	notificationGroup.GET("/list", handler.NotificationListHandler) // 获取用户通知列表
+	// }
+
+	// SSE 订阅路由：必须登录，按 userID 隔离
+	// 1. 换取 Ticket 的接口，走常规 JWT 鉴权
+	r.POST("/sse/ticket", authMiddleware.Auth(), sseHandler.GetSSETicket)
+	// 2. SSE 连接接口，不带常规 JWT 中间件（因为头里塞不进去）
+	r.GET("/sse", sseHandler.SSE)
 
 	// 返回配置好的路由引擎
 	return r

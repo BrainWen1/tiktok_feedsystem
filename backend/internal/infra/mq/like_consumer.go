@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"feedsystem/internal/infra/cache"
+	"feedsystem/internal/model"
 	"feedsystem/internal/repo"
 	"feedsystem/internal/utils/logger"
 
@@ -22,7 +23,7 @@ const likeConsumerTag = "like-consumer"
 
 // StartLikeConsumer 启动点赞消费，给worker调用。
 // ctx 取消后停止拉取新消息并等待在途消息处理完成；wg 用于通知调用方消费协程已退出。
-func StartLikeConsumer(ctx context.Context, lmq *LikeMQ, likeRepo *repo.LikeRepo, redisCache *cache.RedisCache, wg *sync.WaitGroup) error {
+func StartLikeConsumer(ctx context.Context, lmq *LikeMQ, likeRepo *repo.LikeRepo, redisCache *cache.RedisCache, videoRepo *repo.VideoRepo, notificationRepo *repo.NotificationRepo, wg *sync.WaitGroup) error {
 	if !lmq.IsEnabled() {
 		logger.Warn("LikeMQ disabled, skip like consumer")
 		return ErrMQDisabled // MQ禁用时不启动消费循环
@@ -77,7 +78,7 @@ func StartLikeConsumer(ctx context.Context, lmq *LikeMQ, likeRepo *repo.LikeRepo
 					logger.Warn("like consumer delivery channel closed")
 					return
 				}
-				handleLikeMessage(consumerCtx, ch, msg, likeRepo, redisCache)
+				handleLikeMessage(consumerCtx, ch, msg, likeRepo, redisCache, videoRepo, notificationRepo)
 			}
 		}
 	}()
@@ -88,7 +89,7 @@ func StartLikeConsumer(ctx context.Context, lmq *LikeMQ, likeRepo *repo.LikeRepo
 
 // handleLikeMessage 处理单条点赞事件。
 // 每条消息使用独立的超时上下文；WithoutCancel 保证优雅关闭时不中断在途处理。
-func handleLikeMessage(parent context.Context, ch *amqp.Channel, msg amqp.Delivery, likeRepo *repo.LikeRepo, redisCache *cache.RedisCache) {
+func handleLikeMessage(parent context.Context, ch *amqp.Channel, msg amqp.Delivery, likeRepo *repo.LikeRepo, redisCache *cache.RedisCache, videoRepo *repo.VideoRepo, notificationRepo *repo.NotificationRepo) {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), messageHandleTimeout)
 	defer cancel()
 
@@ -180,6 +181,18 @@ func handleLikeMessage(parent context.Context, ch *amqp.Channel, msg amqp.Delive
 		logger.Error("sync like cache failed", logger.Err(err))
 	}
 
+	// 在这里触发异步通知逻辑
+	if event.Action == "like" {
+		// 建议用 go 开个协程异步去发通知
+		// 不要因为通知逻辑报错影响原本的 ACK
+		go func() {
+			// 这里使用 WithoutCancel 保证通知逻辑不会被即将关闭的消费上下文中断，避免通知逻辑被取消。
+			nctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+			defer cancel()
+			processLikeNotification(nctx, event, videoRepo, notificationRepo, redisCache)
+		}()
+	}
+
 	_ = msg.Ack(false) // 成功处理后 ACK 掉消息
 }
 
@@ -261,4 +274,63 @@ func syncLikeCaches(ctx context.Context, redisCache *cache.RedisCache, likeRepo 
 		return fmt.Errorf("update video rank for video %d: %w", event.VideoID, err)
 	}
 	return nil
+}
+
+func processLikeNotification(ctx context.Context, event LikeEvent, videoRepo *repo.VideoRepo, notificationRepo *repo.NotificationRepo, redisCache *cache.RedisCache) {
+	// 获取视频作者 ID
+	video, err := videoRepo.FindByID(ctx, event.VideoID)
+	if err != nil {
+		logger.Error("get video author failed for notification", logger.Err(err))
+		return // 查不到作者，静默失败，不影响主流程
+	}
+
+	// 过滤：如果是自己赞自己，不发通知
+	if video.AuthorID == event.UserID {
+		return
+	}
+
+	// 构建通知记录
+	notif := &model.Notification{
+		ReceiverID: video.AuthorID,
+		ActorID:    event.UserID,
+		Type:       "like",
+		TargetID:   event.VideoID,
+		Content:    fmt.Sprintf("用户 %s 赞了你的视频", event.UserName),
+		IsRead:     false,
+	}
+
+	// 落库
+	if err := notificationRepo.CreateNotification(ctx, notif); err != nil {
+		logger.Error("create notification failed", logger.Err(err))
+		return // 落库失败，不往下走了
+	}
+
+	// 更新 Redis 未读数 (直接自增，底层自动处理 Key 不存在和 TTL 刷新)
+	unreadKey := cache.UnreadCountKey(video.AuthorID)
+	_, err = redisCache.Increase(ctx, unreadKey, 1, cache.UnreadCountTTL)
+	if err != nil {
+		logger.Error("incr unread count failed", logger.Err(err))
+	}
+
+	// 触发 SSE 推送
+	pushSSEViaRedis(ctx, redisCache, video.AuthorID, notif.Content)
+}
+
+// pushSSEViaRedis 通过 Redis 发布订阅机制向前端推送 SSE 消息。
+// 这里假设前端有一个全局订阅频道 "sse:push"，所有 SSE 消息都通过这个频道推送。
+// 前端收到消息后根据 user_id 判断是否是当前登录用户的通知。
+func pushSSEViaRedis(ctx context.Context, redisCache *cache.RedisCache, receiverID uint, content string) {
+	channel := "sse:push" // 全局频道
+	// 消息体传 JSON 字符串
+	type sseMessage struct {
+		UserID  uint   `json:"user_id"`
+		Content string `json:"content"`
+	}
+	data, _ := json.Marshal(sseMessage{UserID: receiverID, Content: content})
+
+	// 发布消息到 Redis 频道
+	err := redisCache.Publish(ctx, channel, string(data))
+	if err != nil {
+		logger.Error("publish sse message failed", logger.Err(err))
+	}
 }

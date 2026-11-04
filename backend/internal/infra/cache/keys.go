@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-// 点赞缓存 key 统一在本文件维护。
+// 缓存 key 统一在本文件维护。
 // service 读、mq 消费写必须复用下面的构造函数，禁止在业务代码中手写 key 字符串，
 // 避免出现读写 key 命名不一致（P0-8）或同一 key 混用多种数据结构（P0-9）。
 const (
@@ -29,6 +29,10 @@ const (
 	likeEventIDPrefix = "mq:like_event_id:"
 	// commentEventIDPrefix 评论 MQ 消费幂等事件ID前缀。
 	commentEventIDPrefix = "mq_comment_event_id:"
+	// unreadCountPrefix 未读通知计数前缀，Redis 数据结构为 String 计数器。
+	unreadCountPrefix = "unread:"
+	// sseTicketPrefix SSE 临时 ticket 前缀，Redis 数据结构为 String，value 为 userID。
+	sseTicketPrefix = "sse:ticket:"
 )
 
 const (
@@ -49,6 +53,10 @@ const (
 	RefreshTokenTTL = 7 * 24 * time.Hour
 	// EventIDTTL MQ 消费幂等事件ID缓存过期时间。
 	EventIDTTL = 24 * time.Hour
+	// UnreadCountTTL 未读通知计数缓存过期时间。
+	UnreadCountTTL = 7 * 24 * time.Hour
+	// SSETicketTTL SSE 临时 ticket 过期时间。
+	SSETicketTTL = 30 * time.Second
 )
 
 // LikeUserSetKey 返回用户点赞视频集合的 Redis key，全链路统一使用 Set 结构。
@@ -99,4 +107,14 @@ func LikeEventIDKey(eventID string) string {
 // CommentEventIDKey 返回评论 MQ 消费幂等事件ID的 Redis key。
 func CommentEventIDKey(eventID string) string {
 	return fmt.Sprintf("%s%s", commentEventIDPrefix, eventID)
+}
+
+// UnreadCountKey 返回未读通知计数缓存的 Redis key。
+func UnreadCountKey(userID uint) string {
+	return fmt.Sprintf("%s%d", unreadCountPrefix, userID)
+}
+
+// SSETicketKey 返回 SSE 临时 ticket 的 Redis key。
+func SSETicketKey(ticket string) string {
+	return fmt.Sprintf("%s%s", sseTicketPrefix, ticket)
 }
