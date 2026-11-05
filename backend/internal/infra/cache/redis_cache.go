@@ -138,6 +138,14 @@ func (r *RedisCache) Set(ctx context.Context, key string, value interface{}, exp
 	return r.client.Set(ctx, key, value, expiration).Err()
 }
 
+// SetNX 设置缓存值，如果key不存在才设置，返回是否成功设置
+func (r *RedisCache) SetNX(ctx context.Context, key string, value interface{}, expiration time.Duration) error {
+	if !r.IsEnabled() {
+		return nil // 缓存禁用，跳过写入
+	}
+	return r.client.SetNX(ctx, key, value, expiration).Err()
+}
+
 // Delete删除缓存值
 func (r *RedisCache) Delete(ctx context.Context, keys ...string) error {
 	if !r.IsEnabled() {

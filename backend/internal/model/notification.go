@@ -3,13 +3,18 @@ package model
 import "time"
 
 type Notification struct {
-	ID         uint      `gorm:"primaryKey;autoIncrement"`
-	ActorID    uint      `gorm:"not null;index"`         // 触发通知的用户ID
-	ReceiverID uint      `gorm:"not null;index"`         // 接收通知的用户ID
-	Type       string    `gorm:"not null;index"`         // 通知类型，如 "like", "comment", "follow"
-	TargetID   uint      `gorm:"not null;index"`         // 相关目标ID，如视频ID、评论ID等
-	Content    string    `gorm:"type:text;not null"`     // 通知内容，如“用户A点赞了你的视频”、"用户A评论了你的视频"
-	IsRead     bool      `gorm:"not null;default:false"` // 是否已读
-	CreatedAt  time.Time `gorm:"autoCreateTime"`         // 创建时间
-	UpdatedAt  time.Time `gorm:"autoUpdateTime"`         // 更新时间
+	ID uint `gorm:"primaryKey;autoIncrement"`
+
+	// 唯一索引：ActorID + ReceiverID + Type + TargetID，避免重复通知
+	ActorID    uint   `gorm:"not null;uniqueIndex:uk_ignore"`
+	ReceiverID uint   `gorm:"not null;uniqueIndex:uk_ignore;index:idx_receiver_read_time,priority:1"`
+	Type       string `gorm:"type:varchar(20);not null;uniqueIndex:uk_ignore"`
+	TargetID   uint   `gorm:"not null;uniqueIndex:uk_ignore"`
+
+	Content string `gorm:"type:text;not null"`
+
+	// 复合索引：ReceiverID + IsRead + CreatedAt，用于快速查询某个用户的未读通知，并按时间排序
+	IsRead    bool      `gorm:"not null;default:false;index:idx_receiver_read_time,priority:2"`
+	CreatedAt time.Time `gorm:"autoCreateTime;index:idx_receiver_read_time,priority:3"`
+	UpdatedAt time.Time `gorm:"autoUpdateTime"`
 }

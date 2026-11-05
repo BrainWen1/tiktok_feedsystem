@@ -11,6 +11,8 @@ import (
 	"fmt"
 	"strconv"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 // 点赞视频列表分页参数。
@@ -26,15 +28,16 @@ type VideoDetailer interface {
 }
 
 type LikeService struct {
-	likeRepo      *repo.LikeRepo
-	likeMQ        *mq.LikeMQ
-	UserService   *UserService // 引入UserService以便查询作者信息
-	videoDetailer VideoDetailer
-	cache         *cache.RedisCache
+	likeRepo            *repo.LikeRepo
+	likeMQ              *mq.LikeMQ
+	UserService         *UserService         // 引入UserService以便查询作者信息
+	notificationService *NotificationService // 引入NotificationService以便处理通知逻辑
+	videoDetailer       VideoDetailer
+	cache               *cache.RedisCache
 }
 
-func NewLikeService(likeRepo *repo.LikeRepo, likeMQ *mq.LikeMQ, userService *UserService, cache *cache.RedisCache) *LikeService {
-	return &LikeService{likeRepo: likeRepo, likeMQ: likeMQ, UserService: userService, cache: cache}
+func NewLikeService(likeRepo *repo.LikeRepo, likeMQ *mq.LikeMQ, userService *UserService, notificationService *NotificationService, cache *cache.RedisCache) *LikeService {
+	return &LikeService{likeRepo: likeRepo, likeMQ: likeMQ, UserService: userService, notificationService: notificationService, videoDetailer: nil, cache: cache}
 }
 
 // SetVideoDetailer 在 VideoService 创建完成后注入。
@@ -64,18 +67,29 @@ func (s *LikeService) LikeVideo(ctx context.Context, userID, vid uint) error {
 	}
 
 	//组装消息
-	user, err := s.UserService.FindByID(ctx, userID)
-	if err != nil {
-		return fmt.Errorf("find user by ID: %w", err)
-	}
-
-	err = s.likeMQ.Like(ctx, userID, vid, user.Username)
+	err = s.likeMQ.Like(ctx, userID, vid)
 	if err != nil {
 		logger.Ctx(ctx).Error("publish like event to MQ failed", logger.Err(err))
 		// MQ投递失败，降级方案：同步直接写数据库
 		if createErr := s.likeRepo.CreateLike(ctx, userID, vid); createErr != nil {
 			return fmt.Errorf("create like fallback for user %d video %d: %w", userID, vid, createErr)
 		}
+		// 同步写数据库成功后，异步处理通知逻辑
+		go func() {
+			nctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+			defer cancel()
+
+			// err 使用 := 创建局部变量，避免覆盖外层的 err，防止以后可能发生的竞态
+			err := s.notificationService.ProcessNotification(nctx, mq.NotificationEvent{
+				EventID:  uuid.New().String(), // 临时生成一个
+				Action:   "like",
+				ActorID:  userID,
+				TargetID: vid,
+			})
+			if err != nil {
+				logger.Ctx(nctx).Error("process notification failed", logger.Err(err))
+			}
+		}()
 		return nil
 	}
 

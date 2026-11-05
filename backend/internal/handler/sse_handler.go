@@ -6,6 +6,7 @@ import (
 	"feedsystem/internal/utils/response"
 	"fmt"
 	"io"
+	"net/http"
 	"strconv"
 	"sync"
 	"time"
@@ -41,10 +42,8 @@ func (h *SSEHandler) SSE(c *gin.Context) {
 
 	// 去 Redis 里查 ticket
 	key := cache.SSETicketKey(ticket)
-	val, err := h.redisCache.Get(c.Request.Context(), key)
-
-	// 无论查没查到，立刻删除这个 Ticket，保证只能使用一次
-	h.redisCache.Delete(c.Request.Context(), key)
+	// 使用现成的GetDel操作，保证ticket只能使用一次
+	val, err := h.redisCache.GetDel(c.Request.Context(), key)
 
 	if err != nil || val == "" {
 		logger.Ctx(c.Request.Context()).Warn("invalid or expired ticket", logger.Err(err))
@@ -60,6 +59,13 @@ func (h *SSEHandler) SSE(c *gin.Context) {
 	c.Writer.Header().Set("Content-Type", "text/event-stream")
 	c.Writer.Header().Set("Cache-Control", "no-cache")
 	c.Writer.Header().Set("Connection", "keep-alive")
+
+	// 针对当前 SSE 请求，把写超时时间设为无限（或者设置一个极长的值）
+	rc := http.NewResponseController(c.Writer)
+	if err := rc.SetWriteDeadline(time.Time{}); err != nil { // time.Time{} 表示无限期
+		logger.Error("failed to set write deadline for SSE", logger.Err(err))
+		// 视情况决定是否 return，如果这里报错说明底层不支持，但一般都会支持
+	}
 
 	// 生成一个唯一连接 ID
 	clientID := uuid.New().String()

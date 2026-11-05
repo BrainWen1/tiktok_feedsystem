@@ -19,3 +19,10 @@ func NewNotificationRepo(db *gorm.DB) *NotificationRepo {
 func (r *NotificationRepo) CreateNotification(ctx context.Context, notif *model.Notification) error {
 	return r.db.WithContext(ctx).Create(notif).Error
 }
+
+// CountUnreadByReceiverID 统计某个用户未读通知的数量
+func (r *NotificationRepo) CountUnreadByReceiverID(ctx context.Context, userID uint) (int64, error) {
+	var count int64
+	err := r.db.WithContext(ctx).Model(&model.Notification{}).Where("receiver_id = ? AND is_read = false", userID).Count(&count).Error
+	return count, err
+}

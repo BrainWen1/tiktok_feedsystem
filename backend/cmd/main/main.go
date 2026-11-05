@@ -138,7 +138,7 @@ func main() {
 		Handler:           r,
 		ReadHeaderTimeout: 5 * time.Second,   // 读取请求头上限
 		ReadTimeout:       120 * time.Second, // 覆盖大文件上传的请求体读取
-		WriteTimeout:      0,                 // SSE 长连接写超时由客户端断开控制
+		WriteTimeout:      120 * time.Second, // 恢复120秒，保护普通请求，避免慢客户端拖垮服务
 		IdleTimeout:       60 * time.Second,  // keep-alive 空闲连接上限
 	}
 
@@ -185,6 +185,10 @@ func StartSSESubscriber(ctx context.Context, redisCache *cache.RedisCache) {
 			msg, err := pubsub.ReceiveMessage(ctx)
 			if err != nil {
 				logger.Error("receive redis pubsub msg failed", logger.Err(err))
+				// 如果是上下文取消或连接关闭，退出循环，避免热循环
+				if errors.Is(err, context.Canceled) || ctx.Err() != nil {
+					return
+				}
 				continue
 			}
 			// msg.Payload 就是 Worker 发过来的 JSON

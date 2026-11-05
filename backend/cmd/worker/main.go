@@ -15,6 +15,7 @@ import (
 	"feedsystem/internal/infra/mq"
 	"feedsystem/internal/model"
 	"feedsystem/internal/repo"
+	"feedsystem/internal/service"
 	"feedsystem/internal/utils/logger"
 
 	"github.com/joho/godotenv"
@@ -85,8 +86,9 @@ func run() error {
 	// 初始化仓库
 	likeRepo := repo.NewLikeRepo(db)
 	commentRepo := repo.NewCommentRepo(db)
-	videoRepo := repo.NewVideoRepo(db)               // 用户视频仓库，用于获取视频作者ID
-	notificationRepo := repo.NewNotificationRepo(db) // 通知仓库，用于创建通知记录
+	notificationRepo := repo.NewNotificationRepo(db)
+	videoRepo := repo.NewVideoRepo(db)
+	userRepo := repo.NewUserRepo(db)
 
 	// 初始化Redis缓存
 	redisCache := cache.NewRedisCache(config.AppConfig.Redis_addr, config.AppConfig.Redis_password, config.AppConfig.Redis_db)
@@ -102,6 +104,9 @@ func run() error {
 	}
 	logger.Info("redis connected")
 
+	// 初始化Service
+	notificationService := service.NewNotificationService(redisCache, notificationRepo, videoRepo, userRepo)
+
 	// 信号监听：SIGINT/SIGTERM 触发优雅退出
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -110,7 +115,8 @@ func run() error {
 	var wg sync.WaitGroup
 
 	// 启动点赞消费
-	if err := mq.StartLikeConsumer(ctx, likeMQ, likeRepo, redisCache, videoRepo, notificationRepo, &wg); err != nil {
+	// 将 notificationService 以接口的形式传入 StartLikeConsumer，解耦通知逻辑与 MQ 消费逻辑。
+	if err := mq.StartLikeConsumer(ctx, likeMQ, likeRepo, redisCache, notificationService, &wg); err != nil {
 		return fmt.Errorf("start like consumer: %w", err)
 	}
 

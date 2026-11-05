@@ -131,47 +131,62 @@ func SetupRouter(sqlDB *gorm.DB, cache *cache.RedisCache, rmq *mq.RabbitMQ, auth
 	r.StaticFS("/static", safeStaticFS{fs: http.Dir(file.StaticRoot())})
 
 	// 初始化各层组件
-	// User
+	// ==========================================
+	// 1. 初始化所有底层 Repo (复用实例)
+	// ==========================================
 	userRepo := repo.NewUserRepo(sqlDB)
-	userService := service.NewUserService(userRepo, cache)
-	userHandler := handler.NewUserHandler(userService)
-	// Like
+	videoRepo := repo.NewVideoRepo(sqlDB)
+	likeRepo := repo.NewLikeRepo(sqlDB)
+	commentRepo := repo.NewCommentRepo(sqlDB)
+	socialRepo := repo.NewSocialRepo(sqlDB)
+	feedRepo := repo.NewFeedRepo(sqlDB)
+	notificationRepo := repo.NewNotificationRepo(sqlDB)
+	chunkRepo := repo.NewChunkRepo(cache)
+
+	// ==========================================
+	// 2. 初始化 MQ (带降级处理)
+	// ==========================================
 	likeMQ, err := mq.NewLikeMQ(rmq)
 	if err != nil {
 		// MQ降级：保留已禁用的合法实例，点赞投递由service层回退数据库
 		logger.Warn("LikeMQ disabled, like events fallback to database", logger.Err(err))
 	}
-	likeRepo := repo.NewLikeRepo(sqlDB)
-	likeService := service.NewLikeService(likeRepo, likeMQ, userService, cache)
-	likeHandler := handler.NewLikeHandler(likeService)
-	// Video
-	videoRepo := repo.NewVideoRepo(sqlDB)
-	videoService := service.NewVideoService(videoRepo, userService, cache, likeService) // 传入UserService以便查询作者信息
-	// 这里把 VideoService 以接口形式注入回 LikeService，避免构造时互相依赖形成循环。
-	likeService.SetVideoDetailer(videoService)
-	videoHandler := handler.NewVideoHandler(videoService)
-	// Comment
+
 	commentMQ, err := mq.NewCommentMQ(rmq)
 	if err != nil {
 		// MQ降级：保留已禁用的合法实例，评论投递由service层回退数据库
 		logger.Warn("CommentMQ disabled, comment events fallback to database", logger.Err(err))
 	}
-	commentRepo := repo.NewCommentRepo(sqlDB)
+
+	// ==========================================
+	// 3. 初始化 Service (按依赖顺序自底向上组装)
+	// ==========================================
+	// 基础 Service (无其他 Service 依赖)
+	userService := service.NewUserService(userRepo, cache)
+	notificationService := service.NewNotificationService(cache, notificationRepo, videoRepo, userRepo)
+
+	// 业务 Service (依赖基础 Service)
+	likeService := service.NewLikeService(likeRepo, likeMQ, userService, notificationService, cache)
+	videoService := service.NewVideoService(videoRepo, userService, cache, likeService)
+	// 破循环依赖：这里把 VideoService 以接口形式注入回 LikeService
+	likeService.SetVideoDetailer(videoService)
 	commentService := service.NewCommentService(commentRepo, commentMQ, cache, likeService, videoService)
-	commentHandler := handler.NewCommentHandler(commentService)
-	// Social
-	socialRepo := repo.NewSocialRepo(sqlDB)
 	socialService := service.NewSocialService(socialRepo, cache, userService)
-	socialHandler := handler.NewSocialHandler(socialService)
-	// Feed
-	feedRepo := repo.NewFeedRepo(sqlDB)
 	feedService := service.NewFeedService(feedRepo, likeService, socialService, commentService, userService)
-	feedHandler := handler.NewFeedHandler(feedService)
-	// Chunk
-	chunkRepo := repo.NewChunkRepo(cache)
 	chunkService := service.NewChunkService(chunkRepo)
+
+	// ==========================================
+	// 4. 初始化 Handler (最上层，直接对接路由)
+	// ==========================================
+	userHandler := handler.NewUserHandler(userService)
+	likeHandler := handler.NewLikeHandler(likeService)
+	videoHandler := handler.NewVideoHandler(videoService)
+	commentHandler := handler.NewCommentHandler(commentService)
+	socialHandler := handler.NewSocialHandler(socialService)
+	feedHandler := handler.NewFeedHandler(feedService)
 	chunkHandler := handler.NewChunkHandler(chunkService)
-	// SSE
+
+	// SSE Handler 只需要 cache
 	sseHandler := handler.NewSSEHandler(cache)
 
 	// 设置路由
