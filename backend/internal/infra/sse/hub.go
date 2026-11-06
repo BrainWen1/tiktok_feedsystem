@@ -123,3 +123,15 @@ func (h *Hub) SendToUser(ctx context.Context, userID uint, messageJSON string) {
 		})
 	}
 }
+
+// PublishSSEMessage 是一个工具函数，用于向 Redis Pub/Sub 发布 SSE 消息。
+func PublishSSEMessage(ctx context.Context, redisCache *cache.RedisCache, payload any) error {
+	// 使用同一个 redis 频道 "sse:push"，让 Hub 的订阅协程接收消息并推送给前端。
+	channel := cache.SSEPushChannel()
+	// 将传入的不同结构的结构体序列化为 JSON 字符串
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	return redisCache.Publish(ctx, channel, string(data))
+}

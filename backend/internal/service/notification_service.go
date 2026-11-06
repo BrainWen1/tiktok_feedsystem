@@ -2,10 +2,10 @@ package service
 
 import (
 	"context"
-	"encoding/json"
 	"feedsystem/internal/dto"
 	"feedsystem/internal/infra/cache"
 	"feedsystem/internal/infra/mq"
+	infra "feedsystem/internal/infra/sse"
 	"feedsystem/internal/model"
 	"feedsystem/internal/repo"
 	"feedsystem/internal/utils/logger"
@@ -103,31 +103,34 @@ func (s *NotificationService) ProcessNotification(ctx context.Context, event mq.
 	}
 
 	// 触发 SSE 推送
-	s.pushSSEViaRedis(ctx, notif.ReceiverID, notif.Content, newUnreadCount)
+	s.pushSSEViaRedis(ctx, notif, newUnreadCount)
 
 	return nil
 }
 
-func (s *NotificationService) pushSSEViaRedis(ctx context.Context, receiverID uint, content string, unreadCount int64) {
-	// 公共频道
-	channel := cache.SSEPushChannel()
+// NotifSSEMessage 是一个结构体，用于封装 SSE 推送的消息内容
+type NotifSSEMessage struct {
+	Type        string    `json:"type"` // 核心区分：前端根据这个字段判断是 'notification' 还是 'message'
+	UserID      uint      `json:"user_id"`
+	Content     string    `json:"content"`
+	UnreadCount int64     `json:"unread_count,omitempty"`
+	CreatedAt   time.Time `json:"created_at"`
+}
 
+func (s *NotificationService) pushSSEViaRedis(ctx context.Context, notif *model.Notification, unreadCount int64) {
 	// 构造 SSE 消息
-	type sseMessage struct {
-		UserID      uint   `json:"user_id"`
-		Content     string `json:"content"`
-		UnreadCount int64  `json:"unread_count,omitempty"`
-	}
-	data, err := json.Marshal(sseMessage{UserID: receiverID, Content: content, UnreadCount: unreadCount})
-	if err != nil {
-		logger.Ctx(ctx).Error("marshal sse message failed", logger.Err(err))
-		return
+	msg := NotifSSEMessage{
+		Type:        "notification",
+		UserID:      notif.ReceiverID,
+		Content:     notif.Content,
+		UnreadCount: unreadCount,
+		CreatedAt:   notif.CreatedAt,
 	}
 
-	// 通过 Redis 发布消息到公共频道，SSEHandler 会订阅这个频道并推送给对应的用户
-	err = s.redisCache.Publish(ctx, channel, string(data))
+	// 调用 infra 层的公共方法 PublishSSEMessage，向 Redis 发布消息
+	err := infra.PublishSSEMessage(ctx, s.redisCache, msg)
 	if err != nil {
-		logger.Ctx(ctx).Error("publish sse message failed", logger.Err(err))
+		logger.Ctx(ctx).Error("publish SSE message to redis failed", logger.Err(err))
 	}
 }
 

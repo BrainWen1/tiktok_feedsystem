@@ -143,6 +143,7 @@ func SetupRouter(sqlDB *gorm.DB, cache *cache.RedisCache, rmq *mq.RabbitMQ, auth
 	feedRepo := repo.NewFeedRepo(sqlDB)
 	notificationRepo := repo.NewNotificationRepo(sqlDB)
 	chunkRepo := repo.NewChunkRepo(cache)
+	messageRepo := repo.NewMessageRepo(sqlDB)
 
 	// ==========================================
 	// 2. 初始化 MQ (带降级处理)
@@ -165,6 +166,7 @@ func SetupRouter(sqlDB *gorm.DB, cache *cache.RedisCache, rmq *mq.RabbitMQ, auth
 	// 基础 Service (无其他 Service 依赖)
 	userService := service.NewUserService(userRepo, cache)
 	notificationService := service.NewNotificationService(cache, notificationRepo, videoRepo, commentRepo)
+	messageService := service.NewMessageService(messageRepo, cache)
 
 	// 业务 Service (依赖基础 Service)
 	likeService := service.NewLikeService(likeRepo, likeMQ, userService, notificationService, cache)
@@ -188,6 +190,7 @@ func SetupRouter(sqlDB *gorm.DB, cache *cache.RedisCache, rmq *mq.RabbitMQ, auth
 	chunkHandler := handler.NewChunkHandler(chunkService)
 	sseHandler := handler.NewSSEHandler(cache, hub) // 注入 hub，供 SSEHandler 调用 hub.SendToUser() 推送消息
 	notificationHandler := handler.NewNotificationHandler(notificationService)
+	messageHandler := handler.NewMessageHandler(messageService)
 
 	// 设置路由
 	// 健康检查路由
@@ -306,6 +309,12 @@ func SetupRouter(sqlDB *gorm.DB, cache *cache.RedisCache, rmq *mq.RabbitMQ, auth
 	r.POST("/sse/ticket", authMiddleware.Auth(), sseHandler.GetSSETicket)
 	// 2. SSE 连接接口，不带常规 JWT 中间件（因为头里塞不进去）
 	r.GET("/sse", sseHandler.SSE)
+
+	// Message 相关路由
+	messageGroup := r.Group("/message", authMiddleware.Auth())
+	{
+		messageGroup.POST("/send", messageHandler.SendMessage) // 发送消息
+	}
 
 	// 返回配置好的路由引擎
 	return r
