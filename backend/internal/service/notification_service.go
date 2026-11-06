@@ -36,6 +36,7 @@ func NewNotificationService(redisCache *cache.RedisCache, notificationRepo *repo
 }
 
 // ProcessNotification 返回 error，方便外部调用方（如 worker 和 降级逻辑）统一处理
+// 后续如果在函数内部加入重试机制，则需要使用 eventID 做幂等，目前这个字段没作用；全链路追踪已经使用注入到 context 中的 requestID 来做了
 func (s *NotificationService) ProcessNotification(ctx context.Context, event mq.NotificationEvent) error {
 	var notif *model.Notification
 	var err error
@@ -76,27 +77,42 @@ func (s *NotificationService) ProcessNotification(ctx context.Context, event mq.
 
 	// 更新 Redis 未读数
 	unreadKey := cache.UnreadCountKey(notif.ReceiverID)
-	_, err = s.redisCache.Increase(ctx, unreadKey, 1, cache.UnreadCountTTL)
+	newUnreadCount, err := s.redisCache.Increase(ctx, unreadKey, 1, cache.UnreadCountTTL)
 	if err != nil {
 		logger.Ctx(ctx).Error("incr unread count failed", logger.Err(err))
 	}
 
+	// 如果 newUnreadCount == 1，说明 Redis 里之前没这个 key（过期或宕机了）
+	// 这个时候去 DB 查一次真源，把总数拉回来
+	if newUnreadCount == 1 {
+		dbCount, err := s.notificationRepo.CountUnreadByReceiverID(ctx, notif.ReceiverID)
+		if err == nil && dbCount > 1 {
+			newUnreadCount = dbCount
+			// 把真实的库数据回填到 Redis 中
+			err = s.redisCache.SetNX(ctx, unreadKey, strconv.FormatInt(dbCount, 10), cache.UnreadCountTTL)
+			if err != nil {
+				logger.Ctx(ctx).Error("set unread count to redis failed", logger.Err(err))
+			}
+		}
+	}
+
 	// 触发 SSE 推送
-	s.pushSSEViaRedis(ctx, notif.ReceiverID, notif.Content)
+	s.pushSSEViaRedis(ctx, notif.ReceiverID, notif.Content, newUnreadCount)
 
 	return nil
 }
 
-func (s *NotificationService) pushSSEViaRedis(ctx context.Context, receiverID uint, content string) {
+func (s *NotificationService) pushSSEViaRedis(ctx context.Context, receiverID uint, content string, unreadCount int64) {
 	// 公共频道
-	channel := "sse:push"
+	channel := cache.SSEPushChannel()
 
 	// 构造 SSE 消息
 	type sseMessage struct {
-		UserID  uint   `json:"user_id"`
-		Content string `json:"content"`
+		UserID      uint   `json:"user_id"`
+		Content     string `json:"content"`
+		UnreadCount int64  `json:"unread_count,omitempty"`
 	}
-	data, err := json.Marshal(sseMessage{UserID: receiverID, Content: content})
+	data, err := json.Marshal(sseMessage{UserID: receiverID, Content: content, UnreadCount: unreadCount})
 	if err != nil {
 		logger.Ctx(ctx).Error("marshal sse message failed", logger.Err(err))
 		return

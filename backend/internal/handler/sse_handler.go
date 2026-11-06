@@ -2,13 +2,13 @@ package handler
 
 import (
 	"feedsystem/internal/infra/cache"
+	infra "feedsystem/internal/infra/sse"
 	"feedsystem/internal/utils/logger"
 	"feedsystem/internal/utils/response"
 	"fmt"
 	"io"
 	"net/http"
 	"strconv"
-	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -17,17 +17,15 @@ import (
 
 type SSEHandler struct {
 	redisCache *cache.RedisCache
+	hub        *infra.Hub
 }
 
-func NewSSEHandler(redisCache *cache.RedisCache) *SSEHandler {
+func NewSSEHandler(redisCache *cache.RedisCache, hub *infra.Hub) *SSEHandler {
 	return &SSEHandler{
 		redisCache: redisCache,
+		hub:        hub,
 	}
 }
-
-// 外层 sync.Map: map[uint(用户ID)] -> *sync.Map(内层)
-// 内层 sync.Map: map[string(连接ID)] -> chan string
-var sseClients sync.Map // map[uint]chan string，存 userID 对应的通道
 
 // SSE 处理函数，前端通过 /sse?ticket=xxx 连接，用于创建一个 SSE 连接，接收实时消息
 func (h *SSEHandler) SSE(c *gin.Context) {
@@ -59,45 +57,30 @@ func (h *SSEHandler) SSE(c *gin.Context) {
 	c.Writer.Header().Set("Content-Type", "text/event-stream")
 	c.Writer.Header().Set("Cache-Control", "no-cache")
 	c.Writer.Header().Set("Connection", "keep-alive")
+	c.Writer.Header().Set("X-Accel-Buffering", "no") // Nginx 反向代理时，禁用缓冲，确保消息实时推送给前端
 
 	// 针对当前 SSE 请求，把写超时时间设为无限（或者设置一个极长的值）
 	rc := http.NewResponseController(c.Writer)
 	if err := rc.SetWriteDeadline(time.Time{}); err != nil { // time.Time{} 表示无限期
-		logger.Error("failed to set write deadline for SSE", logger.Err(err))
+		logger.Ctx(c.Request.Context()).Error("failed to set write deadline for SSE", logger.Err(err))
 		// 视情况决定是否 return，如果这里报错说明底层不支持，但一般都会支持
 	}
 
 	// 生成一个唯一连接 ID
 	clientID := uuid.New().String()
 
-	// 初始化该用户的 channel
-	messageChan := make(chan string, 10)
-
-	// LoadOrStore：如果外层有这个 userID，返回已存在的值（loaded=true）；
-	// 如果没有，存入一个新的 &sync.Map{} 并返回传入的值（loaded=false）。
-	actual, _ := sseClients.LoadOrStore(userID, &sync.Map{})
-	userMap := actual.(*sync.Map) // 指向内层的 map，key=clientID，value=messageChan
-
-	// 本连接的 channel 存入内层 map
-	userMap.Store(clientID, messageChan)
+	// 注册 SSE 客户端连接，获取对应的消息通道
+	messageChan := h.hub.RegisterSSEClient(c.Request.Context(), userID, clientID)
 
 	// 断开时清理
 	defer func() {
-		// 只删除自己的连接
-		userMap.Delete(clientID)
-
-		// 判断一下这个内层 map 是不是空了，如果空了，在外层 map 里把整个内层 map 也删掉，释放内存。
-		// 因为 sync.Map 没有 Len()，我们通过 Range 试探：
-		isEmpty := true
-		userMap.Range(func(k, v interface{}) bool {
-			isEmpty = false
-			return false // 只要找到一个，立刻停止遍历
-		})
-		if isEmpty {
-			sseClients.Delete(userID)
-		}
+		h.hub.UnregisterSSEClient(c.Request.Context(), userID, clientID)
+		logger.Ctx(c.Request.Context()).Info("SSE client disconnected", logger.Uint("userID", userID), logger.String("clientID", clientID))
 	}()
 
+	// 创建一个 ticker，避免 time.After 每次发送心跳都要创建和销毁定时器，高并发下开销大
+	ticker := time.NewTicker(15 * time.Second)
+	defer ticker.Stop()
 	// 把通道里的数据，源源不断写给前端
 	c.Stream(func(w io.Writer) bool {
 		select {
@@ -105,7 +88,7 @@ func (h *SSEHandler) SSE(c *gin.Context) {
 			// 格式必须是 "data: xxx\n\n"
 			c.SSEvent("message", msg)
 			return true // 继续监听
-		case <-time.After(15 * time.Second):
+		case <-ticker.C:
 			// 15秒没消息，发送一个心跳，防止前端断开
 			c.SSEvent("heartbeat", "ping")
 			return true
@@ -113,31 +96,6 @@ func (h *SSEHandler) SSE(c *gin.Context) {
 			return false
 		}
 	})
-}
-
-// API 进程收到 Redis 消息时，调用这个函数推给用户
-func SendToUser(userID uint, content string) {
-	if userMapObj, ok := sseClients.Load(userID); ok {
-		// 遍历该用户的所有连接，依次发送消息
-		userMap := userMapObj.(*sync.Map)
-
-		userMap.Range(func(key, val interface{}) bool {
-			// key 是 clientID，val 是 messageChan
-			messageChan := val.(chan string)
-			// 非阻塞发送消息，如果通道满了就丢弃，避免阻塞
-			select {
-			case messageChan <- content:
-				// 发送成功
-			default:
-				// 通道满了，说明前端卡顿或断开，直接丢弃该消息。
-				// 为什么敢丢弃？因为数据库里已经落库了通知，前端只要重新连上，
-				// 或者刷新页面拉取列表调用/notification/list，依然能看到这条通知。
-				clientID := key.(string)
-				logger.Ctx(nil).Warn("SSE channel full, dropping message", logger.Uint("userID", userID), logger.String("clientID", clientID))
-			}
-			return true // 继续遍历
-		})
-	}
 }
 
 // GetSSETicket 处理函数，前端调用 /sse/ticket 获取一个临时 ticket，用于 SSE 连接鉴权

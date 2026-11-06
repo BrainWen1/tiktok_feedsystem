@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"net/http"
 	"os"
@@ -12,11 +11,11 @@ import (
 	"time"
 
 	"feedsystem/internal/config"
-	"feedsystem/internal/handler"
 	"feedsystem/internal/handler/middleware"
 	"feedsystem/internal/infra/cache"
 	"feedsystem/internal/infra/database"
 	"feedsystem/internal/infra/mq"
+	infra "feedsystem/internal/infra/sse"
 	"feedsystem/internal/model"
 	"feedsystem/internal/repo"
 	"feedsystem/internal/router"
@@ -126,11 +125,12 @@ func main() {
 	chunkService := service.NewChunkService(repo.NewChunkRepo(redisCache))
 	go chunkService.RunGarbageCollector(ctx, time.Hour)
 
-	// 设置路由
-	r := router.SetupRouter(db, redisCache, rmq, authMiddleware)
-
 	// 启用 SSE 订阅器，监听 Redis Pub/Sub 的 SSE 推送频道
-	StartSSESubscriber(ctx, redisCache)
+	hub := infra.NewHub()
+	hub.StartSSESubscriber(ctx, redisCache)
+
+	// 设置路由
+	r := router.SetupRouter(db, redisCache, rmq, authMiddleware, hub)
 
 	// 显式配置 http.Server 超时，避免慢连接耗尽连接资源
 	srv := &http.Server{
@@ -166,43 +166,4 @@ func main() {
 		logger.Info("server stopped gracefully")
 	}
 	// main 返回后按 LIFO 顺序执行 defer：关闭 MQ -> Redis -> DB
-}
-
-// StartSSESubscriber 启动一个协程订阅 Redis Pub/Sub 的 SSE 推送频道。
-// 这个函数在 main() 中调用，确保在服务启动时就开始监听通知事件。
-// 当 Worker 发布通知事件到 Redis 时，这个协程会接收消息并触发 SSE 推送。
-func StartSSESubscriber(ctx context.Context, redisCache *cache.RedisCache) {
-	pubsub, err := redisCache.Subscribe(ctx, "sse:push")
-	if err != nil {
-		logger.Error("subscribe sse channel failed", logger.Err(err))
-		return
-	}
-	defer pubsub.Close()
-
-	// 启动一个协程死循环接收 Redis 消息
-	go func() {
-		for {
-			msg, err := pubsub.ReceiveMessage(ctx)
-			if err != nil {
-				logger.Error("receive redis pubsub msg failed", logger.Err(err))
-				// 如果是上下文取消或连接关闭，退出循环，避免热循环
-				if errors.Is(err, context.Canceled) || ctx.Err() != nil {
-					return
-				}
-				continue
-			}
-			// msg.Payload 就是 Worker 发过来的 JSON
-			// 解析出 user_id 和 content
-			// 然后调用内存里的 SSE Hub： hub.SendToUser(userID, content)
-			var data struct {
-				UserID  uint   `json:"user_id"`
-				Content string `json:"content"`
-			}
-			if err := json.Unmarshal([]byte(msg.Payload), &data); err != nil {
-				logger.Error("unmarshal redis pubsub msg failed", logger.Err(err))
-				continue
-			}
-			handler.SendToUser(data.UserID, data.Content)
-		}
-	}()
 }

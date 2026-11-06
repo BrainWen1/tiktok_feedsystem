@@ -7,6 +7,7 @@ import (
 	"feedsystem/internal/infra/cache"
 	"feedsystem/internal/infra/mq"
 	"feedsystem/internal/infra/ratelimit"
+	infra "feedsystem/internal/infra/sse"
 	"feedsystem/internal/repo"
 	"feedsystem/internal/service"
 	"feedsystem/internal/utils/file"
@@ -88,7 +89,7 @@ func isForbiddenStaticPath(name string) bool {
 	return blocked
 }
 
-func SetupRouter(sqlDB *gorm.DB, cache *cache.RedisCache, rmq *mq.RabbitMQ, authMiddleware *middleware.AuthMiddleware) *gin.Engine {
+func SetupRouter(sqlDB *gorm.DB, cache *cache.RedisCache, rmq *mq.RabbitMQ, authMiddleware *middleware.AuthMiddleware, hub *infra.Hub) *gin.Engine {
 	// 创建一个默认的Gin引擎
 	r := gin.Default()
 
@@ -185,9 +186,7 @@ func SetupRouter(sqlDB *gorm.DB, cache *cache.RedisCache, rmq *mq.RabbitMQ, auth
 	socialHandler := handler.NewSocialHandler(socialService)
 	feedHandler := handler.NewFeedHandler(feedService)
 	chunkHandler := handler.NewChunkHandler(chunkService)
-
-	// SSE Handler 只需要 cache
-	sseHandler := handler.NewSSEHandler(cache)
+	sseHandler := handler.NewSSEHandler(cache, hub) // 注入 hub，供 SSEHandler 调用 hub.SendToUser() 推送消息
 
 	// 设置路由
 	// 健康检查路由

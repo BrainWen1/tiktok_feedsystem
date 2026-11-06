@@ -11,8 +11,6 @@ import (
 	"fmt"
 	"strconv"
 	"time"
-
-	"github.com/google/uuid"
 )
 
 // 点赞视频列表分页参数。
@@ -81,7 +79,9 @@ func (s *LikeService) LikeVideo(ctx context.Context, userID, vid uint) error {
 
 			// err 使用 := 创建局部变量，避免覆盖外层的 err，防止以后可能发生的竞态
 			err := s.notificationService.ProcessNotification(nctx, mq.NotificationEvent{
-				EventID:  uuid.New().String(), // 临时生成一个
+				// 目前 eventID 先传空串，后续如果在函数内部加入重试机制，则需要使用 eventID 做幂等
+				// 这里不使用 uuid.NewString()，因为在函数内部也不会使用，会产生垃圾
+				EventID:  "",
 				Action:   "like",
 				ActorID:  userID,
 				TargetID: vid,

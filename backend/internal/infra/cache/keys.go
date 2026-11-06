@@ -33,6 +33,8 @@ const (
 	unreadCountPrefix = "unread:"
 	// sseTicketPrefix SSE 临时 ticket 前缀，Redis 数据结构为 String，value 为 userID。
 	sseTicketPrefix = "sse:ticket:"
+	// ssePushChannel SSE 公共频道，Redis 数据结构为 Pub/Sub。
+	ssePushChannel = "sse:push"
 )
 
 const (
@@ -117,4 +119,9 @@ func UnreadCountKey(userID uint) string {
 // SSETicketKey 返回 SSE 临时 ticket 的 Redis key。
 func SSETicketKey(ticket string) string {
 	return fmt.Sprintf("%s%s", sseTicketPrefix, ticket)
+}
+
+// SSEPushChannel 返回 SSE 公共频道的 Redis key。
+func SSEPushChannel() string {
+	return ssePushChannel
 }
