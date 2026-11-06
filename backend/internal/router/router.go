@@ -187,6 +187,7 @@ func SetupRouter(sqlDB *gorm.DB, cache *cache.RedisCache, rmq *mq.RabbitMQ, auth
 	feedHandler := handler.NewFeedHandler(feedService)
 	chunkHandler := handler.NewChunkHandler(chunkService)
 	sseHandler := handler.NewSSEHandler(cache, hub) // 注入 hub，供 SSEHandler 调用 hub.SendToUser() 推送消息
+	notificationHandler := handler.NewNotificationHandler(notificationService)
 
 	// 设置路由
 	// 健康检查路由
@@ -291,11 +292,14 @@ func SetupRouter(sqlDB *gorm.DB, cache *cache.RedisCache, rmq *mq.RabbitMQ, auth
 		chunkGroup.POST("/cancel", chunkHandler.CancelUpload)        // 取消上传并清理碎片
 	}
 
-	// notification 相关路由：必须登录，按 userID 隔离
-	// notificationGroup := r.Group("/notification", authMiddleware.Auth())
-	// {
-	// 	notificationGroup.GET("/list", handler.NotificationListHandler) // 获取用户通知列表
-	// }
+	// Notification 相关路由
+	notificationGroup := r.Group("/notification", authMiddleware.Auth())
+	{
+		notificationGroup.GET("/list", notificationHandler.ListNotifications)      // 获取通知列表
+		notificationGroup.GET("/unread_count", notificationHandler.GetUnreadCount) // 获取未读总数
+		notificationGroup.POST("/read", notificationHandler.MarkAsRead)            // 标记单条已读
+		notificationGroup.POST("/read_all", notificationHandler.MarkAllAsRead)     // 标记全部已读
+	}
 
 	// SSE 订阅路由：必须登录，按 userID 隔离
 	// 1. 换取 Ticket 的接口，走常规 JWT 鉴权

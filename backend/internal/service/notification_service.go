@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"feedsystem/internal/dto"
 	"feedsystem/internal/infra/cache"
 	"feedsystem/internal/infra/mq"
 	"feedsystem/internal/model"
@@ -11,6 +12,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 )
 
 const (
@@ -234,7 +236,7 @@ func (s *NotificationService) GetUnreadCount(ctx context.Context, userID uint) (
 	// Redis 没命中（挂了或者过期了），去 MySQL 兜底查
 	logger.Ctx(ctx).Info("redis unread count miss, fallback to db", logger.Uint("user_id", userID))
 
-	// 这里的 repo 方法你需要自己写一个：SELECT count(*) WHERE receiver_id = ? AND is_read = false
+	// 调用 repo 层的 CountUnreadByReceiverID 方法
 	count, err := s.notificationRepo.CountUnreadByReceiverID(ctx, userID)
 	if err != nil {
 		return 0, err
@@ -250,4 +252,78 @@ func (s *NotificationService) GetUnreadCount(ctx context.Context, userID uint) (
 	}
 
 	return count, nil
+}
+
+// buildNotificationListResp 将原始model.Notification切片，组装成dto.ListNotificationsResponse，包含next_cursor
+func buildNotificationListResp(notifications []model.Notification) dto.ListNotificationsResponse {
+	resp := dto.ListNotificationsResponse{
+		Notifications: notifications,
+	}
+	// 有数据才返回next_cursor；列表为空，next_cursor直接不返回（前端判定没有更多）
+	if len(notifications) > 0 {
+		last := notifications[len(notifications)-1]
+		resp.NextLastTime = &last.CreatedAt
+		resp.NextLastID = &last.ID
+	}
+	return resp
+}
+
+// ListNotifications 获取用户通知列表
+func (s *NotificationService) ListNotifications(ctx context.Context, userID uint, lastTime time.Time, lastID uint, limit int) (dto.ListNotificationsResponse, error) {
+	// 统一将 lastTime 转为 UTC，避免时区问题
+	if !lastTime.IsZero() {
+		lastTime = lastTime.UTC() // 统一转为 UTC 去查库
+	}
+	// 解析 limit，保证合理范围
+	if limit <= 0 || limit > 100 {
+		limit = 20 // 默认值
+	}
+	// 调用 repo 层获取通知列表
+	notifications, err := s.notificationRepo.ListByCursor(ctx, userID, lastTime, lastID, limit)
+	if err != nil {
+		return dto.ListNotificationsResponse{}, err
+	}
+
+	// 组装成 dto.ListNotificationsResponse，包含 next_cursor
+	resp := buildNotificationListResp(notifications)
+
+	return resp, nil
+}
+
+// MarkAsRead 标记单条通知为已读
+func (s *NotificationService) MarkAsRead(ctx context.Context, userID, notificationID uint) error {
+	// 调用 repo 层的 MarkRead 方法，确保只更新未读的通知
+	changed, err := s.notificationRepo.MarkRead(ctx, userID, notificationID)
+	if err != nil {
+		logger.Ctx(ctx).Error("mark notification as read failed", logger.Uint("user_id", userID), logger.Uint("notification_id", notificationID), logger.Err(err))
+		return err
+	}
+
+	// 如果确实更新了，则处理缓存
+	if changed {
+		unreadKey := cache.UnreadCountKey(userID)
+		// 简单粗暴且绝对安全的方法：直接删除缓存
+		// 前端此时会下一次查 GetUnreadCount，发现 Redis 没了，自动去 DB 算一遍准确的
+		// 这比维护 DECR 遇到并发和负数边界要靠谱得多
+		err = s.redisCache.Delete(ctx, unreadKey)
+		if err != nil {
+			logger.Ctx(ctx).Error("delete unread count cache failed", logger.Uint("user_id", userID), logger.Err(err))
+		}
+	}
+	return nil
+}
+
+// MarkAllAsRead 标记全部通知为已读
+func (s *NotificationService) MarkAllAsRead(ctx context.Context, userID uint) error {
+	// 调用 repo 层的 MarkAllRead 方法，将所有未读通知标记为已读
+	if err := s.notificationRepo.MarkAllRead(ctx, userID); err != nil {
+		return err
+	}
+	// 全部都已读，直接删除 Redis 缓存
+	unreadKey := cache.UnreadCountKey(userID)
+	err := s.redisCache.Delete(ctx, unreadKey)
+	if err != nil {
+		logger.Ctx(ctx).Error("delete unread count cache failed", logger.Uint("user_id", userID), logger.Err(err))
+	}
+	return nil
 }
