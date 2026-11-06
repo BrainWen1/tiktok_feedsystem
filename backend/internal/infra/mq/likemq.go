@@ -49,6 +49,7 @@ type LikeEvent struct {
 	EventID    string    `json:"event_id"` // 全局唯一的消息ID，用于幂等处理，避免MQ重复投递
 	Action     string    `json:"action"`
 	UserID     uint      `json:"user_id"`
+	UserName   string    `json:"user_name"` // 点赞用户的用户名
 	VideoID    uint      `json:"video_id"`
 	OccurredAt time.Time `json:"occurred_at"`
 }
@@ -83,24 +84,24 @@ func NewLikeMQ(base *RabbitMQ) (*LikeMQ, error) {
 }
 
 // Like 发布点赞事件到 RabbitMQ
-func (l *LikeMQ) Like(ctx context.Context, userID, videoID uint) error {
-	return l.publish(ctx, "like", likeLikeRK, userID, videoID)
+func (l *LikeMQ) Like(ctx context.Context, like *LikeEvent) error {
+	return l.publish(ctx, "like", likeLikeRK, like)
 }
 
 // Unlike 发布取消点赞事件到 RabbitMQ
-func (l *LikeMQ) Unlike(ctx context.Context, userID, videoID uint) error {
-	return l.publish(ctx, "unlike", likeUnlikeRK, userID, videoID)
+func (l *LikeMQ) Unlike(ctx context.Context, like *LikeEvent) error {
+	return l.publish(ctx, "unlike", likeUnlikeRK, like)
 }
 
 // publish 发布点赞或取消点赞事件到 RabbitMQ
-func (l *LikeMQ) publish(ctx context.Context, action, routingKey string, userID, videoID uint) error {
+func (l *LikeMQ) publish(ctx context.Context, action, routingKey string, like *LikeEvent) error {
 	if !l.IsEnabled() {
 		return ErrMQDisabled // MQ已禁用，跳过投递，由service层降级写数据库
 	}
 	if l.ch == nil {
 		return errors.New("like mq is not initialized")
 	}
-	if userID == 0 || videoID == 0 {
+	if like.UserID == 0 || like.VideoID == 0 {
 		return errors.New("userID and videoID are required")
 	}
 
@@ -113,8 +114,9 @@ func (l *LikeMQ) publish(ctx context.Context, action, routingKey string, userID,
 	event := LikeEvent{
 		EventID:    id,
 		Action:     action,
-		UserID:     userID,
-		VideoID:    videoID,
+		UserID:     like.UserID,
+		UserName:   like.UserName,
+		VideoID:    like.VideoID,
 		OccurredAt: time.Now(),
 	}
 	// 发布事件到 RabbitMQ

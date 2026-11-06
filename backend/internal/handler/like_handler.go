@@ -22,7 +22,7 @@ func NewLikeHandler(likeService *service.LikeService) *LikeHandler {
 // LikeVideo 点赞视频
 func (h *LikeHandler) LikeVideo(c *gin.Context) {
 	// 获取当前登录用户ID
-	userID, _, err := getUserFromCtx(c)
+	userID, userName, err := getUserFromCtx(c)
 	if err != nil {
 		logger.Ctx(c.Request.Context()).Error("get user from context failed", logger.Err(err))
 		response.FailResponse(c, "Failed to get user from context")
@@ -37,7 +37,7 @@ func (h *LikeHandler) LikeVideo(c *gin.Context) {
 	}
 
 	// 调用服务层的LikeVideo方法
-	if err := h.LikeService.LikeVideo(c.Request.Context(), userID, req.VideoID); err != nil {
+	if err := h.LikeService.LikeVideo(c.Request.Context(), userID, req.VideoID, userName); err != nil {
 		logger.Ctx(c.Request.Context()).Error("like video failed", logger.Uint("user_id", userID), logger.Uint("video_id", req.VideoID), logger.Err(err))
 		response.FailResponse(c, fmt.Sprintf("Failed to like video: %v", err))
 		return

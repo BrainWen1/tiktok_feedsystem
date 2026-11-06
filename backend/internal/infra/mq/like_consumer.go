@@ -199,7 +199,8 @@ func handleLikeMessage(parent context.Context, ch *amqp.Channel, msg amqp.Delive
 				EventID:  event.EventID,
 				Action:   event.Action,
 				ActorID:  event.UserID,
-				TargetID: event.VideoID,
+				UserName: event.UserName,
+				VideoID:  event.VideoID,
 			})
 			if err != nil {
 				logger.Ctx(nctx).Error("process notification failed", logger.Err(err))

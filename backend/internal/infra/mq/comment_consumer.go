@@ -6,6 +6,7 @@ import (
 	"errors"
 	"strings"
 	"sync"
+	"time"
 
 	"feedsystem/internal/infra/cache"
 	"feedsystem/internal/repo"
@@ -19,7 +20,7 @@ const commentConsumerTag = "comment-consumer"
 
 // StartCommentConsumer 启动评论消费，给worker调用。
 // ctx 取消后停止拉取新消息并等待在途消息处理完成；wg 用于通知调用方消费协程已退出。
-func StartCommentConsumer(ctx context.Context, cmq *CommentMQ, commentRepo *repo.CommentRepo, redisCache *cache.RedisCache, wg *sync.WaitGroup) error {
+func StartCommentConsumer(ctx context.Context, cmq *CommentMQ, commentRepo *repo.CommentRepo, redisCache *cache.RedisCache, notificationProcessor NotificationProcessor, wg *sync.WaitGroup) error {
 	if !cmq.IsEnabled() {
 		logger.Warn("CommentMQ disabled, skip comment consumer")
 		return ErrMQDisabled // MQ禁用时不启动消费循环
@@ -71,7 +72,7 @@ func StartCommentConsumer(ctx context.Context, cmq *CommentMQ, commentRepo *repo
 					logger.Warn("comment consumer delivery channel closed")
 					return
 				}
-				handleCommentMessage(consumerCtx, ch, msg, commentRepo, redisCache)
+				handleCommentMessage(consumerCtx, ch, msg, commentRepo, redisCache, notificationProcessor)
 			}
 		}
 	}()
@@ -82,7 +83,7 @@ func StartCommentConsumer(ctx context.Context, cmq *CommentMQ, commentRepo *repo
 
 // handleCommentMessage 处理单条评论事件。
 // 每条消息使用独立的超时上下文；WithoutCancel 保证优雅关闭时不中断在途处理。
-func handleCommentMessage(parent context.Context, ch *amqp.Channel, msg amqp.Delivery, commentRepo *repo.CommentRepo, redisCache *cache.RedisCache) {
+func handleCommentMessage(parent context.Context, ch *amqp.Channel, msg amqp.Delivery, commentRepo *repo.CommentRepo, redisCache *cache.RedisCache, notificationProcessor NotificationProcessor) {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), messageHandleTimeout)
 	defer cancel()
 
@@ -169,6 +170,32 @@ func handleCommentMessage(parent context.Context, ch *amqp.Channel, msg amqp.Del
 	// 评论新增/删除已落库，按数据库真实计数回写视频评论计数器。
 	// key 与 feed 读取端共用 cache.CommentVideoCntKey，保证 feeds.comments_cnt 能读到真实计数。
 	refreshCommentCountCache(ctx, redisCache, commentRepo, event.Comment.VideoID)
+
+	// 触发异步通知
+	if event.Action == "create" {
+		// 建议用 go 开个协程异步去发通知
+		// 不要因为通知逻辑报错影响原本的 ACK
+		go func() {
+			// 这里使用 WithoutCancel 保证通知逻辑不会被即将关闭的消费上下文中断，避免通知逻辑被取消。
+			nctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+			defer cancel()
+
+			// err 使用 := 而不是 =，避免覆盖外层变量，不会产生竞态
+			err := notificationProcessor.ProcessNotification(nctx, NotificationEvent{
+				EventID:   event.EventID,
+				Action:    "comment",
+				ActorID:   event.Comment.UserID,
+				UserName:  event.Comment.UserName,
+				VideoID:   event.Comment.VideoID,
+				CommentID: event.Comment.ID, // GORM 会在插入后自动把主键回填到传入的 value 的 id 字段中
+				ParentID:  event.Comment.ParentID,
+				Content:   event.Comment.Content,
+			})
+			if err != nil {
+				logger.Ctx(nctx).Error("process notification failed", logger.Err(err))
+			}
+		}()
+	}
 
 	_ = msg.Ack(false) // 成功处理后 ACK 掉消息
 }

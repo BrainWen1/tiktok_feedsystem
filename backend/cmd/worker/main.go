@@ -88,7 +88,6 @@ func run() error {
 	commentRepo := repo.NewCommentRepo(db)
 	notificationRepo := repo.NewNotificationRepo(db)
 	videoRepo := repo.NewVideoRepo(db)
-	userRepo := repo.NewUserRepo(db)
 
 	// 初始化Redis缓存
 	redisCache := cache.NewRedisCache(config.AppConfig.Redis_addr, config.AppConfig.Redis_password, config.AppConfig.Redis_db)
@@ -105,7 +104,7 @@ func run() error {
 	logger.Info("redis connected")
 
 	// 初始化Service
-	notificationService := service.NewNotificationService(redisCache, notificationRepo, videoRepo, userRepo)
+	notificationService := service.NewNotificationService(redisCache, notificationRepo, videoRepo, commentRepo)
 
 	// 信号监听：SIGINT/SIGTERM 触发优雅退出
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -121,7 +120,7 @@ func run() error {
 	}
 
 	// 启动评论消费
-	if err := mq.StartCommentConsumer(ctx, commentMQ, commentRepo, redisCache, &wg); err != nil {
+	if err := mq.StartCommentConsumer(ctx, commentMQ, commentRepo, redisCache, notificationService, &wg); err != nil {
 		return fmt.Errorf("start comment consumer: %w", err)
 	}
 

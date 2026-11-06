@@ -45,7 +45,7 @@ func (s *LikeService) SetVideoDetailer(videoDetailer VideoDetailer) {
 }
 
 // LikeVideo 点赞视频
-func (s *LikeService) LikeVideo(ctx context.Context, userID, vid uint) error {
+func (s *LikeService) LikeVideo(ctx context.Context, userID, vid uint, userName string) error {
 	if userID == 0 || vid == 0 {
 		logger.Ctx(ctx).Warn("invalid userID or vid", logger.Uint("user_id", userID), logger.Uint("video_id", vid))
 		return errors.New("uid and vid must be non-zero")
@@ -65,7 +65,13 @@ func (s *LikeService) LikeVideo(ctx context.Context, userID, vid uint) error {
 	}
 
 	//组装消息
-	err = s.likeMQ.Like(ctx, userID, vid)
+	like := &mq.LikeEvent{
+		Action:   "like",
+		UserID:   userID,
+		UserName: userName,
+		VideoID:  vid,
+	}
+	err = s.likeMQ.Like(ctx, like)
 	if err != nil {
 		logger.Ctx(ctx).Error("publish like event to MQ failed", logger.Err(err))
 		// MQ投递失败，降级方案：同步直接写数据库
@@ -84,7 +90,8 @@ func (s *LikeService) LikeVideo(ctx context.Context, userID, vid uint) error {
 				EventID:  "",
 				Action:   "like",
 				ActorID:  userID,
-				TargetID: vid,
+				UserName: userName,
+				VideoID:  vid,
 			})
 			if err != nil {
 				logger.Ctx(nctx).Error("process notification failed", logger.Err(err))
@@ -113,7 +120,12 @@ func (s *LikeService) UnlikeVideo(ctx context.Context, userID, vid uint) error {
 	}
 
 	//组装消息
-	err = s.likeMQ.Unlike(ctx, userID, vid)
+	like := &mq.LikeEvent{
+		Action:  "unlike",
+		UserID:  userID,
+		VideoID: vid,
+	}
+	err = s.likeMQ.Unlike(ctx, like)
 	if err != nil {
 		logger.Ctx(ctx).Error("publish unlike event to MQ failed", logger.Err(err))
 		// MQ投递失败，降级方案：同步直接写数据库

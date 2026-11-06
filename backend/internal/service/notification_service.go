@@ -23,15 +23,15 @@ type NotificationService struct {
 	redisCache       *cache.RedisCache
 	notificationRepo *repo.NotificationRepo
 	videoRepo        *repo.VideoRepo
-	userRepo         *repo.UserRepo
+	commentRepo      *repo.CommentRepo
 }
 
-func NewNotificationService(redisCache *cache.RedisCache, notificationRepo *repo.NotificationRepo, videoRepo *repo.VideoRepo, userRepo *repo.UserRepo) *NotificationService {
+func NewNotificationService(redisCache *cache.RedisCache, notificationRepo *repo.NotificationRepo, videoRepo *repo.VideoRepo, commentRepo *repo.CommentRepo) *NotificationService {
 	return &NotificationService{
 		redisCache:       redisCache,
 		notificationRepo: notificationRepo,
 		videoRepo:        videoRepo,
-		userRepo:         userRepo,
+		commentRepo:      commentRepo,
 	}
 }
 
@@ -44,6 +44,8 @@ func (s *NotificationService) ProcessNotification(ctx context.Context, event mq.
 	switch event.Action {
 	case TypeLike:
 		notif, err = s.buildLikeNotification(ctx, event)
+	case TypeComment:
+		notif, err = s.buildCommentNotification(ctx, event)
 	default:
 		logger.Ctx(ctx).Warn("unknown notification action", logger.String("action", event.Action))
 		return nil // 未知类型直接结束
@@ -128,47 +130,82 @@ func (s *NotificationService) pushSSEViaRedis(ctx context.Context, receiverID ui
 // buildLikeNotification 构建点赞通知内容
 func (s *NotificationService) buildLikeNotification(ctx context.Context, event mq.NotificationEvent) (*model.Notification, error) {
 	// 查视频作者
-	video, err := s.videoRepo.FindByID(ctx, event.TargetID)
+	video, err := s.videoRepo.FindByID(ctx, event.VideoID)
 	if err != nil {
 		logger.Ctx(ctx).Error("find video by ID failed", logger.Err(err))
 		return nil, err
 	}
 	if video == nil {
-		logger.Ctx(ctx).Error("video not found", logger.Uint("video_id", event.TargetID))
-		return nil, fmt.Errorf("video not found: %d", event.TargetID)
+		logger.Ctx(ctx).Error("video not found", logger.Uint("video_id", event.VideoID))
+		return nil, fmt.Errorf("video not found: %d", event.VideoID)
 	}
 	// 过滤掉自己给自己点赞的情况
 	if video.AuthorID == event.ActorID {
-		logger.Ctx(ctx).Debug("user liked their own video, skip notification", logger.Uint("user_id", event.ActorID), logger.Uint("video_id", event.TargetID))
+		logger.Ctx(ctx).Debug("user liked their own video, skip notification", logger.Uint("user_id", event.ActorID), logger.Uint("video_id", event.VideoID))
 		return nil, nil
 	}
 
-	// 查找点赞者的用户名，用于通知内容
-	actor, err := s.userRepo.FindByID(ctx, event.ActorID)
-	if err != nil {
-		logger.Ctx(ctx).Error("find actor by ID failed", logger.Err(err))
-		return nil, err
-	}
-	// 防御性编程：如果用户被注销了，可能查不到，给个默认名
-	userName := "未知用户"
-	if actor != nil && actor.UserName != "" {
-		userName = actor.UserName
-	}
-
 	// 使用点赞者的用户名构建通知内容
-	content := fmt.Sprintf("用户 %s 点赞了你的视频", userName)
+	content := fmt.Sprintf("用户 %s 点赞了你的视频", event.UserName)
 
 	// 返回通知对象
 	return &model.Notification{
 		ReceiverID: video.AuthorID,
 		ActorID:    event.ActorID,
 		Type:       event.Action,
-		TargetID:   event.TargetID,
+		TargetID:   event.VideoID,
 		Content:    content,
 		IsRead:     false,
 	}, nil
 }
 
+// buildCommentNotification 构建评论通知内容
+func (s *NotificationService) buildCommentNotification(ctx context.Context, event mq.NotificationEvent) (*model.Notification, error) {
+	var receiverID uint
+	// 根据 ParentID 判断是顶级评论还是回复评论
+	if event.ParentID == 0 {
+		// 如果 pid 为 0，说明是顶级评论，直接查视频作者作为通知接收者
+		video, err := s.videoRepo.FindByID(ctx, event.VideoID)
+		if err != nil {
+			logger.Ctx(ctx).Error("find video by ID failed", logger.Err(err))
+			return nil, err
+		}
+		if video == nil {
+			logger.Ctx(ctx).Error("video not found", logger.Uint("video_id", event.VideoID))
+			return nil, fmt.Errorf("video not found: %d", event.VideoID)
+		}
+		// 接收者是视频作者
+		receiverID = video.AuthorID
+	} else {
+		// 如果 pid 不为 0，说明是回复评论，查父评论的作者作为通知接收者
+		parentComment, err := s.commentRepo.FindByID(ctx, event.ParentID)
+		if err != nil {
+			logger.Ctx(ctx).Error("find parent comment by ID failed", logger.Err(err))
+			return nil, err
+		}
+		if parentComment == nil {
+			logger.Ctx(ctx).Error("parent comment not found", logger.Uint("comment_id", event.ParentID))
+			return nil, fmt.Errorf("parent comment not found: %d", event.ParentID)
+		}
+		// 接收者是父评论的作者
+		receiverID = parentComment.UserID
+	}
+
+	// 使用评论者的用户名构建通知内容
+	content := fmt.Sprintf("用户 %s 评论了你: %s", event.UserName, event.Content)
+
+	// 返回通知对象
+	return &model.Notification{
+		ReceiverID: receiverID,
+		ActorID:    event.ActorID,
+		Type:       event.Action,
+		TargetID:   event.CommentID, // 这里必须是评论ID，因为要在数据库中唯一标识一条评论通知，不能用视频ID
+		Content:    content,
+		IsRead:     false,
+	}, nil
+}
+
+// GetUnreadCount 获取用户未读通知数，先查 Redis，没命中再查 MySQL
 func (s *NotificationService) GetUnreadCount(ctx context.Context, userID uint) (int64, error) {
 	// 先查 Redis
 	unreadKey := cache.UnreadCountKey(userID)

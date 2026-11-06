@@ -164,14 +164,14 @@ func SetupRouter(sqlDB *gorm.DB, cache *cache.RedisCache, rmq *mq.RabbitMQ, auth
 	// ==========================================
 	// 基础 Service (无其他 Service 依赖)
 	userService := service.NewUserService(userRepo, cache)
-	notificationService := service.NewNotificationService(cache, notificationRepo, videoRepo, userRepo)
+	notificationService := service.NewNotificationService(cache, notificationRepo, videoRepo, commentRepo)
 
 	// 业务 Service (依赖基础 Service)
 	likeService := service.NewLikeService(likeRepo, likeMQ, userService, notificationService, cache)
 	videoService := service.NewVideoService(videoRepo, userService, cache, likeService)
 	// 破循环依赖：这里把 VideoService 以接口形式注入回 LikeService
 	likeService.SetVideoDetailer(videoService)
-	commentService := service.NewCommentService(commentRepo, commentMQ, cache, likeService, videoService)
+	commentService := service.NewCommentService(commentRepo, commentMQ, cache, likeService, videoService, notificationService)
 	socialService := service.NewSocialService(socialRepo, cache, userService)
 	feedService := service.NewFeedService(feedRepo, likeService, socialService, commentService, userService)
 	chunkService := service.NewChunkService(chunkRepo)

@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 	"unicode"
 	"unicode/utf8"
 
@@ -22,20 +23,22 @@ import (
 const maxCommentContentRunes = 500
 
 type CommentService struct {
-	CommentRepo  *repo.CommentRepo
-	CommentMQ    *mq.CommentMQ
-	cache        *cache.RedisCache
-	likeService  *LikeService  // 用于查询评论是否被点赞
-	videoService *VideoService // 用于查询视频信息
+	CommentRepo         *repo.CommentRepo
+	CommentMQ           *mq.CommentMQ
+	cache               *cache.RedisCache
+	likeService         *LikeService         // 用于查询评论是否被点赞
+	videoService        *VideoService        // 用于查询视频信息
+	notificationService *NotificationService // 用于处理评论通知
 }
 
-func NewCommentService(commentRepo *repo.CommentRepo, commentMQ *mq.CommentMQ, cache *cache.RedisCache, likeService *LikeService, videoService *VideoService) *CommentService {
+func NewCommentService(commentRepo *repo.CommentRepo, commentMQ *mq.CommentMQ, cache *cache.RedisCache, likeService *LikeService, videoService *VideoService, notificationService *NotificationService) *CommentService {
 	return &CommentService{
-		CommentRepo:  commentRepo,
-		CommentMQ:    commentMQ,
-		cache:        cache,
-		likeService:  likeService,
-		videoService: videoService,
+		CommentRepo:         commentRepo,
+		CommentMQ:           commentMQ,
+		cache:               cache,
+		likeService:         likeService,
+		videoService:        videoService,
+		notificationService: notificationService,
 	}
 }
 
@@ -60,20 +63,43 @@ func (s *CommentService) PublishComment(ctx context.Context, vid, userID, pid ui
 	}
 
 	//组装消息
-	comment := &model.Comment{
+	Comment := &model.Comment{
 		VideoID:  vid,
 		UserID:   userID,
 		ParentID: pid,
 		UserName: username,
 		Content:  content,
 	}
-	err := s.CommentMQ.PublishComment(ctx, comment)
+	err := s.CommentMQ.PublishComment(ctx, Comment)
 	if err != nil {
 		logger.Ctx(ctx).Error("publish comment event to MQ failed", logger.Err(err))
 		// MQ投递失败，降级方案：同步直接写数据库
-		if createErr := s.CommentRepo.CreateComment(ctx, comment); createErr != nil {
+		if createErr := s.CommentRepo.CreateComment(ctx, Comment); createErr != nil {
 			return fmt.Errorf("create comment fallback for video %d user %d: %w", vid, userID, createErr)
 		}
+		// 同步写数据库成功后，异步处理通知逻辑
+		go func() {
+			nctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+			defer cancel()
+
+			// err 使用 := 创建局部变量，避免覆盖外层的 err，防止以后可能发生的竞态
+			err := s.notificationService.ProcessNotification(nctx, mq.NotificationEvent{
+				// 目前 eventID 先传空串，后续如果在函数内部加入重试机制，则需要使用 eventID 做幂等
+				// 这里不使用 uuid.NewString()，因为在函数内部也不会使用，会产生垃圾
+				EventID:   "",
+				Action:    "comment",
+				ActorID:   Comment.UserID,
+				UserName:  Comment.UserName,
+				VideoID:   Comment.VideoID,
+				CommentID: Comment.ID, // GORM 会在插入后自动把主键回填到传入的 value 的 id 字段中
+				ParentID:  Comment.ParentID,
+				Content:   Comment.Content,
+			})
+			if err != nil {
+				logger.Ctx(nctx).Error("process notification failed", logger.Err(err))
+			}
+		}()
+		return nil
 	}
 
 	// MQ投递成功（或降级写库成功），返回nil
