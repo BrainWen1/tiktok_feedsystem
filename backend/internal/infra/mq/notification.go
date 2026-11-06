@@ -10,4 +10,5 @@ type NotificationEvent struct {
 	CommentID uint   // 评论ID
 	ParentID  uint   // 父评论ID，顶级评论为0，用来区分通知视频作者还是父评论作者
 	Content   string // 评论内容，用于通知消息中显示
+	BloggerID uint   // 关注事件中被关注的用户ID
 }

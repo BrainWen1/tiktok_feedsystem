@@ -46,6 +46,8 @@ func (s *NotificationService) ProcessNotification(ctx context.Context, event mq.
 		notif, err = s.buildLikeNotification(ctx, event)
 	case TypeComment:
 		notif, err = s.buildCommentNotification(ctx, event)
+	case TypeFollow:
+		notif, err = s.buildFollowNotification(ctx, event)
 	default:
 		logger.Ctx(ctx).Warn("unknown notification action", logger.String("action", event.Action))
 		return nil // 未知类型直接结束
@@ -200,6 +202,19 @@ func (s *NotificationService) buildCommentNotification(ctx context.Context, even
 		ActorID:    event.ActorID,
 		Type:       event.Action,
 		TargetID:   event.CommentID, // 这里必须是评论ID，因为要在数据库中唯一标识一条评论通知，不能用视频ID
+		Content:    content,
+		IsRead:     false,
+	}, nil
+}
+
+func (s *NotificationService) buildFollowNotification(ctx context.Context, event mq.NotificationEvent) (*model.Notification, error) {
+	content := fmt.Sprintf("用户 %s 关注了你", event.UserName)
+
+	return &model.Notification{
+		ReceiverID: event.BloggerID,
+		ActorID:    event.ActorID,
+		Type:       event.Action,
+		TargetID:   event.BloggerID, // 关注通知的 TargetID 是被关注者的 ID，保证唯一性
 		Content:    content,
 		IsRead:     false,
 	}, nil

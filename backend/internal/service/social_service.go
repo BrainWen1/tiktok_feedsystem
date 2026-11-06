@@ -5,6 +5,7 @@ import (
 	"errors"
 	"feedsystem/internal/dto"
 	"feedsystem/internal/infra/cache"
+	"feedsystem/internal/infra/mq"
 	"feedsystem/internal/model"
 	"feedsystem/internal/repo"
 	"feedsystem/internal/utils/logger"
@@ -39,13 +40,14 @@ var (
 )
 
 type SocialService struct {
-	SocialRepo  *repo.SocialRepo
-	cache       *cache.RedisCache
-	UserService *UserService
+	SocialRepo          *repo.SocialRepo
+	cache               *cache.RedisCache
+	UserService         *UserService
+	notificationService *NotificationService
 }
 
-func NewSocialService(socialRepo *repo.SocialRepo, cache *cache.RedisCache, UserService *UserService) *SocialService {
-	return &SocialService{SocialRepo: socialRepo, cache: cache, UserService: UserService}
+func NewSocialService(socialRepo *repo.SocialRepo, cache *cache.RedisCache, UserService *UserService, notificationService *NotificationService) *SocialService {
+	return &SocialService{SocialRepo: socialRepo, cache: cache, UserService: UserService, notificationService: notificationService}
 }
 
 // readSocialCacheCount 读取关注/粉丝 ZSet 的元素数量，并排除空集合占位成员。
@@ -102,7 +104,7 @@ func filterSocialMembers(members []string) []string {
 }
 
 // Follow 关注博主
-func (s *SocialService) Follow(ctx context.Context, userID, bloggerID uint) error {
+func (s *SocialService) Follow(ctx context.Context, userID, bloggerID uint, userName string) error {
 	if userID == 0 || bloggerID == 0 {
 		return errors.New("user id and blogger id must be non-zero")
 	}
@@ -168,6 +170,26 @@ func (s *SocialService) Follow(ctx context.Context, userID, bloggerID uint) erro
 	if err != nil {
 		logger.Ctx(ctx).Warn("add follower relation to cache failed", logger.Uint("blogger_id", bloggerID), logger.Uint("user_id", userID), logger.Err(err))
 	}
+
+	// 异步发送关注通知
+	go func() {
+		nctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+
+		// err 使用 := 创建局部变量，避免覆盖外层的 err，防止以后可能发生的竞态
+		err := s.notificationService.ProcessNotification(nctx, mq.NotificationEvent{
+			// 目前 eventID 先传空串，后续如果把关注功能接入 mq 使用异步处理，并且在函数内部加入重试机制，则需要使用 eventID 做幂等
+			// 这里不使用 uuid.NewString()，因为在函数内部也不会使用，会产生垃圾
+			EventID:   "",
+			Action:    "follow",
+			ActorID:   userID,
+			UserName:  userName,
+			BloggerID: bloggerID,
+		})
+		if err != nil {
+			logger.Ctx(nctx).Error("process notification failed", logger.Err(err))
+		}
+	}()
 
 	return nil
 }

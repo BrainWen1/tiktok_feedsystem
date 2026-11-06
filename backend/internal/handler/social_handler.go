@@ -28,14 +28,16 @@ func (h *SocialHandler) Follow(c *gin.Context) {
 		return
 	}
 
-	// 获取 userID
-	userID, ok := requireUserID(c)
-	if !ok {
+	// 获取 userID 和 userName
+	userID, userName, err := getUserFromCtx(c)
+	if err != nil {
+		logger.Ctx(c.Request.Context()).Error("get user from context failed", logger.Err(err))
+		response.FailAuthResponse(c, "未登录或登录已过期")
 		return
 	}
 
 	// 调用服务层的Follow方法
-	if err := h.SocialService.Follow(c.Request.Context(), userID, req.BloggerID); err != nil {
+	if err := h.SocialService.Follow(c.Request.Context(), userID, req.BloggerID, userName); err != nil {
 		logger.Ctx(c.Request.Context()).Error("follow blogger failed", logger.Uint("user_id", userID), logger.Uint("blogger_id", req.BloggerID), logger.Err(err))
 		response.FailResponse(c, "关注失败")
 		return
