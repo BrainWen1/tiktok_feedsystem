@@ -313,7 +313,8 @@ func SetupRouter(sqlDB *gorm.DB, cache *cache.RedisCache, rmq *mq.RabbitMQ, auth
 	// Message 相关路由
 	messageGroup := r.Group("/message", authMiddleware.Auth())
 	{
-		messageGroup.POST("/send", messageHandler.SendMessage) // 发送消息
+		messageGroup.POST("/send", messageHandler.SendMessage)  // 发送消息
+		messageGroup.GET("/history", messageHandler.GetHistory) // 获取聊天历史
 	}
 
 	// 返回配置好的路由引擎

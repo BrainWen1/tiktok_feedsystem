@@ -63,6 +63,7 @@ func run() error {
 		&model.Social{},
 		&model.VideoTag{},
 		&model.Notification{},
+		&model.Message{},
 	) // 自动迁移数据库表结构
 
 	defer database.CloseDB() // 注册关闭数据库连接的延迟调用
