@@ -166,7 +166,6 @@ func SetupRouter(sqlDB *gorm.DB, cache *cache.RedisCache, rmq *mq.RabbitMQ, auth
 	// 基础 Service (无其他 Service 依赖)
 	userService := service.NewUserService(userRepo, cache)
 	notificationService := service.NewNotificationService(cache, notificationRepo, videoRepo, commentRepo)
-	messageService := service.NewMessageService(messageRepo, cache)
 
 	// 业务 Service (依赖基础 Service)
 	likeService := service.NewLikeService(likeRepo, likeMQ, userService, notificationService, cache)
@@ -177,6 +176,7 @@ func SetupRouter(sqlDB *gorm.DB, cache *cache.RedisCache, rmq *mq.RabbitMQ, auth
 	socialService := service.NewSocialService(socialRepo, cache, userService, notificationService)
 	feedService := service.NewFeedService(feedRepo, likeService, socialService, commentService, userService)
 	chunkService := service.NewChunkService(chunkRepo)
+	messageService := service.NewMessageService(messageRepo, cache, userService)
 
 	// ==========================================
 	// 4. 初始化 Handler (最上层，直接对接路由)
@@ -313,8 +313,9 @@ func SetupRouter(sqlDB *gorm.DB, cache *cache.RedisCache, rmq *mq.RabbitMQ, auth
 	// Message 相关路由
 	messageGroup := r.Group("/message", authMiddleware.Auth())
 	{
-		messageGroup.POST("/send", messageHandler.SendMessage)  // 发送消息
-		messageGroup.GET("/history", messageHandler.GetHistory) // 获取聊天历史
+		messageGroup.POST("/send", messageHandler.SendMessage)     // 发送消息
+		messageGroup.GET("/history", messageHandler.GetHistory)    // 获取聊天历史
+		messageGroup.GET("/sessions", messageHandler.ListSessions) // 获取会话列表
 	}
 
 	// 返回配置好的路由引擎

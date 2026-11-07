@@ -71,3 +71,30 @@ func (h *MessageHandler) GetHistory(c *gin.Context) {
 
 	response.SuccessResponse(c, resp)
 }
+
+// ListSessions 获取会话列表
+func (h *MessageHandler) ListSessions(c *gin.Context) {
+	// 获取 userID
+	userID, ok := requireUserID(c)
+	if !ok {
+		return
+	}
+
+	// 解析请求参数
+	var req dto.ListSessionsRequest
+	if err := c.ShouldBindQuery(&req); err != nil { // Query 绑定
+		logger.Ctx(c.Request.Context()).Error("bind request failed", logger.Err(err))
+		response.FailResponse(c, "参数错误")
+		return
+	}
+
+	// 调用 Service 层获取会话列表
+	sessions, err := h.messageService.ListSessions(c.Request.Context(), userID, req.Limit)
+	if err != nil {
+		logger.Ctx(c.Request.Context()).Error("list sessions failed", logger.Err(err))
+		response.FailResponse(c, "获取会话列表失败")
+		return
+	}
+
+	response.SuccessResponse(c, sessions)
+}

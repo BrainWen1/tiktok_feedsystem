@@ -155,3 +155,19 @@ func (r *UserRepo) UpdatePassword(ctx context.Context, userID uint, newPasswordH
 	}
 	return nil
 }
+
+// BatchFindByIDs 批量根据用户ID查找用户
+func (r *UserRepo) BatchFindByIDs(ctx context.Context, userIDs []uint) ([]model.User, error) {
+	if len(userIDs) == 0 {
+		return []model.User{}, nil
+	}
+
+	var users []model.User
+	err := r.db.WithContext(ctx).Where("id IN ?", userIDs).Find(&users).Error // id 被包含在 userIDs 列表中的，都会被查出来
+	if err != nil {
+		logger.Ctx(ctx).Error("batch find users by IDs failed", logger.Err(err))
+		return nil, fmt.Errorf("batch find users by IDs: %w", err)
+	}
+
+	return users, nil
+}

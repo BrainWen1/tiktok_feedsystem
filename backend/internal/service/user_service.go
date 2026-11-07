@@ -537,3 +537,23 @@ func (s *UserService) FindByUsername(ctx context.Context, username string) (*dto
 		Bio:       user.Bio,
 	}, nil
 }
+
+// BatchGetUserNames 批量获取用户昵称
+func (s *UserService) BatchGetUserNames(ctx context.Context, userIDs []uint) (map[uint]string, error) {
+	if len(userIDs) == 0 {
+		return map[uint]string{}, nil
+	}
+
+	users, err := s.UserRepo.BatchFindByIDs(ctx, userIDs)
+	if err != nil {
+		logger.Ctx(ctx).Error("batch find users by IDs failed", logger.Err(err))
+		return nil, fmt.Errorf("batch find users by IDs: %w", err)
+	}
+
+	userNameMap := make(map[uint]string, len(users))
+	for _, user := range users {
+		userNameMap[user.ID] = user.UserName
+	}
+
+	return userNameMap, nil
+}

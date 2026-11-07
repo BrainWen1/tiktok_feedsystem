@@ -35,6 +35,10 @@ const (
 	sseTicketPrefix = "sse:ticket:"
 	// ssePushChannel SSE 公共频道，Redis 数据结构为 Pub/Sub。
 	ssePushChannel = "sse:push"
+	// imSessionPrefix IM 会话列表前缀，Redis 数据结构为 ZSet，member 为对方 userID，score 为最后一条消息的时间戳。
+	imSessionPrefix = "im:sessions:"
+	// imSessionDetailPrefix IM 会话详情前缀，Redis 数据结构为 Hash，field 为对方 userID，value 为最新消息的 JSON。
+	imSessionDetailPrefix = "im:session_detail:"
 )
 
 const (
@@ -59,6 +63,10 @@ const (
 	UnreadCountTTL = 7 * 24 * time.Hour
 	// SSETicketTTL SSE 临时 ticket 过期时间。
 	SSETicketTTL = 30 * time.Second
+	// IMSessionTTL IM 会话列表过期时间。
+	IMSessionTTL = 30 * 24 * time.Hour
+	// IMSessionDetailTTL IM 会话详情过期时间。
+	IMSessionDetailTTL = 30 * 24 * time.Hour
 )
 
 // LikeUserSetKey 返回用户点赞视频集合的 Redis key，全链路统一使用 Set 结构。
@@ -124,4 +132,14 @@ func SSETicketKey(ticket string) string {
 // SSEPushChannel 返回 SSE 公共频道的 Redis key。
 func SSEPushChannel() string {
 	return ssePushChannel
+}
+
+// IMSessionKey 返回 IM 会话列表的 Redis key。
+func IMSessionKey(userID uint) string {
+	return fmt.Sprintf("%s%d", imSessionPrefix, userID)
+}
+
+// IMSessionDetailKey 返回 IM 会话详情的 Redis key。
+func IMSessionDetailKey(userID, targetID uint) string {
+	return fmt.Sprintf("%s%d:%d", imSessionDetailPrefix, userID, targetID)
 }

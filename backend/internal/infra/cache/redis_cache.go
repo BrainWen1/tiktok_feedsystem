@@ -374,6 +374,23 @@ func (c *RedisCache) ZAdd(ctx context.Context, key string, zList []redis.Z, ttl 
 	return nil
 }
 
+// ZAddGT 只有新 score 大于旧 score 时才更新，防止并发覆盖回退
+func (c *RedisCache) ZAddGT(ctx context.Context, key string, zList []redis.Z, ttl time.Duration) error {
+	if !c.IsEnabled() {
+		return nil
+	}
+	// 使用 ZAddArgs 开启 GT 模式
+	args := redis.ZAddArgs{
+		GT:      true,
+		Members: zList,
+	}
+	err := c.client.ZAddArgs(ctx, key, args).Err()
+	if err == nil && ttl > 0 {
+		err = c.client.Expire(ctx, key, ttl).Err()
+	}
+	return err
+}
+
 // ZRem 将元素从Redis有序集合ZSet中移除
 func (c *RedisCache) ZRem(ctx context.Context, key string, member interface{}) error {
 	if !c.IsEnabled() {
@@ -423,6 +440,7 @@ func (c *RedisCache) ZCard(ctx context.Context, key string) (int64, error) {
 }
 
 // ZRange 获取Redis有序集合ZSet中指定范围的元素，可指定顺倒序
+// stop参数为-1表示获取到最后一个元素，reverse=false表示按分数从小到大排序，reverse=true表示按分数从大到小排序
 func (c *RedisCache) ZRange(ctx context.Context, key string, start, stop int64, reverse bool) ([]string, error) {
 	if !c.IsEnabled() {
 		return nil, nil // 缓存禁用，按未命中处理，由上层回源数据库
@@ -525,4 +543,153 @@ func (c *RedisCache) Subscribe(ctx context.Context, channel string) (*redis.PubS
 		return nil, fmt.Errorf("cache is disabled") // 缓存禁用，返回明确错误
 	}
 	return c.client.Subscribe(ctx, channel), nil
+}
+
+// HSet 将字段值设置到Redis哈希表中
+func (c *RedisCache) HSet(ctx context.Context, key string, field string, value interface{}) error {
+	if !c.IsEnabled() {
+		return nil // 缓存禁用，跳过写入
+	}
+	return c.client.HSet(ctx, key, field, value).Err()
+}
+
+// HMSet 将多个字段值设置到Redis哈希表中
+func (c *RedisCache) HMSet(ctx context.Context, key string, fields map[string]interface{}) error {
+	if !c.IsEnabled() {
+		return nil // 缓存禁用，跳过写入
+	}
+	return c.client.HMSet(ctx, key, fields).Err()
+}
+
+// HIncrBy 将Redis哈希表中的字段值增加指定的增量
+// 如果字段不存在，则会先创建该字段并初始化为0，然后再增加指定的增量。
+func (c *RedisCache) HIncrBy(ctx context.Context, key string, field string, increment int64) (int64, error) {
+	if !c.IsEnabled() {
+		return 0, nil // 缓存禁用，跳过计数更新，由数据库统计兜底
+	}
+	newValue, err := c.client.HIncrBy(ctx, key, field, increment).Result()
+	if err != nil {
+		logger.Error("hset increment failed", logger.String("key", key), logger.String("field", field), logger.Int64("increment", increment), logger.Err(err))
+		return 0, err
+	}
+	return newValue, nil
+}
+
+// Expire 设置Redis键的过期时间
+func (c *RedisCache) Expire(ctx context.Context, key string, expiration time.Duration) error {
+	if !c.IsEnabled() {
+		return nil // 缓存禁用，跳过设置过期时间
+	}
+	return c.client.Expire(ctx, key, expiration).Err()
+}
+
+// HGetAll 获取Redis哈希表中所有字段值
+func (c *RedisCache) HGetAll(ctx context.Context, key string) (map[string]string, error) {
+	if !c.IsEnabled() {
+		return nil, nil // 缓存禁用，按未命中处理，由上层回源数据库
+	}
+	result, err := c.client.HGetAll(ctx, key).Result()
+	if err != nil {
+		logger.Error("hgetall failed", logger.String("key", key), logger.Err(err))
+		return nil, err
+	}
+	return result, nil
+}
+
+// scriptIMSessionDetailIncUnread 用于接收者（增加未读数）
+var scriptIMSessionDetailIncUnread = redis.NewScript(`
+local key = KEYS[1]
+local last_content = ARGV[1]
+local last_time = tonumber(ARGV[2])
+local last_msg_id = tonumber(ARGV[3])
+local ttl = tonumber(ARGV[4])
+
+local current_time = tonumber(redis.call('HGET', key, 'last_time')) or 0
+local current_msg_id = tonumber(redis.call('HGET', key, 'last_message_id')) or 0
+
+-- 先比较时间，如果时间相同，再比较消息 ID
+if last_time > current_time or (last_time == current_time and last_msg_id > current_msg_id) then
+    redis.call('HMSET', key, 'last_content', last_content, 'last_time', last_time, 'last_message_id', last_msg_id)
+    redis.call('HINCRBY', key, 'unread_count', 1)
+    redis.call('EXPIRE', key, ttl)
+    return 1
+end
+return 0
+`)
+
+// UpdateSessionDetailIncUnread 更新会话详情并增加未读消息计数（多传一个 msgID）
+func (c *RedisCache) UpdateSessionDetailIncUnread(ctx context.Context, key string, lastContent string, lastTime int64, msgID uint, ttl time.Duration) error {
+	if !c.IsEnabled() {
+		return nil
+	}
+	return scriptIMSessionDetailIncUnread.Run(ctx, c.client, []string{key}, lastContent, lastTime, msgID, ttl.Seconds()).Err()
+}
+
+// scriptIMSessionDetailUpdate 用于发送者（不增加未读数）
+var scriptIMSessionDetailUpdate = redis.NewScript(`
+local key = KEYS[1]
+local last_content = ARGV[1]
+local last_time = tonumber(ARGV[2])
+local last_msg_id = tonumber(ARGV[3])
+local ttl = tonumber(ARGV[4])
+
+local current_time = tonumber(redis.call('HGET', key, 'last_time')) or 0
+local current_msg_id = tonumber(redis.call('HGET', key, 'last_message_id')) or 0
+
+if last_time > current_time or (last_time == current_time and last_msg_id > current_msg_id) then
+    redis.call('HSET', key, 'last_content', last_content, 'last_time', last_time, 'last_message_id', last_msg_id)
+    redis.call('EXPIRE', key, ttl)
+    return 1
+end
+return 0
+`)
+
+// UpdateSessionDetail 更新会话详情（发送者侧调用，多传一个 msgID）
+func (c *RedisCache) UpdateSessionDetail(ctx context.Context, key string, lastContent string, lastTime int64, msgID uint, ttl time.Duration) error {
+	if !c.IsEnabled() {
+		return nil
+	}
+	return scriptIMSessionDetailUpdate.Run(ctx, c.client, []string{key}, lastContent, lastTime, msgID, ttl.Seconds()).Err()
+}
+
+// BatchHGetAll 批量获取多个 Redis 哈希表的所有字段值，返回一个 map 切片，按输入 keys 顺序对应。
+func (c *RedisCache) BatchHGetAll(ctx context.Context, keys []string) ([]map[string]string, []int, error) {
+	results := make([]map[string]string, len(keys))
+	if !c.IsEnabled() {
+		// Redis 缓存禁用，返回空结果和所有索引作为未命中
+		missed := make([]int, len(keys))
+		for i := range keys {
+			missed[i] = i
+		}
+		return results, missed, nil
+	}
+
+	// 开启一个管道
+	pipe := c.client.Pipeline()
+
+	// 把所有命令塞进管道
+	cmds := make([]*redis.MapStringStringCmd, len(keys))
+	for i, key := range keys {
+		cmds[i] = pipe.HGetAll(ctx, key) // 把命令放进管道
+	}
+
+	// 一次性执行所有命令
+	_, _ = pipe.Exec(ctx) // 放弃 exec 返回的整体错误，后续逐个检查每个命令的错误，避免一个 key 查失败导致整个接口挂掉
+
+	// 收集结果
+	var missedIndices []int // 用于记录哪些在 Redis 中没找到
+	for i, cmd := range cmds {
+		// 逐个检查错误，如果这个 Key 查失败，当作未命中处理即可，不要让整个接口挂掉
+		if cmd.Err() != nil {
+			results[i] = make(map[string]string) // 空 Map
+			missedIndices = append(missedIndices, i)
+			continue
+		}
+		results[i] = cmd.Val()
+		// 如果结果为空，说明 Redis 中没有该 key，记录下对应的索引
+		if len(results[i]) == 0 {
+			missedIndices = append(missedIndices, i)
+		}
+	}
+	return results, missedIndices, nil
 }
