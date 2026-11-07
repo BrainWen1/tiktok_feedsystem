@@ -93,8 +93,8 @@ func main() {
 	redisCache := cache.NewRedisCache(config.AppConfig.Redis_addr, config.AppConfig.Redis_password, config.AppConfig.Redis_db)
 	defer redisCache.Close() // 注册关闭Redis连接的延迟调用
 
-	pingCtx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond) // 设置超时时间为300毫秒
-	defer cancel()                                                                     // 确保在函数退出时取消上下文，以释放资源
+	pingCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second) // 设置超时时间为3秒
+	defer cancel()                                                              // 确保在函数退出时取消上下文，以释放资源
 
 	if err := redisCache.Ping(pingCtx); err != nil { // 检查Redis连接是否正常
 		// Redis不可用时降级运行：禁用缓存，业务走纯数据库，不阻断服务启动

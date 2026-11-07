@@ -3,10 +3,12 @@ package infra
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"feedsystem/internal/infra/cache"
 	"feedsystem/internal/utils/logger"
 	"sync"
+	"time"
+
+	"github.com/redis/go-redis/v9"
 )
 
 type Hub struct {
@@ -65,38 +67,69 @@ func (h *Hub) UnregisterSSEClient(ctx context.Context, userID uint, clientID str
 // 这个函数在 main() 中调用，确保在服务启动时就开始监听通知事件。
 // 当 Worker 发布通知事件到 Redis 时，这个协程会接收消息并触发 SSE 推送。
 func (h *Hub) StartSSESubscriber(ctx context.Context, redisCache *cache.RedisCache) {
-	pubsub, err := redisCache.Subscribe(ctx, cache.SSEPushChannel())
-	if err != nil {
-		logger.Ctx(ctx).Error("subscribe sse channel failed", logger.Err(err))
-		return
-	}
-	defer pubsub.Close()
-
-	// 启动一个协程死循环接收 Redis 消息
+	// 整个订阅器放入一个无限循环，只要 ctx 没取消，就永远重试
 	go func() {
 		for {
-			msg, err := pubsub.ReceiveMessage(ctx)
-			if err != nil {
-				logger.Ctx(ctx).Error("receive redis pubsub msg failed", logger.Err(err))
-				// 如果是上下文取消或连接关闭，退出循环，避免热循环
-				if errors.Is(err, context.Canceled) || ctx.Err() != nil {
-					return
-				}
+			// 1. 检查主程序是否退出了
+			if ctx.Err() != nil {
+				logger.Ctx(ctx).Info("context canceled, stop sse subscriber completely")
+				return
+			}
+
+			// 2. 检查 Redis 是否可用（如果启动时降级禁用了，就先睡一会）
+			if !redisCache.IsEnabled() {
+				time.Sleep(3 * time.Second)
 				continue
 			}
-			// msg.Payload 就是 Worker 发过来的 JSON
-			// 只需要解析出 user_id 用给内层 map 路由到对应的连接的 channel
-			// 然后把 worker 发到 redis 的 json string 直接传给 SendToUser()，再让 SSEHandler 直接写给前端
-			var data struct {
-				UserID uint `json:"user_id"`
-			}
-			if err := json.Unmarshal([]byte(msg.Payload), &data); err != nil {
-				logger.Ctx(ctx).Error("unmarshal redis pubsub msg failed", logger.Err(err))
+
+			// 3. 发起订阅
+			pubsub, err := redisCache.Subscribe(ctx, cache.SSEPushChannel())
+			if err != nil || pubsub == nil {
+				logger.Ctx(ctx).Error("subscribe sse channel failed, retry in 3s", logger.Err(err))
+				time.Sleep(3 * time.Second)
 				continue
 			}
-			h.SendToUser(ctx, data.UserID, msg.Payload)
+
+			logger.Ctx(ctx).Info("successfully subscribed to redis sse channel")
+
+			// 4. 开始接收消息
+			err = h.receiveMessages(ctx, pubsub)
+			// 关闭当前的 pubsub（不管是正常退出还是报错）
+			_ = pubsub.Close()
+
+			// 5. 如果报错了，说明连接断了，等一小会儿重新进大循环重连
+			if err != nil && ctx.Err() == nil {
+				logger.Ctx(ctx).Error("receive messages loop exited, retrying in 3s", logger.Err(err))
+				time.Sleep(3 * time.Second)
+			}
 		}
 	}()
+}
+
+// receiveMessages 把处理消息的循环抽离出来，让 StartSSESubscriber 逻辑更干净
+func (h *Hub) receiveMessages(ctx context.Context, pubsub *redis.PubSub) error {
+	for {
+		msg, err := pubsub.ReceiveMessage(ctx)
+		if err != nil {
+			// 如果主程序没退出，报错就是异常断开（如 client is closed, i/o timeout）
+			if ctx.Err() == nil {
+				return err // 把错误抛给外层去重连
+			}
+			return nil // 主程序退出，正常结束
+		}
+
+		// 解析 UserID
+		var data struct {
+			UserID uint `json:"user_id"`
+		}
+		if err := json.Unmarshal([]byte(msg.Payload), &data); err != nil {
+			logger.Ctx(ctx).Error("unmarshal redis pubsub msg failed", logger.Err(err))
+			continue
+		}
+
+		// 推送给前端
+		h.SendToUser(ctx, data.UserID, msg.Payload)
+	}
 }
 
 // SendToUser 发送 SSE 消息给指定用户的所有连接
