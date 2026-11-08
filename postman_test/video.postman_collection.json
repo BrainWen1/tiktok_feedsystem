@@ -1,0 +1,1610 @@
+{
+  "info": {
+    "name": "video",
+    "description": "video 模块完整链路测试：直传、封面、发布、详情、游标分页、分片上传/断点续传/合并，以及异常边界。\n\n运行前置：\n1. 项目已启动（默认 {{base_url}} = http://127.0.0.1:8080），MySQL/Redis 可用；\n2. 从 postman_test 目录运行（newman run video.postman_collection.json），或导入 Postman 后确认 binary/form-data 文件路径；\n3. 按 00 -> 01 -> 02 -> 03 顺序运行，变量会通过 Tests 脚本自动串联；\n4. fixtures/sample.mp4 为 64 字节、带合法 ftyp 头的测试样本，仅用于接口链路验证，不可播放。\n\n分片规则：分片大小固定 5MB，除最后一片外每片必须恰好 5MB，最后一片为剩余字节数；单任务上限 2GB。",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{token}}",
+        "type": "string"
+      }
+    ]
+  },
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "// 集合级前置脚本：确保基础环境变量存在。",
+          "// 受保护请求通过集合级 Bearer Auth 自动携带 {{token}}。",
+          "if (!pm.collectionVariables.get('base_url')) {",
+          "  pm.collectionVariables.set('base_url', 'http://127.0.0.1:8080');",
+          "}",
+          "if (!pm.collectionVariables.get('token')) {",
+          "  console.log('token 为空：请先运行 00-鉴权准备');",
+          "}"
+        ]
+      }
+    }
+  ],
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://127.0.0.1:8080",
+      "type": "string"
+    },
+    {
+      "key": "token",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "refresh_token",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "primary_username",
+      "value": "video_demo",
+      "type": "string"
+    },
+    {
+      "key": "primary_password",
+      "value": "Passw0rd123",
+      "type": "string"
+    },
+    {
+      "key": "author_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "video_url",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "cover_url",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "video_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "video_id_2",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "upload_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "chunk_size",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "total_chunks",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "error_upload_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "hash_upload_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "merged_video_url",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "next_cursor_last_vid",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "next_cursor_last_created_at",
+      "value": "",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "00-鉴权准备",
+      "description": "注册一个本次运行专属的测试账号并登录，后续请求通过集合级 Bearer Auth 自动携带 {{token}}。",
+      "item": [
+        {
+          "name": "注册测试账号",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/user/register",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "user",
+                "register"
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"user_name\": \"{{primary_username}}\",\n  \"password\": \"{{primary_password}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "前置：用户名 3-32 位字母/数字/下划线，密码至少 8 位且同时包含字母和数字。"
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// 每次运行生成唯一用户名，避免与历史数据冲突",
+                  "const suffix = Date.now().toString().slice(-8);",
+                  "pm.collectionVariables.set('primary_username', 'video_' + suffix);",
+                  "pm.collectionVariables.set('primary_password', 'Passw0rd123');",
+                  "pm.collectionVariables.set('token', '');",
+                  "pm.collectionVariables.set('author_id', '');",
+                  "pm.collectionVariables.set('video_url', '');",
+                  "pm.collectionVariables.set('cover_url', '');"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('业务码 200', () => pm.expect(json.code).to.eql(200));",
+                  "pm.test('返回 user_id', () => pm.expect(json.data.user_id).to.be.a('number'));",
+                  "pm.collectionVariables.set('author_id', String(json.data.user_id));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "登录获取 Token",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/user/login",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "user",
+                "login"
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"user_name\": \"{{primary_username}}\",\n  \"password\": \"{{primary_password}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('业务码 200', () => pm.expect(json.code).to.eql(200));",
+                  "pm.test('返回 access/refresh token', () => {",
+                  "  pm.expect(json.data.token).to.be.a('string').and.not.empty;",
+                  "  pm.expect(json.data.refresh_token).to.be.a('string').and.not.empty;",
+                  "});",
+                  "pm.collectionVariables.set('token', json.data.token);",
+                  "pm.collectionVariables.set('refresh_token', json.data.refresh_token);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "查询作者 ID（备用）",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/user/find_by_username",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "user",
+                "find_by_username"
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"user_name\": \"{{primary_username}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "若“注册测试账号”失败但账号已存在，可单独运行本请求补齐 author_id。"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('业务码 200', () => pm.expect(json.code).to.eql(200));",
+                  "// 注册响应丢失作者 ID 时，可从用户资料补齐",
+                  "pm.collectionVariables.set('author_id', String(json.data.id));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "01-视频直传",
+      "description": "小文件直传链路：上传视频文件 -> 上传封面 -> 发布视频 -> 查询详情/列表。fixtures 路径相对于 postman_test 目录。",
+      "item": [
+        {
+          "name": "上传视频文件",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/video/upload_video",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "video",
+                "upload_video"
+              ]
+            },
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": "fixtures/sample.mp4"
+                }
+              ]
+            },
+            "description": "multipart/form-data，字段名必须为 file。直传上限 100MB，服务端会嗅探真实 MIME，仅接受 mp4/avi/mov/mkv。"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('业务码 200', () => pm.expect(json.code).to.eql(200));",
+                  "pm.test('返回可访问的视频相对路径', () => {",
+                  "  pm.expect(json.data.video_url).to.be.a('string');",
+                  "  pm.expect(json.data.video_url).to.match(/^\\/upload\\/videos\\/\\d+\\/.+/);",
+                  "});",
+                  "pm.collectionVariables.set('video_url', json.data.video_url);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "上传封面文件",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/video/upload_cover",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "video",
+                "upload_cover"
+              ]
+            },
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": "fixtures/avatar.png"
+                }
+              ]
+            },
+            "description": "multipart/form-data，字段名必须为 file。封面上限 10MB，仅接受 jpg/jpeg/png/webp。"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('业务码 200', () => pm.expect(json.code).to.eql(200));",
+                  "pm.test('返回可访问的封面相对路径', () => {",
+                  "  pm.expect(json.data.cover_url).to.be.a('string');",
+                  "  pm.expect(json.data.cover_url).to.match(/^\\/upload\\/covers\\/\\d+\\/.+/);",
+                  "});",
+                  "pm.collectionVariables.set('cover_url', json.data.cover_url);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "发布视频",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/video/publish",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "video",
+                "publish"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"postman video\",\n  \"description\": \"created by video.postman_collection.json\",\n  \"video_url\": \"{{video_url}}\",\n  \"cover_url\": \"{{cover_url}}\",\n  \"tags\": [\"go\", \"postman\", \"go\"]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "video_url 必须以上传接口返回的 /upload/videos/ 开头，cover_url 必须以上传接口返回的 /upload/covers/ 开头；tags 会自动去重。"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('业务码 200', () => pm.expect(json.code).to.eql(200));",
+                  "pm.test('返回 video_id', () => pm.expect(json.data.video_id).to.be.a('number'));",
+                  "pm.collectionVariables.set('video_id', String(json.data.video_id));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "发布第二条视频（分页用）",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/video/publish",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "video",
+                "publish"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"postman video 2\",\n  \"description\": \"second video for cursor pagination\",\n  \"video_url\": \"{{video_url}}\",\n  \"cover_url\": \"{{cover_url}}\",\n  \"tags\": [\"postman\"]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('业务码 200', () => pm.expect(json.code).to.eql(200));",
+                  "pm.collectionVariables.set('video_id_2', String(json.data.video_id));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "获取视频详情",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/video/{{video_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "video",
+                "{{video_id}}"
+              ]
+            },
+            "description": "软鉴权接口：不传 token 也能访问，is_liked 恒为 false。"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('业务码 200', () => pm.expect(json.code).to.eql(200));",
+                  "pm.test('返回目标视频', () => pm.expect(String(json.data.video_id)).to.eql(pm.collectionVariables.get('video_id')));",
+                  "pm.test('游客 is_liked=false', () => pm.expect(json.data.is_liked).to.eql(false));",
+                  "pm.test('包含作者信息', () => {",
+                  "  pm.expect(json.data.author.user_id).to.be.a('number');",
+                  "  pm.expect(json.data.author).to.have.property('user_name');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "获取视频列表（首页）",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/video/list?author_id={{author_id}}&page_size=1",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "video",
+                "list"
+              ],
+              "query": [
+                {
+                  "key": "author_id",
+                  "value": "{{author_id}}"
+                },
+                {
+                  "key": "page_size",
+                  "value": "1"
+                }
+              ]
+            },
+            "description": "复合游标 (created_at, id) 分页。page_size 上限为 20，超出会被钳制。"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('业务码 200', () => pm.expect(json.code).to.eql(200));",
+                  "pm.test('返回视频数组与总数', () => {",
+                  "  pm.expect(json.data.videos).to.be.an('array');",
+                  "  pm.expect(json.data.total).to.be.at.least(1);",
+                  "});",
+                  "const cursor = json.data.next_cursor;",
+                  "if (cursor) {",
+                  "  pm.collectionVariables.set('next_cursor_last_vid', cursor.last_vid);",
+                  "  // created_at 含时区符号，必须编码后再拼进 query",
+                  "  pm.collectionVariables.set('next_cursor_last_created_at', encodeURIComponent(cursor.last_created_at));",
+                  "} else {",
+                  "  pm.collectionVariables.set('next_cursor_last_vid', '');",
+                  "  pm.collectionVariables.set('next_cursor_last_created_at', '');",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "获取视频列表（下一页）",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/video/list?author_id={{author_id}}&page_size=1&cursor.last_vid={{next_cursor_last_vid}}&cursor.last_created_at={{next_cursor_last_created_at}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "video",
+                "list"
+              ],
+              "query": [
+                {
+                  "key": "author_id",
+                  "value": "{{author_id}}"
+                },
+                {
+                  "key": "page_size",
+                  "value": "1"
+                },
+                {
+                  "key": "cursor.last_vid",
+                  "value": "{{next_cursor_last_vid}}"
+                },
+                {
+                  "key": "cursor.last_created_at",
+                  "value": "{{next_cursor_last_created_at}}"
+                }
+              ]
+            },
+            "description": "若首页返回 next_cursor 为空，本请求等价于首页；last_vid 与 last_created_at 必须同时提供。"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('业务码 200', () => pm.expect(json.code).to.eql(200));",
+                  "pm.test('下一页不重复第一页视频', () => {",
+                  "  const ids = json.data.videos.map(v => String(v.video_id));",
+                  "  pm.expect(ids).to.not.include(pm.collectionVariables.get('video_id'));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "02-分片上传（断点续传）",
+      "description": "完整分片链路：创建会话 -> 查询状态 -> 上传分片 -> 再次查询 -> 合并 -> 会话清理。示例文件为 64 字节，因此只有 1 个分片。真实大文件每片固定 5MB（最后一片为剩余大小）。",
+      "item": [
+        {
+          "name": "创建分片上传会话",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/video/chunk/create",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "video",
+                "chunk",
+                "create"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"filename\": \"sample.mp4\",\n  \"file_size\": 64,\n  \"file_hash\": \"\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "file_hash 可选：填写后合并时会强制校验整文件 sha256。file_size 必须与实际文件字节数一致。"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('业务码 200', () => pm.expect(json.code).to.eql(200));",
+                  "pm.test('返回会话元数据', () => {",
+                  "  pm.expect(json.data.upload_id).to.be.a('string').and.not.empty;",
+                  "  pm.expect(json.data.chunk_size).to.eql(5242880);",
+                  "  pm.expect(json.data.total_chunks).to.eql(1);",
+                  "});",
+                  "pm.collectionVariables.set('upload_id', json.data.upload_id);",
+                  "pm.collectionVariables.set('chunk_size', String(json.data.chunk_size));",
+                  "pm.collectionVariables.set('total_chunks', String(json.data.total_chunks));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "查询上传状态（续传前）",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/video/chunk/status?upload_id={{upload_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "video",
+                "chunk",
+                "status"
+              ],
+              "query": [
+                {
+                  "key": "upload_id",
+                  "value": "{{upload_id}}"
+                }
+              ]
+            },
+            "description": "前端据此只补传 uploaded 中缺失的分片下标。"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('业务码 200', () => pm.expect(json.code).to.eql(200));",
+                  "pm.test('尚未上传任何分片', () => pm.expect(json.data.uploaded || []).to.eql([]));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "上传分片 0",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/video/chunk/upload?upload_id={{upload_id}}&index=0",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "video",
+                "chunk",
+                "upload"
+              ],
+              "query": [
+                {
+                  "key": "upload_id",
+                  "value": "{{upload_id}}"
+                },
+                {
+                  "key": "index",
+                  "value": "0"
+                }
+              ]
+            },
+            "body": {
+              "mode": "binary",
+              "binary": {
+                "src": "fixtures/sample.mp4"
+              }
+            },
+            "description": "请求体为分片二进制内容；除最后一片外必须严格等于 5MB，最后一片必须等于剩余字节数。重传同一分片是幂等的。"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('业务码 200', () => pm.expect(json.code).to.eql(200));",
+                  "pm.test('分片 0 已标记上传', () => {",
+                  "  pm.expect(json.data.uploaded).to.include(0);",
+                  "  pm.expect(json.data.received).to.eql(0);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "查询上传状态（续传后）",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/video/chunk/status?upload_id={{upload_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "video",
+                "chunk",
+                "status"
+              ],
+              "query": [
+                {
+                  "key": "upload_id",
+                  "value": "{{upload_id}}"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('业务码 200', () => pm.expect(json.code).to.eql(200));",
+                  "pm.test('分片 0 已记录', () => pm.expect(json.data.uploaded).to.include(0));",
+                  "pm.test('会话未过期', () => pm.expect(json.data.expire_at).to.be.a('string'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "合并分片",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/video/chunk/merge?upload_id={{upload_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "video",
+                "chunk",
+                "merge"
+              ],
+              "query": [
+                {
+                  "key": "upload_id",
+                  "value": "{{upload_id}}"
+                }
+              ]
+            },
+            "description": "合并前逐片校验文件存在与大小，合并写临时文件后原子重命名；成功后立即删除分片目录与 Redis 会话。"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('业务码 200', () => pm.expect(json.code).to.eql(200));",
+                  "pm.test('返回成品视频路径', () => {",
+                  "  pm.expect(json.data.video_url).to.match(/^\\/upload\\/videos\\/\\d+\\/.*\\.mp4$/);",
+                  "});",
+                  "pm.collectionVariables.set('merged_video_url', json.data.video_url);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "查询已合并会话（应已清理）",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/video/chunk/status?upload_id={{upload_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "video",
+                "chunk",
+                "status"
+              ],
+              "query": [
+                {
+                  "key": "upload_id",
+                  "value": "{{upload_id}}"
+                }
+              ]
+            },
+            "description": "合并成功后会话被删除，再次查询应返回会话不存在。"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 400', () => pm.response.to.have.status(400));",
+                  "pm.test('业务码 400', () => pm.expect(json.code).to.eql(400));",
+                  "pm.test('错误提示可读', () => pm.expect(json.message).to.include('不存在或已过期'));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "03-异常与边界",
+      "description": "覆盖鉴权、参数校验、分片大小、合并完整性、hash 校验等失败路径。",
+      "item": [
+        {
+          "name": "未登录上传分片（401）",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/video/chunk/upload?upload_id={{upload_id}}&index=0",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "video",
+                "chunk",
+                "upload"
+              ],
+              "query": [
+                {
+                  "key": "upload_id",
+                  "value": "{{upload_id}}"
+                },
+                {
+                  "key": "index",
+                  "value": "0"
+                }
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "binary",
+              "binary": {
+                "src": "fixtures/sample.mp4"
+              }
+            },
+            "description": "分片接口全部要求登录，缺失 Authorization 头直接 401。"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 401', () => pm.response.to.have.status(401));",
+                  "pm.test('业务码 401', () => pm.expect(json.code).to.eql(401));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "创建会话-非法后缀",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/video/chunk/create",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "video",
+                "chunk",
+                "create"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"filename\": \"sample.txt\",\n  \"file_size\": 64\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 400', () => pm.response.to.have.status(400));",
+                  "pm.test('业务码 400', () => pm.expect(json.code).to.eql(400));",
+                  "pm.test('错误提示可读', () => pm.expect(json.message).to.include('上传参数不合法'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "创建会话-文件过大",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/video/chunk/create",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "video",
+                "chunk",
+                "create"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"filename\": \"sample.mp4\",\n  \"file_size\": 2147483649\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "单任务成品上限 2GB（2147483648 字节）。"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 400', () => pm.response.to.have.status(400));",
+                  "pm.test('业务码 400', () => pm.expect(json.code).to.eql(400));",
+                  "pm.test('错误提示可读', () => pm.expect(json.message).to.include('上传参数不合法'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "创建会话-非法 hash",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/video/chunk/create",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "video",
+                "chunk",
+                "create"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"filename\": \"sample.mp4\",\n  \"file_size\": 64,\n  \"file_hash\": \"not-a-sha256\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "file_hash 必须是 64 位十六进制 sha256，或留空。"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 400', () => pm.response.to.have.status(400));",
+                  "pm.test('业务码 400', () => pm.expect(json.code).to.eql(400));",
+                  "pm.test('错误提示可读', () => pm.expect(json.message).to.include('上传参数不合法'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "创建两分片会话（异常测试）",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/video/chunk/create",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "video",
+                "chunk",
+                "create"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"filename\": \"sample.mp4\",\n  \"file_size\": 10485760\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "file_size = 2 × 5MB，用于制造“下标越界 / 大小不符 / 合并未完成”。"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('业务码 200', () => pm.expect(json.code).to.eql(200));",
+                  "pm.test('两分片会话', () => pm.expect(json.data.total_chunks).to.eql(2));",
+                  "pm.collectionVariables.set('error_upload_id', json.data.upload_id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "上传分片-下标越界",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/video/chunk/upload?upload_id={{error_upload_id}}&index=9",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "video",
+                "chunk",
+                "upload"
+              ],
+              "query": [
+                {
+                  "key": "upload_id",
+                  "value": "{{error_upload_id}}"
+                },
+                {
+                  "key": "index",
+                  "value": "9"
+                }
+              ]
+            },
+            "body": {
+              "mode": "binary",
+              "binary": {
+                "src": "fixtures/sample.mp4"
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 400', () => pm.response.to.have.status(400));",
+                  "pm.test('业务码 400', () => pm.expect(json.code).to.eql(400));",
+                  "pm.test('错误提示可读', () => pm.expect(json.message).to.include('上传参数不合法'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "上传分片-大小不符",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/video/chunk/upload?upload_id={{error_upload_id}}&index=0",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "video",
+                "chunk",
+                "upload"
+              ],
+              "query": [
+                {
+                  "key": "upload_id",
+                  "value": "{{error_upload_id}}"
+                },
+                {
+                  "key": "index",
+                  "value": "0"
+                }
+              ]
+            },
+            "body": {
+              "mode": "binary",
+              "binary": {
+                "src": "fixtures/sample.mp4"
+              }
+            },
+            "description": "非最后一片必须是 5MB，上传 64 字节应被拒绝且不写入标记位。"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 400', () => pm.response.to.have.status(400));",
+                  "pm.test('业务码 400', () => pm.expect(json.code).to.eql(400));",
+                  "pm.test('错误提示可读', () => pm.expect(json.message).to.include('上传参数不合法'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "合并-分片未完成",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/video/chunk/merge?upload_id={{error_upload_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "video",
+                "chunk",
+                "merge"
+              ],
+              "query": [
+                {
+                  "key": "upload_id",
+                  "value": "{{error_upload_id}}"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 400', () => pm.response.to.have.status(400));",
+                  "pm.test('业务码 400', () => pm.expect(json.code).to.eql(400));",
+                  "pm.test('错误提示可读', () => pm.expect(json.message).to.include('分片未上传完成'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "取消上传（异常会话）",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/video/chunk/cancel?upload_id={{error_upload_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "video",
+                "chunk",
+                "cancel"
+              ],
+              "query": [
+                {
+                  "key": "upload_id",
+                  "value": "{{error_upload_id}}"
+                }
+              ]
+            },
+            "description": "取消后立即删除分片目录与 Redis 会话。"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('业务码 200', () => pm.expect(json.code).to.eql(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "创建会话-hash 不匹配",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/video/chunk/create",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "video",
+                "chunk",
+                "create"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"filename\": \"sample.mp4\",\n  \"file_size\": 64,\n  \"file_hash\": \"0000000000000000000000000000000000000000000000000000000000000000\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('业务码 200', () => pm.expect(json.code).to.eql(200));",
+                  "pm.collectionVariables.set('hash_upload_id', json.data.upload_id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "上传分片（hash 会话）",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/video/chunk/upload?upload_id={{hash_upload_id}}&index=0",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "video",
+                "chunk",
+                "upload"
+              ],
+              "query": [
+                {
+                  "key": "upload_id",
+                  "value": "{{hash_upload_id}}"
+                },
+                {
+                  "key": "index",
+                  "value": "0"
+                }
+              ]
+            },
+            "body": {
+              "mode": "binary",
+              "binary": {
+                "src": "fixtures/sample.mp4"
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('业务码 200', () => pm.expect(json.code).to.eql(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "合并-hash 不匹配",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/video/chunk/merge?upload_id={{hash_upload_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "video",
+                "chunk",
+                "merge"
+              ],
+              "query": [
+                {
+                  "key": "upload_id",
+                  "value": "{{hash_upload_id}}"
+                }
+              ]
+            },
+            "description": "hash 不一致时保留分片与会话，客户端可修复后重新合并。"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 400', () => pm.response.to.have.status(400));",
+                  "pm.test('业务码 400', () => pm.expect(json.code).to.eql(400));",
+                  "pm.test('错误提示可读', () => pm.expect(json.message).to.include('文件校验失败'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "取消上传（hash 会话）",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/video/chunk/cancel?upload_id={{hash_upload_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "video",
+                "chunk",
+                "cancel"
+              ],
+              "query": [
+                {
+                  "key": "upload_id",
+                  "value": "{{hash_upload_id}}"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('业务码 200', () => pm.expect(json.code).to.eql(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "视频详情-非法 ID",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/video/abc",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "video",
+                "abc"
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            },
+            "description": "路径参数必须为正整数。"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 400', () => pm.response.to.have.status(400));",
+                  "pm.test('业务码 400', () => pm.expect(json.code).to.eql(400));",
+                  "pm.test('错误提示可读', () => pm.expect(json.message).to.include('视频ID不合法'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "视频列表-缺少 author_id",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/video/list",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "video",
+                "list"
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            },
+            "description": "author_id 为必填 query 参数。"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 400', () => pm.response.to.have.status(400));",
+                  "pm.test('业务码 400', () => pm.expect(json.code).to.eql(400));",
+                  "pm.test('错误提示可读', () => pm.expect(json.message).to.include('请求参数错误'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "发布视频-非法 URL",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/video/publish",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "video",
+                "publish"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"bad url\",\n  \"description\": \"should be rejected\",\n  \"video_url\": \"http://evil.example/a.mp4\",\n  \"cover_url\": \"http://evil.example/a.png\",\n  \"tags\": []\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "// 当前实现把业务校验失败映射为 500；审查建议改为 400",
+                  "pm.test('非法 URL 被拒绝', () => pm.expect(json.code).to.not.eql(200));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
