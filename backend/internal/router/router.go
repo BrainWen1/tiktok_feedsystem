@@ -32,6 +32,7 @@ var (
 	registerRateLimit       = ratelimit.Config{Scope: "register", Limit: 5, Window: time.Minute}
 	loginRateLimit          = ratelimit.Config{Scope: "login", Limit: 10, Window: time.Minute}
 	refreshRateLimit        = ratelimit.Config{Scope: "refresh", Limit: 20, Window: time.Minute}
+	changePasswordRateLimit = ratelimit.Config{Scope: "change_password", Limit: 5, Window: time.Minute, KeyByUserID: true}
 	uploadVideoLimit        = ratelimit.Config{Scope: "upload_video", Limit: 5, Window: time.Minute, KeyByUserID: true}
 	uploadImageLimit        = ratelimit.Config{Scope: "upload_image", Limit: 10, Window: time.Minute, KeyByUserID: true}
 	feedReadRateLimitIP     = ratelimit.Config{Scope: "feed_read", Limit: 120, Window: time.Minute}
@@ -211,11 +212,11 @@ func SetupRouter(sqlDB *gorm.DB, cache *cache.RedisCache, rmq *mq.RabbitMQ, auth
 	// 受保护的路由组
 	protectedUserGroup := userGroup.Group("/").Use(authMiddleware.Auth()) // 使用Auth中间件鉴权
 	{
-		protectedUserGroup.POST("/logout", userHandler.Logout)                                                    // 用户登出
-		protectedUserGroup.GET("/profile", userHandler.GetProfile)                                                // 获取用户资料
-		protectedUserGroup.PATCH("/profile", userHandler.UpdateProfile)                                           // 更新用户资料
-		protectedUserGroup.POST("/upload_avatar", limiter.Middleware(uploadImageLimit), userHandler.UploadAvatar) // 上传用户头像（按userID限流）
-		protectedUserGroup.POST("/change_password", userHandler.ChangePassword)                                   // 修改用户密码
+		protectedUserGroup.POST("/logout", userHandler.Logout)                                                               // 用户登出
+		protectedUserGroup.GET("/profile", userHandler.GetProfile)                                                           // 获取用户资料
+		protectedUserGroup.PATCH("/profile", userHandler.UpdateProfile)                                                      // 更新用户资料
+		protectedUserGroup.POST("/upload_avatar", limiter.Middleware(uploadImageLimit), userHandler.UploadAvatar)            // 上传用户头像（按userID限流）
+		protectedUserGroup.POST("/change_password", limiter.Middleware(changePasswordRateLimit), userHandler.ChangePassword) // 修改用户密码
 	}
 
 	// 视频相关路由

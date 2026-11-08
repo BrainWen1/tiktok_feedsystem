@@ -351,6 +351,10 @@ func TestRefreshTokenRotation(t *testing.T) {
 	if _, _, _, _, err := s.RefreshToken(ctx, oldRefresh, ""); !errors.Is(err, ErrInvalidRefreshToken) {
 		t.Fatalf("replay old refresh token error = %v, want ErrInvalidRefreshToken", err)
 	}
+	// 重放检测会撤销该用户全部 refresh token，包括刚刚签发的新 token。
+	if _, err := rc.Get(ctx, cache.RefreshTokenKey(newRefresh)); !errors.Is(err, cache.ErrCacheMiss) {
+		t.Fatalf("new refresh token should be revoked after replay detection, err = %v", err)
+	}
 }
 
 func TestRefreshTokenConcurrentOnlyOneSucceeds(t *testing.T) {

@@ -151,11 +151,54 @@ func TestAuthMiddlewareWithDisabledCacheStillValidatesSignature(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GenerateToken: %v", err)
 	}
-	// 缓存禁用时黑名单不可用，但 JWT 签名校验仍必须生效。
+	// 缓存禁用时黑名单与 epoch 都不可用，但 JWT 签名校验仍必须生效。
 	if w := doAuthRequest(r, "Bearer "+token); w.Code != http.StatusOK {
 		t.Fatalf("valid token status = %d, want 200", w.Code)
 	}
 	if w := doAuthRequest(r, "Bearer invalid"); w.Code != http.StatusUnauthorized {
 		t.Fatalf("invalid token status = %d, want 401", w.Code)
+	}
+}
+
+func TestAuthMiddlewareRejectsTokenIssuedBeforePasswordChangeEpoch(t *testing.T) {
+	r, redisCache := setupAuthRouter(t)
+
+	token, err := jwt.GenerateToken(11, "dave")
+	if err != nil {
+		t.Fatalf("GenerateToken: %v", err)
+	}
+	claims, err := jwt.ParseToken(token)
+	if err != nil {
+		t.Fatalf("ParseToken: %v", err)
+	}
+
+	// epoch 晚于 token 签发时间，模拟“改密后仍然持有旧 access token”的场景。
+	epoch := claims.IssuedAt.Unix() + 1
+	if err := redisCache.Set(context.Background(), cache.UserTokenEpochKey(11), epoch, time.Hour); err != nil {
+		t.Fatalf("seed token epoch: %v", err)
+	}
+
+	w := doAuthRequest(r, "Bearer "+token)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, body = %s, want 401", w.Code, w.Body.String())
+	}
+}
+
+func TestAuthMiddlewareAcceptsTokenIssuedAfterPasswordChangeEpoch(t *testing.T) {
+	r, redisCache := setupAuthRouter(t)
+
+	token, err := jwt.GenerateToken(12, "erin")
+	if err != nil {
+		t.Fatalf("GenerateToken: %v", err)
+	}
+
+	// epoch 早于 token 签发时间，说明 token 是改密后重新登录获得的，必须放行。
+	epoch := time.Now().Add(-time.Minute).Unix()
+	if err := redisCache.Set(context.Background(), cache.UserTokenEpochKey(12), epoch, time.Hour); err != nil {
+		t.Fatalf("seed token epoch: %v", err)
+	}
+
+	if w := doAuthRequest(r, "Bearer "+token); w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s, want 200", w.Code, w.Body.String())
 	}
 }

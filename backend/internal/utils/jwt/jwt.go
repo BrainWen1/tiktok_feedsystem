@@ -22,14 +22,16 @@ var (
 	ErrJWTNotConfigured = errors.New("jwt is not configured")
 )
 
+const minJWTSecretBytes = 32 // HS256 密钥至少 256 bit
+
 // 返回JWT密钥和设置的过期时间；配置缺失时返回error，禁止在请求链路中退出进程
 func jwtSecret() ([]byte, int, error) {
 	key := config.AppConfig.JWT_secret
 	expireHour := config.AppConfig.JWT_expire_hour
-	if len(key) == 0 {
-		return nil, 0, fmt.Errorf("%w: JWT_SECRET is empty", ErrJWTNotConfigured)
+	if len(key) < minJWTSecretBytes {
+		return nil, 0, fmt.Errorf("%w: JWT_SECRET is too short", ErrJWTNotConfigured)
 	}
-	if expireHour == 0 {
+	if expireHour <= 0 {
 		return nil, 0, fmt.Errorf("%w: JWT_EXPIRE_HOUR is not set", ErrJWTNotConfigured)
 	}
 	return []byte(key), expireHour, nil

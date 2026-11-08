@@ -2,7 +2,9 @@ package service
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
+	"feedsystem/internal/config"
 	"feedsystem/internal/dto"
 	"feedsystem/internal/infra/cache"
 	"feedsystem/internal/model"
@@ -59,6 +61,9 @@ const (
 	minPasswordLen   = 8  // 密码最小长度（按字符数）
 	maxPasswordBytes = 72 // bcrypt 输入上限，超过会被静默截断
 )
+
+// 包级变量，启动时生成一次，用于抹平“用户不存在”的 bcrypt 时间
+var dummyPasswordHash, _ = bcrypt.GenerateFromPassword([]byte("dummy-password-for-timing"), bcrypt.DefaultCost)
 
 // usernamePattern 用户名仅允许字母、数字、下划线
 var usernamePattern = regexp.MustCompile(`^[A-Za-z0-9_]+$`)
@@ -150,6 +155,9 @@ func (s *UserService) Register(ctx context.Context, username, password string) (
 		Bio:       bio,
 	}
 	err = s.UserRepo.Register(ctx, user)
+	if errors.Is(err, repo.ErrDuplicateKey) { // 捕获底层唯一索引冲突，返回统一的 ErrUsernameExists
+		return nil, ErrUsernameExists
+	}
 	if err != nil {
 		logger.Ctx(ctx).Error("register user failed", logger.Err(err))
 		return nil, fmt.Errorf("register user: %w", err)
@@ -168,6 +176,8 @@ func (s *UserService) Login(ctx context.Context, username, password string) (acc
 	user, err := s.UserRepo.FindByUsername(ctx, username)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
+			// 使用 bcrypt.CompareHashAndPassword(dummyPasswordHash, []byte(password)) 来抹平账号不存在的时间差，避免被攻击者通过时间差进行账号枚举
+			_ = bcrypt.CompareHashAndPassword(dummyPasswordHash, []byte(password))
 			logger.Ctx(ctx).Warn("login failed: user not found")
 			return "", "", ErrInvalidCredentials
 		}
@@ -233,7 +243,8 @@ func (s *UserService) RefreshToken(ctx context.Context, refreshToken string, old
 	valStr, err := s.cache.GetDel(ctx, redisKey)
 	if err != nil {
 		if errors.Is(err, cache.ErrCacheMiss) {
-			return "", "", 0, "", fmt.Errorf("%w: token not found", ErrInvalidRefreshToken)
+			// Redis 中没有该 refresh token，可能是过期、已使用或被撤销
+			return "", "", 0, "", s.checkRefreshTokenReplay(ctx, refreshToken)
 		}
 		// Redis故障不能当成token失效，避免把服务异常误报为401
 		logger.Ctx(ctx).Error("get refresh token from redis failed", logger.Err(err))
@@ -264,18 +275,21 @@ func (s *UserService) RefreshToken(ctx context.Context, refreshToken string, old
 	// 拉黑旧的access token，设置过期时间为剩余有效期
 	// 此项一定要设计成非必填的，因为有时候刷新就是因为access token过期了，前端没有办法传回
 	if oldAccessToken != "" {
-		remainingExpire, err := jwt.GetTokenRemainingExpire(oldAccessToken)
+		oldClaims, err := jwt.ParseToken(oldAccessToken)
 		if err == nil {
-			// 解析成功，加入黑名单
-			err = s.cache.AddTokenToBlacklist(ctx, oldAccessToken, time.Duration(remainingExpire)*time.Second)
-			if err != nil {
-				// 解析成功，但加入黑名单失败，记录日志并返回错误
-				logger.Ctx(ctx).Error("add old access token to blacklist failed", logger.Err(err))
-				return "", "", 0, "", fmt.Errorf("failed to blacklist old access token: %w", err)
+			if oldClaims.UserID != user.ID {
+				// 旧 access token 的 userID 与 refresh token 对应的 userID 不匹配，说明可能是别人的 token，记录日志但不拉黑
+				logger.Ctx(ctx).Warn("old access token owner mismatch",
+					logger.Uint("token_user_id", oldClaims.UserID), logger.Uint("refresh_user_id", user.ID))
+				// 忽略即可，不要把别人的 token 拉黑
+			} else if remainingExpire, err := jwt.GetTokenRemainingExpire(oldAccessToken); err == nil && remainingExpire > 0 {
+				// 剩余有效期必须大于 0：Redis SET 的 expiration=0 表示永不过期，会把 key 永久留在黑名单里
+				if err := s.cache.AddTokenToBlacklist(ctx, oldAccessToken, time.Duration(remainingExpire)*time.Second); err != nil {
+					return "", "", 0, "", fmt.Errorf("failed to blacklist old access token: %w", err)
+				}
 			}
 		} else {
-			// 解析失败，直接忽略，不要返回错误
-			logger.Ctx(ctx).Error("get remaining expire for old access token failed", logger.Err(err))
+			logger.Ctx(ctx).Warn("failed to parse old access token, skipping blacklist", logger.Err(err))
 		}
 	}
 
@@ -304,7 +318,48 @@ func (s *UserService) RefreshToken(ctx context.Context, refreshToken string, old
 		return "", "", 0, "", fmt.Errorf("failed add refresh token to user set: %w", err)
 	}
 
+	// 轮换完成后标记旧 refresh token 已使用，作为重放检测依据。
+	// 写入失败只记录日志：旧 token 已被 GetDel 消费，一次性语义仍然成立，不影响本次轮换结果。
+	if err := s.cache.Set(ctx, cache.RefreshUsedKey(hashRefreshToken(refreshToken)),
+		strconv.FormatUint(uint64(user.ID), 10), ttl); err != nil {
+		logger.Ctx(ctx).Warn("mark refresh token as used failed", logger.Err(err))
+	}
+
 	return newAccessToken, newRefreshToken, user.ID, user.UserName, nil
+}
+
+// hashRefreshToken 对 refresh token 做 SHA-256，用于写入重放检测标记，避免在 Redis 中保存明文 token。
+func hashRefreshToken(token string) string {
+	sum := sha256.Sum256([]byte(token))
+	return fmt.Sprintf("%x", sum)
+}
+
+// checkRefreshTokenReplay 在 refresh token 未命中时判断是否为重放。
+// 命中已使用标记说明该 token 已被消费过，视为泄露：撤销该用户全部 refresh token 并返回 401。
+func (s *UserService) checkRefreshTokenReplay(ctx context.Context, refreshToken string) error {
+	usedKey := cache.RefreshUsedKey(hashRefreshToken(refreshToken))
+	val, err := s.cache.Get(ctx, usedKey)
+	if err != nil {
+		if errors.Is(err, cache.ErrCacheMiss) {
+			// 未被使用过，只是过期、被撤销或根本不存在，按普通无效 token 处理
+			return ErrInvalidRefreshToken
+		}
+		logger.Ctx(ctx).Error("check refresh token usage failed", logger.Err(err))
+		return fmt.Errorf("%w: check refresh token usage failed", ErrRefreshTokenUnavailable)
+	}
+
+	reusedUserID, parseErr := strconv.ParseUint(val, 10, 64)
+	if parseErr != nil || reusedUserID == 0 {
+		logger.Ctx(ctx).Error("parse user id from refresh used marker failed", logger.Err(parseErr))
+		return ErrInvalidRefreshToken
+	}
+
+	logger.Ctx(ctx).Warn("refresh token replay detected, revoking all sessions", logger.Uint64("user_id", reusedUserID))
+	if err := s.cache.CleanAllUserRefresh(ctx, uint(reusedUserID)); err != nil {
+		logger.Ctx(ctx).Error("revoke all refresh tokens after replay failed", logger.Err(err))
+		return fmt.Errorf("%w: revoke reused refresh token: %v", ErrRefreshTokenUnavailable, err)
+	}
+	return fmt.Errorf("%w: token reused", ErrInvalidRefreshToken)
 }
 
 // Logout 用户登出
@@ -426,6 +481,10 @@ func (s *UserService) UpdateProfile(ctx context.Context, userID uint, req dto.Up
 
 	// 调用仓库层更新用户资料
 	err := s.UserRepo.UpdateProfile(ctx, userID, updateMap)
+	if errors.Is(err, repo.ErrDuplicateKey) {
+		// 并发改名时由数据库唯一索引兜底，统一返回用户名已存在
+		return nil, ErrUsernameExists
+	}
 	if err != nil {
 		logger.Ctx(ctx).Error("update user profile failed", logger.Err(err))
 		return nil, fmt.Errorf("update user profile: %w", err)
@@ -456,6 +515,7 @@ func (s *UserService) ChangePassword(ctx context.Context, userID uint, oldPasswo
 		return fmt.Errorf("find user %d for change password: %w", userID, err)
 	}
 
+	// 1. 校验旧密码、生成新 hash
 	// 验证旧密码
 	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(oldPassword)); err != nil {
 		logger.Ctx(ctx).Warn("old password does not match", logger.Uint("user_id", userID))
@@ -469,34 +529,39 @@ func (s *UserService) ChangePassword(ctx context.Context, userID uint, oldPasswo
 		return fmt.Errorf("hash new password for user %d: %w", userID, err)
 	}
 
-	// 更新密码
-	err = s.UserRepo.UpdatePassword(ctx, userID, string(hashedNewPassword))
-	if err != nil {
+	// 2. 撤销全部 refresh token + 拉黑当前 access token + 写 token epoch。
+	// 缓存禁用时无法执行撤销，跳过缓存操作，但密码仍必须更新。
+	if s.cache.IsEnabled() {
+		// 先删除该用户名下全部refresh token，保证改密后旧refresh无法继续换取access。
+		// Redis 操作失败必须向上返回，不能吞掉错误让接口误报成功。
+		if err := s.cache.CleanAllUserRefresh(ctx, userID); err != nil {
+			logger.Ctx(ctx).Error("clean all refresh tokens failed", logger.Uint("user_id", userID), logger.Err(err))
+			return fmt.Errorf("failed to revoke refresh tokens: %w", err)
+		}
+
+		// 拉黑当前 access token，使本次请求使用的令牌立即失效
+		ttl := time.Duration(remainingExpire) * time.Second
+		if ttl > 0 { // 如果剩余有效期大于0，才加入黑名单
+			if err := s.cache.AddTokenToBlacklist(ctx, accessToken, ttl); err != nil {
+				logger.Ctx(ctx).Error("add access token to blacklist failed", logger.Uint("user_id", userID), logger.Err(err))
+				return fmt.Errorf("blacklist access token for user %d: %w", userID, err)
+			}
+		}
+
+		// epoch 机制撤销该用户在其他设备上的全部 access token：签发时间早于 epoch 的 token 一律失效。
+		// TTL 设为 JWT_expire_hour + 1 小时，保证改密前签发的 token 在自然过期前都会先碰到 epoch 校验。
+		epoch := time.Now().Unix()
+		epochTTL := time.Duration(config.AppConfig.JWT_expire_hour+1) * time.Hour
+		if err := s.cache.Set(ctx, cache.UserTokenEpochKey(userID), epoch, epochTTL); err != nil {
+			logger.Ctx(ctx).Error("set token epoch failed", logger.Uint("user_id", userID), logger.Err(err))
+			return fmt.Errorf("revoke access tokens for user %d: %w", userID, err)
+		}
+	}
+
+	// 3. 最后更新密码；失败时最多导致用户需要重新登录，但不会出现“旧会话仍有效”的不一致
+	if err := s.UserRepo.UpdatePassword(ctx, userID, string(hashedNewPassword)); err != nil {
 		logger.Ctx(ctx).Error("update password failed", logger.Uint("user_id", userID), logger.Err(err))
 		return fmt.Errorf("update password for user %d: %w", userID, err)
-	}
-
-	// 缓存禁用时无法写入黑名单/清理refresh token，跳过缓存操作，密码已在数据库更新完成
-	if !s.cache.IsEnabled() {
-		logger.Ctx(ctx).Warn("cache disabled, skip token revocation after password change", logger.Uint("user_id", userID))
-		return nil
-	}
-
-	// 先删除该用户名下全部refresh token，保证改密后旧refresh无法继续换取access。
-	// Redis 操作失败必须向上返回，不能吞掉错误让接口误报成功。
-	if err := s.cache.CleanAllUserRefresh(ctx, userID); err != nil {
-		logger.Ctx(ctx).Error("clean all refresh tokens failed", logger.Uint("user_id", userID), logger.Err(err))
-		return fmt.Errorf("failed to revoke refresh tokens: %w", err)
-	}
-
-	// 拉黑access token
-	ttl := time.Duration(remainingExpire) * time.Second
-	if ttl > 0 { // 如果剩余有效期大于0，才加入黑名单
-		err = s.cache.AddTokenToBlacklist(ctx, accessToken, ttl)
-		if err != nil {
-			logger.Ctx(ctx).Error("add access token to blacklist failed", logger.Uint("user_id", userID), logger.Err(err))
-			return fmt.Errorf("blacklist access token for user %d: %w", userID, err)
-		}
 	}
 
 	return nil

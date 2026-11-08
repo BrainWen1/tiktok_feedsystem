@@ -39,6 +39,10 @@ const (
 	imSessionPrefix = "im:sessions:"
 	// imSessionDetailPrefix IM 会话详情前缀，Redis 数据结构为 Hash，field 为对方 userID，value 为最新消息的 JSON。
 	imSessionDetailPrefix = "im:session_detail:"
+	// userTokenEpochPrefix 用户 token epoch 前缀，记录该用户最近一次改密时间（Unix 秒）。
+	userTokenEpochPrefix = "auth:token_epoch:"
+	// refreshUsedPrefix 已使用的 refresh token 前缀，用于防止 refresh token 重放攻击，Redis 数据结构为 String，value 为用户 ID。
+	refreshUsedPrefix = "refresh_used:"
 )
 
 const (
@@ -142,4 +146,14 @@ func IMSessionKey(userID uint) string {
 // IMSessionDetailKey 返回 IM 会话详情的 Redis key。
 func IMSessionDetailKey(userID, targetID uint) string {
 	return fmt.Sprintf("%s%d:%d", imSessionDetailPrefix, userID, targetID)
+}
+
+// UserTokenEpochKey 返回用户 token epoch 的 Redis key，记录该用户最近一次改密时间（Unix 秒）。
+func UserTokenEpochKey(userID uint) string {
+	return fmt.Sprintf("%s%d", userTokenEpochPrefix, userID)
+}
+
+// RefreshUsedKey 返回已使用的 refresh token 的 Redis key，用于防止 refresh token 重放攻击。
+func RefreshUsedKey(hashedToken string) string {
+	return fmt.Sprintf("%s%s", refreshUsedPrefix, hashedToken)
 }

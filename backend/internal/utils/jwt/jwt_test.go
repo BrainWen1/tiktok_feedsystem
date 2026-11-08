@@ -75,13 +75,19 @@ func TestParseTokenRejectsTamperedToken(t *testing.T) {
 		t.Fatalf("GenerateToken: %v", err)
 	}
 
-	// 修改签名最后一个字符，签名校验必须失败。
-	last := tokenStr[len(tokenStr)-1]
+	// 修改签名段第一个字符：base64url 最后一个字符含未使用的填充位，
+	// 改动它可能解码出相同签名，因此必须改签名段前部才能稳定触发校验失败。
+	parts := strings.Split(tokenStr, ".")
+	if len(parts) != 3 {
+		t.Fatalf("token parts = %d, want 3", len(parts))
+	}
+	first := parts[2][0]
 	replacement := byte('A')
-	if last == 'A' {
+	if first == 'A' {
 		replacement = 'B'
 	}
-	tampered := tokenStr[:len(tokenStr)-1] + string(replacement)
+	parts[2] = string(replacement) + parts[2][1:]
+	tampered := strings.Join(parts, ".")
 	if _, err := ParseToken(tampered); err == nil {
 		t.Fatal("tampered token should be rejected")
 	}

@@ -11,12 +11,16 @@ import (
 
 	"feedsystem/internal/utils/logger"
 
+	"github.com/go-sql-driver/mysql"
 	"gorm.io/gorm"
 )
 
 // ErrInvalidArgument repo 层参数校验失败。
 // 用于拦截空用户名、零值主键等会导致 GORM 忽略零值条件、生成无 WHERE SQL 的请求。
-var ErrInvalidArgument = errors.New("invalid argument")
+var (
+	ErrInvalidArgument = errors.New("invalid argument")
+	ErrDuplicateKey    = errors.New("duplicate key")
+)
 
 // UserRepo 用户仓库
 type UserRepo struct {
@@ -28,10 +32,19 @@ func NewUserRepo(db *gorm.DB) *UserRepo {
 	return &UserRepo{db: db}
 }
 
+// isDuplicateKeyError 判断是否为 MySQL 唯一键冲突（1062）。
+func isDuplicateKeyError(err error) bool {
+	var mysqlErr *mysql.MySQLError
+	return errors.As(err, &mysqlErr) && mysqlErr.Number == 1062
+}
+
 // Register 注册用户
 func (r *UserRepo) Register(ctx context.Context, user *model.User) error {
 	err := r.db.WithContext(ctx).Create(user).Error
 	if err != nil {
+		if isDuplicateKeyError(err) {
+			return ErrDuplicateKey
+		}
 		logger.Ctx(ctx).Error("register user failed", logger.Err(err))
 		return err
 	}
@@ -128,6 +141,9 @@ func (r *UserRepo) UpdateProfile(ctx context.Context, userID uint, updatedFields
 
 	err := r.db.WithContext(ctx).Model(&model.User{}).Where("id = ?", userID).Updates(updatedFields).Error
 	if err != nil {
+		if isDuplicateKeyError(err) {
+			return ErrDuplicateKey
+		}
 		logger.Ctx(ctx).Error("update user profile failed", logger.Err(err))
 		return err
 	}

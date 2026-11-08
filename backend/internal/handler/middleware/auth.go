@@ -1,10 +1,14 @@
 package middleware
 
 import (
+	"errors"
 	"feedsystem/internal/infra/cache"
 	"feedsystem/internal/utils/jwt"
 	"feedsystem/internal/utils/logger"
 	"feedsystem/internal/utils/response"
+	"fmt"
+	"net/http"
+	"strconv"
 	"strings"
 	"sync/atomic"
 
@@ -56,6 +60,27 @@ func (am *AuthMiddleware) Auth() gin.HandlerFunc {
 			response.FailAuthResponse(ctx, "无效的token")
 			ctx.Abort()
 			return
+		}
+
+		// 检查 token 的颁发时间是否早于用户最近一次改密时间（token epoch）。
+		// 缓存禁用时无法读取 epoch，降级为只校验签名与黑名单（黑名单同样为空操作）。
+		if am.cache.IsEnabled() {
+			valid, epochErr := tokenEpochValid(ctx, am.cache, claims)
+			if epochErr != nil {
+				// Redis 故障不能返回 401，否则客户端会误以为登录失效并清空 token
+				logger.Ctx(ctx.Request.Context()).Error("check user token epoch failed", logger.Err(epochErr))
+				ctx.JSON(http.StatusServiceUnavailable, response.Response{
+					Code:    http.StatusServiceUnavailable,
+					Message: "服务暂不可用，请稍后重试",
+				})
+				ctx.Abort()
+				return
+			}
+			if !valid {
+				response.FailAuthResponse(ctx, "登录状态已失效，请重新登录")
+				ctx.Abort()
+				return
+			}
 		}
 
 		// 检查token是否在黑名单中
@@ -113,6 +138,38 @@ func TryGetUserID(ctx *gin.Context) uint {
 			logger.Ctx(ctx.Request.Context()).Warn("soft auth token is blacklisted", logger.Uint("user_id", claims.UserID))
 			return 0
 		}
+
+		// 改密前签发的旧 token 在软鉴权中也只能按游客处理
+		valid, err := tokenEpochValid(ctx, c, claims)
+		if err != nil {
+			logger.Ctx(ctx.Request.Context()).Error("check token epoch in TryGetUserID failed", logger.Err(err))
+			return 0
+		}
+		if !valid {
+			return 0
+		}
 	}
 	return claims.UserID
+}
+
+// tokenEpochValid 校验 token 的签发时间不早于用户最近一次改密时间。
+// 返回 (false, nil) 表示 token 已因改密失效；(false, err) 表示 Redis 故障、无法确认。
+func tokenEpochValid(ctx *gin.Context, c *cache.RedisCache, claims *jwt.Claims) (bool, error) {
+	epochStr, err := c.Get(ctx.Request.Context(), cache.UserTokenEpochKey(claims.UserID))
+	if err != nil {
+		if errors.Is(err, cache.ErrCacheMiss) {
+			// 用户从未改过密码，没有 epoch
+			return true, nil
+		}
+		return false, err
+	}
+
+	epoch, parseErr := strconv.ParseInt(epochStr, 10, 64)
+	if parseErr != nil {
+		return false, fmt.Errorf("parse token epoch for user %d: %w", claims.UserID, parseErr)
+	}
+	if claims.IssuedAt == nil || claims.IssuedAt.Unix() < epoch {
+		return false, nil
+	}
+	return true, nil
 }

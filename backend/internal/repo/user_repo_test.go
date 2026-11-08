@@ -9,10 +9,23 @@ import (
 
 	"feedsystem/internal/model"
 
+	"github.com/go-sql-driver/mysql"
 	"gorm.io/driver/sqlite" // SQLite 驱动依赖 CGO 和 gcc
 	"gorm.io/gorm"
 	gormlogger "gorm.io/gorm/logger"
 )
+
+func TestIsDuplicateKeyError(t *testing.T) {
+	if !isDuplicateKeyError(&mysql.MySQLError{Number: 1062}) {
+		t.Fatal("MySQL 1062 should be treated as duplicate key")
+	}
+	if isDuplicateKeyError(&mysql.MySQLError{Number: 1048}) {
+		t.Fatal("non-duplicate MySQL error must not be treated as duplicate key")
+	}
+	if isDuplicateKeyError(errors.New("plain error")) {
+		t.Fatal("plain error must not be treated as duplicate key")
+	}
+}
 
 // newUserTestDB 创建每个测试独立的内存 SQLite 数据库。
 // 使用 cache=shared + 唯一文件名，避免不同测试之间复用同一份数据；

@@ -77,7 +77,8 @@ func (r *RedisCache) Get(ctx context.Context, key string) (string, error) {
 		if errors.Is(err, redis.Nil) {
 			return "", ErrCacheMiss
 		}
-		return "", fmt.Errorf("get cache key %s: %w", key, err)
+		// 不能把 key 拼进错误：blacklist_token/refresh_token 的 key 就是凭据本身
+		return "", fmt.Errorf("get cache value: %w", err)
 	}
 	return val, nil
 }
