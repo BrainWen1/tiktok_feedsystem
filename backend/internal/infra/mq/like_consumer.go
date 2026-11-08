@@ -157,7 +157,7 @@ func handleLikeMessage(parent context.Context, ch *amqp.Channel, msg amqp.Delive
 				logger.Error("redis set error", logger.Err(err))
 			}
 			// 重复消费说明该点赞已在库中，幂等重放一次缓存同步，修复首次消费可能漏写计数的问题
-			if err := syncLikeCaches(ctx, redisCache, likeRepo, event); err != nil {
+			if err := SyncLikeCaches(ctx, redisCache, likeRepo, event); err != nil {
 				logger.Error("sync like cache on duplicate failed", logger.Err(err))
 			}
 			// 首次消费可能已插入点赞行但未完成计数更新（进程退出等），以点赞表为准重算一次
@@ -191,7 +191,7 @@ func handleLikeMessage(parent context.Context, ch *amqp.Channel, msg amqp.Delive
 
 	// 同步缓存视图：用户点赞集合（Set）、视频点赞明细 ZSet、视频点赞热度榜单 ZSet。
 	// 缓存失败不影响数据库已成功的结论，只记录日志，避免消息因缓存问题堆积。
-	if err := syncLikeCaches(ctx, redisCache, likeRepo, event); err != nil {
+	if err := SyncLikeCaches(ctx, redisCache, likeRepo, event); err != nil {
 		logger.Error("sync like cache failed", logger.Err(err))
 	}
 
@@ -240,11 +240,13 @@ func invalidateVideoDetailCache(ctx context.Context, redisCache *cache.RedisCach
 	}
 }
 
-// syncLikeCaches 把数据库已落库的点赞状态同步到 Redis：
+// SyncLikeCaches 把数据库已落库的点赞状态同步到 Redis：
 //  1. like:user:{userID}：用户点赞视频集合（Set）
 //  2. like:video:{vid}：视频点赞明细 ZSet，member=userID，ZCard 即点赞总数
 //  3. video:videos：视频点赞热度榜单 ZSet，member=vid，score=当前点赞总数
-func syncLikeCaches(ctx context.Context, redisCache *cache.RedisCache, likeRepo *repo.LikeRepo, event LikeEvent) error {
+//
+// 导出给 service 层 MQ 降级直写数据库的分支复用，保证两条写入路径产出同一套缓存结构（P0-5）。
+func SyncLikeCaches(ctx context.Context, redisCache *cache.RedisCache, likeRepo *repo.LikeRepo, event LikeEvent) error {
 	if redisCache == nil || !redisCache.IsEnabled() {
 		return nil // 缓存禁用时保持降级，全部以数据库为准
 	}

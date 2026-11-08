@@ -38,6 +38,21 @@ func isDuplicateKeyError(err error) bool {
 	return errors.As(err, &mysqlErr) && mysqlErr.Number == 1062
 }
 
+// IsDuplicateKey 判断错误是否为唯一键冲突，供 service 层把重复写入按幂等成功处理。
+// 生产环境走驱动错误码（MySQL 1062）；测试或其它驱动退化为错误文本匹配，避免依赖具体驱动。
+func IsDuplicateKey(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, ErrDuplicateKey) || isDuplicateKeyError(err) {
+		return true
+	}
+	errStr := strings.ToLower(err.Error())
+	return strings.Contains(errStr, "duplicate entry") ||
+		strings.Contains(errStr, "duplicate key") ||
+		strings.Contains(errStr, "unique constraint")
+}
+
 // Register 注册用户
 func (r *UserRepo) Register(ctx context.Context, user *model.User) error {
 	err := r.db.WithContext(ctx).Create(user).Error

@@ -61,13 +61,15 @@ func (r *LikeRepo) DeleteLike(ctx context.Context, userID, vid uint) (int64, err
 
 // SyncLikesCount 以点赞表为准重算 videos.likes_count。
 // 用于重复消费、首次落库后进程退出等导致计数漏记的场景做自愈。
+// COUNT 与 UPDATE 合并为一条带子查询的原生 SQL，避免两步之间被并发点赞覆盖造成丢失更新（P0-4）。
 func (r *LikeRepo) SyncLikesCount(ctx context.Context, vid uint) error {
-	var count int64
-	if err := r.db.WithContext(ctx).Model(&model.Like{}).Where("video_id = ?", vid).Count(&count).Error; err != nil {
-		return err
+	if vid == 0 {
+		return fmt.Errorf("sync likes count: empty video id: %w", ErrInvalidArgument)
 	}
-	return r.db.WithContext(ctx).Model(&model.Video{}).Where("id = ?", vid).
-		UpdateColumn("likes_count", count).Error
+	return r.db.WithContext(ctx).Exec(
+		"UPDATE videos SET likes_count = (SELECT COUNT(*) FROM likes WHERE likes.video_id = ?) WHERE id = ?",
+		vid, vid,
+	).Error
 }
 
 // IsLiked 检查用户是否点赞了视频

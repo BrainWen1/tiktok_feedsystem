@@ -37,6 +37,8 @@ var (
 	uploadImageLimit        = ratelimit.Config{Scope: "upload_image", Limit: 10, Window: time.Minute, KeyByUserID: true}
 	feedReadRateLimitIP     = ratelimit.Config{Scope: "feed_read", Limit: 120, Window: time.Minute}
 	feedReadRateLimitUserID = ratelimit.Config{Scope: "feed_read", Limit: 120, Window: time.Minute, KeyByUserID: true}
+	// 点赞/取消点赞按 userID 限流，防止脚本刷赞打爆数据库与 MQ
+	likeActionRateLimit = ratelimit.Config{Scope: "like_action", Limit: 30, Window: time.Minute, KeyByUserID: true}
 )
 
 // blockedStaticExt 静态资源目录中禁止直接访问的敏感后缀，防止源码/配置泄露
@@ -245,9 +247,9 @@ func SetupRouter(sqlDB *gorm.DB, cache *cache.RedisCache, rmq *mq.RabbitMQ, auth
 	}
 	protectedLikeGroup := likeGroup.Group("/").Use(authMiddleware.Auth())
 	{
-		protectedLikeGroup.POST("/like", likeHandler.LikeVideo)     // 点赞视频
-		protectedLikeGroup.POST("/unlike", likeHandler.UnlikeVideo) // 取消点赞视频
-		protectedLikeGroup.POST("/is_liked", likeHandler.IsLiked)   // 检查用户是否点赞了视频
+		protectedLikeGroup.POST("/like", limiter.Middleware(likeActionRateLimit), likeHandler.LikeVideo)     // 点赞视频（按userID限流）
+		protectedLikeGroup.POST("/unlike", limiter.Middleware(likeActionRateLimit), likeHandler.UnlikeVideo) // 取消点赞视频（按userID限流）
+		protectedLikeGroup.POST("/is_liked", likeHandler.IsLiked)                                            // 检查用户是否点赞了视频
 	}
 
 	// 评论相关路由

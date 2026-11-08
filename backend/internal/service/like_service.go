@@ -50,6 +50,13 @@ func (s *LikeService) LikeVideo(ctx context.Context, userID, vid uint, userName 
 		logger.Ctx(ctx).Warn("invalid userID or vid", logger.Uint("user_id", userID), logger.Uint("video_id", vid))
 		return errors.New("uid and vid must be non-zero")
 	}
+	// 依赖未注入时直接拦截，避免空指针 panic（P0-1/P0-2）
+	if s.videoDetailer == nil {
+		return errors.New("video detail service is not initialized")
+	}
+	if s.notificationService == nil {
+		return errors.New("notification service is not initialized")
+	}
 	// 前置查询：拦截重复点击，减少无效MQ消息
 	isLiked, err := s.likeRepo.IsLiked(ctx, userID, vid)
 	if err != nil {
@@ -76,10 +83,24 @@ func (s *LikeService) LikeVideo(ctx context.Context, userID, vid uint, userName 
 		logger.Ctx(ctx).Error("publish like event to MQ failed", logger.Err(err))
 		// MQ投递失败，降级方案：同步直接写数据库
 		if createErr := s.likeRepo.CreateLike(ctx, userID, vid); createErr != nil {
-			return fmt.Errorf("create like fallback for user %d video %d: %w", userID, vid, createErr)
+			// 唯一键冲突说明点赞已被并发请求写入，按幂等处理，继续走缓存同步（P1-12）
+			if !repo.IsDuplicateKey(createErr) {
+				return fmt.Errorf("create like fallback for user %d video %d: %w", userID, vid, createErr)
+			}
+			logger.Ctx(ctx).Debug("like already exists in fallback, treat as success",
+				logger.Uint("user_id", userID), logger.Uint("video_id", vid), logger.Err(createErr))
 		}
 		// 降级落库同样需要失效详情缓存，否则详情页会在 TTL 内继续展示旧点赞数
 		s.invalidateVideoDetailCache(ctx, vid)
+		// 降级落库后同步 Redis 视图（Set/ZSet/榜单），与 MQ 消费端保持同一套缓存结构（P0-5）
+		if syncErr := mq.SyncLikeCaches(ctx, s.cache, s.likeRepo, mq.LikeEvent{
+			Action:   "like",
+			UserID:   userID,
+			UserName: userName,
+			VideoID:  vid,
+		}); syncErr != nil {
+			logger.Ctx(ctx).Error("sync like cache after fallback failed", logger.Uint("user_id", userID), logger.Uint("video_id", vid), logger.Err(syncErr))
+		}
 		// 同步写数据库成功后，异步处理通知逻辑
 		go func() {
 			nctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
@@ -136,6 +157,14 @@ func (s *LikeService) UnlikeVideo(ctx context.Context, userID, vid uint) error {
 		}
 		// 降级落库同样需要失效详情缓存，否则详情页会在 TTL 内继续展示旧点赞数
 		s.invalidateVideoDetailCache(ctx, vid)
+		// 降级落库后同步 Redis 视图（Set/ZSet/榜单），与 MQ 消费端保持同一套缓存结构（P0-5）
+		if syncErr := mq.SyncLikeCaches(ctx, s.cache, s.likeRepo, mq.LikeEvent{
+			Action:  "unlike",
+			UserID:  userID,
+			VideoID: vid,
+		}); syncErr != nil {
+			logger.Ctx(ctx).Error("sync unlike cache after fallback failed", logger.Uint("user_id", userID), logger.Uint("video_id", vid), logger.Err(syncErr))
+		}
 		return nil
 	}
 
@@ -253,6 +282,15 @@ func (s *LikeService) BatchGetIsLike(ctx context.Context, loginUserID uint, vidL
 	// 缓存优先：like:user:{userID} 固定为 Set，member 是 video id，
 	// 与消费端 SADD / SREM 写入的数据结构完全一致（P0-9）。
 	key := cache.LikeUserSetKey(loginUserID)
+	// 防击穿：SET 不存在时直接 SMISMEMBER 会把所有视频都判为未点赞，
+	// 因此先确认 Key 是否存在，未命中则回源数据库并重建集合（P0-6）。
+	exists, err := s.cache.Exists(ctx, key)
+	if err != nil {
+		return nil, fmt.Errorf("failed to check like set for user %d: %w", loginUserID, err)
+	}
+	if !exists {
+		return s.rebuildLikeSetAndCheck(ctx, loginUserID, vidList, key)
+	}
 	members := make([]interface{}, 0, len(vidList))
 	for _, vid := range vidList {
 		members = append(members, vid)
@@ -263,6 +301,41 @@ func (s *LikeService) BatchGetIsLike(ctx context.Context, loginUserID uint, vidL
 	}
 	for i, vid := range vidList {
 		resMap[vid] = isLikedList[i]
+	}
+	return resMap, nil
+}
+
+// rebuildLikeSetAndCheck 在用户点赞集合缓存未命中时回源数据库批量查询，
+// 用查询结果重建 like:user:{userID}，并返回本次查询结果。
+// 这样冷用户/缓存过期后不会把已点赞视频误判为未点赞，也不会每次请求都穿透到数据库。
+func (s *LikeService) rebuildLikeSetAndCheck(ctx context.Context, loginUserID uint, vidList []string, key string) (map[string]bool, error) {
+	resMap := make(map[string]bool, len(vidList))
+	vidByStr := make(map[string]uint, len(vidList))
+	vids := make([]uint, 0, len(vidList))
+	for _, vid := range vidList {
+		vidNum, err := strconv.ParseUint(vid, 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("invalid video id %q: %w", vid, err)
+		}
+		vidByStr[vid] = uint(vidNum)
+		vids = append(vids, uint(vidNum))
+	}
+
+	likedMap, err := s.likeRepo.IsLikedBatch(ctx, loginUserID, vids)
+	if err != nil {
+		return nil, fmt.Errorf("failed to batch query like status from db for user %d: %w", loginUserID, err)
+	}
+
+	for vidStr, vidNum := range vidByStr {
+		liked := likedMap[vidNum]
+		resMap[vidStr] = liked
+		if !liked {
+			continue
+		}
+		// 重建失败只记录日志，不影响本次查询结果；下次未命中会再次回源
+		if err := s.cache.AddToSet(ctx, key, vidNum, cache.LikeUserSetTTL); err != nil {
+			logger.Ctx(ctx).Error("rebuild user like set failed", logger.Uint("user_id", loginUserID), logger.Uint("video_id", vidNum), logger.Err(err))
+		}
 	}
 	return resMap, nil
 }
