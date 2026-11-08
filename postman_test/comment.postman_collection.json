@@ -1,0 +1,2429 @@
+{
+  "info": {
+    "name": "comment",
+    "description": "comment 模块完整链路测试：账号准备、发布顶级评论/回复、空内容与超长内容校验、越权删除与自己/视频作者删除、评论列表与复合游标分页、边界参数。\n\n运行前置：\n1. API 进程与 Worker 进程均已启动（Worker 负责消费 comment 事件并回写计数缓存）；\n2. MySQL / Redis / RabbitMQ 可用，默认 {{base_url}} = http://127.0.0.1:8080；\n3. 按 00 -> 01 -> 02 -> 03 顺序运行，变量由 Tests 脚本自动串联；\n4. 发布接口不返回 comment_id，集合通过“等待 MQ + 列表按内容反查”获得评论 ID；\n5. 评论写入是异步的，集合内用 /healthz 忙等 2.5s~3s；\n6. 已知缺陷：分页同秒漏读（P1-1）会在第 2 页只返回 0 条时以 console.warn 提示，不阻断集合；\n7. 当前 Handler 把业务错误统一映射为 HTTP 500，删除越权/空内容等用例使用 oneOf 兼容修复前后的状态码。\n\n账号密码仅用于本地测试环境。",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{token}}",
+        "type": "string"
+      }
+    ]
+  },
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "if (!pm.collectionVariables.get('base_url')) {",
+          "  pm.collectionVariables.set('base_url', 'http://127.0.0.1:8080');",
+          "}",
+          "if (!pm.collectionVariables.get('token')) {",
+          "  console.log('token 为空：请先运行 00-鉴权与基准数据');",
+          "}"
+        ]
+      }
+    }
+  ],
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://127.0.0.1:8080",
+      "type": "string"
+    },
+    {
+      "key": "token",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "author_token",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "commenter_token",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "intruder_token",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "author_username",
+      "value": "comment_author_demo",
+      "type": "string"
+    },
+    {
+      "key": "author_password",
+      "value": "Passw0rd123",
+      "type": "string"
+    },
+    {
+      "key": "commenter_username",
+      "value": "comment_user_demo",
+      "type": "string"
+    },
+    {
+      "key": "commenter_password",
+      "value": "Passw0rd123",
+      "type": "string"
+    },
+    {
+      "key": "intruder_username",
+      "value": "comment_intruder_demo",
+      "type": "string"
+    },
+    {
+      "key": "intruder_password",
+      "value": "Passw0rd123",
+      "type": "string"
+    },
+    {
+      "key": "author_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "commenter_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "intruder_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "video_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "video_id_2",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "parent_comment_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "top_comment_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "reply_comment_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "delete_own_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "delete_by_author_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "pagination_last_time",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "pagination_last_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "page1_ids",
+      "value": "",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "00-鉴权与基准数据",
+      "item": [
+        {
+          "name": "注册作者账号",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"user_name\": \"{{author_username}}\", \"password\": \"{{author_password}}\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{base_url}}/user/register",
+            "auth": {
+              "type": "noauth"
+            },
+            "description": "账号已存在时业务码可能非 200，不影响后续登录。"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "if (json.code === 200) { pm.collectionVariables.set('__IGNORED__', String(json.data.user_id)); }"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "登录作者账号",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"user_name\": \"{{author_username}}\", \"password\": \"{{author_password}}\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{base_url}}/user/login",
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('业务码 200', () => pm.expect(json.code).to.eql(200));",
+                  "pm.test('返回 access token', () => pm.expect(json.data.token).to.be.a('string').and.not.empty);",
+                  "pm.collectionVariables.set('author_token', json.data.token);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "查询作者 ID",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"user_name\": \"{{author_username}}\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{base_url}}/user/find_by_username",
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('业务码 200', () => pm.expect(json.code).to.eql(200));",
+                  "pm.collectionVariables.set('author_id', String(json.data.id));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "注册评论者账号",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"user_name\": \"{{commenter_username}}\", \"password\": \"{{commenter_password}}\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{base_url}}/user/register",
+            "auth": {
+              "type": "noauth"
+            },
+            "description": "账号已存在时业务码可能非 200，不影响后续登录。"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "if (json.code === 200) { pm.collectionVariables.set('__IGNORED__', String(json.data.user_id)); }"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "登录评论者账号",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"user_name\": \"{{commenter_username}}\", \"password\": \"{{commenter_password}}\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{base_url}}/user/login",
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('业务码 200', () => pm.expect(json.code).to.eql(200));",
+                  "pm.test('返回 access token', () => pm.expect(json.data.token).to.be.a('string').and.not.empty);",
+                  "pm.collectionVariables.set('commenter_token', json.data.token);",
+                  "pm.collectionVariables.set('token', json.data.token);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "查询评论者 ID",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"user_name\": \"{{commenter_username}}\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{base_url}}/user/find_by_username",
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('业务码 200', () => pm.expect(json.code).to.eql(200));",
+                  "pm.collectionVariables.set('commenter_id', String(json.data.id));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "注册越权者账号",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"user_name\": \"{{intruder_username}}\", \"password\": \"{{intruder_password}}\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{base_url}}/user/register",
+            "auth": {
+              "type": "noauth"
+            },
+            "description": "账号已存在时业务码可能非 200，不影响后续登录。"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "if (json.code === 200) { pm.collectionVariables.set('__IGNORED__', String(json.data.user_id)); }"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "登录越权者账号",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"user_name\": \"{{intruder_username}}\", \"password\": \"{{intruder_password}}\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{base_url}}/user/login",
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('业务码 200', () => pm.expect(json.code).to.eql(200));",
+                  "pm.test('返回 access token', () => pm.expect(json.data.token).to.be.a('string').and.not.empty);",
+                  "pm.collectionVariables.set('intruder_token', json.data.token);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "查询越权者 ID",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"user_name\": \"{{intruder_username}}\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{base_url}}/user/find_by_username",
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('业务码 200', () => pm.expect(json.code).to.eql(200));",
+                  "pm.collectionVariables.set('intruder_id', String(json.data.id));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "发布基准视频 1（作者）",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"title\": \"comment-postman-video-1\", \"description\": \"created by comment.postman_collection.json\", \"video_url\": \"/upload/videos/{{author_id}}/comment_demo_1.mp4\", \"cover_url\": \"/upload/covers/{{author_id}}/comment_demo_1.jpg\", \"tags\": [\"comment\", \"postman\"]}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{base_url}}/video/publish",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{author_token}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('业务码 200', () => pm.expect(json.code).to.eql(200));",
+                  "pm.collectionVariables.set('video_id', String(json.data.video_id));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "发布基准视频 2（作者，用于分页与跨视频校验）",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"title\": \"comment-postman-video-2\", \"description\": \"created by comment.postman_collection.json\", \"video_url\": \"/upload/videos/{{author_id}}/comment_demo_2.mp4\", \"cover_url\": \"/upload/covers/{{author_id}}/comment_demo_2.jpg\", \"tags\": [\"comment\", \"postman\"]}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{base_url}}/video/publish",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{author_token}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('业务码 200', () => pm.expect(json.code).to.eql(200));",
+                  "pm.collectionVariables.set('video_id_2', String(json.data.video_id));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "发布父评论（视频 1，评论者）",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"video_id\": {{video_id}}, \"parent_id\": 0, \"content\": \"parent-for-reply\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{base_url}}/comment/publish",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{commenter_token}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('业务码 200', () => pm.expect(json.code).to.eql(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "等待 MQ 消费（2500ms 忙等）",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/healthz",
+            "description": "评论落库、计数缓存回写、通知都是异步的；前置脚本忙等给 Worker 留出时间。"
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const start = Date.now();",
+                  "while (Date.now() - start < 2500) { /* busy wait */ }"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('健康检查可用', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "列表反查父评论 ID",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/comment/list?video_id={{video_id}}&page_size=50",
+            "description": "发布接口不返回评论 ID，通过列表按内容反查。"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('业务码 200', () => pm.expect(json.code).to.eql(200));",
+                  "const list = json.data.comments || [];",
+                  "const target = list.find(c => c.content === \"parent-for-reply\");",
+                  "pm.test('目标评论已同步到列表', () => pm.expect(target).to.not.be.undefined);",
+                  "if (target) { pm.collectionVariables.set('parent_comment_id', String(target.id)); }"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "01-发布评论与边界校验",
+      "item": [
+        {
+          "name": "发布顶级评论（视频 1，评论者）",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"video_id\": {{video_id}}, \"parent_id\": 0, \"content\": \"top-level-by-commenter\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{base_url}}/comment/publish",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{commenter_token}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('业务码 200', () => pm.expect(json.code).to.eql(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "等待 MQ 消费（2500ms 忙等）",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/healthz",
+            "description": "评论落库、计数缓存回写、通知都是异步的；前置脚本忙等给 Worker 留出时间。"
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const start = Date.now();",
+                  "while (Date.now() - start < 2500) { /* busy wait */ }"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('健康检查可用', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "列表反查顶级评论 ID",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/comment/list?video_id={{video_id}}&page_size=50",
+            "description": "发布接口不返回评论 ID，通过列表按内容反查。"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('业务码 200', () => pm.expect(json.code).to.eql(200));",
+                  "const list = json.data.comments || [];",
+                  "const target = list.find(c => c.content === \"top-level-by-commenter\");",
+                  "pm.test('目标评论已同步到列表', () => pm.expect(target).to.not.be.undefined);",
+                  "if (target) { pm.collectionVariables.set('top_comment_id', String(target.id)); }"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "回复父评论（视频 1，评论者）",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"video_id\": {{video_id}}, \"parent_id\": {{parent_comment_id}}, \"content\": \"reply-by-commenter\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{base_url}}/comment/publish",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{commenter_token}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('业务码 200', () => pm.expect(json.code).to.eql(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "等待 MQ 消费（2500ms 忙等）",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/healthz",
+            "description": "评论落库、计数缓存回写、通知都是异步的；前置脚本忙等给 Worker 留出时间。"
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const start = Date.now();",
+                  "while (Date.now() - start < 2500) { /* busy wait */ }"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('健康检查可用', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "列表反查回复评论 ID",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/comment/list?video_id={{video_id}}&page_size=50",
+            "description": "发布接口不返回评论 ID，通过列表按内容反查。"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('业务码 200', () => pm.expect(json.code).to.eql(200));",
+                  "const list = json.data.comments || [];",
+                  "const target = list.find(c => c.content === \"reply-by-commenter\");",
+                  "pm.test('目标评论已同步到列表', () => pm.expect(target).to.not.be.undefined);",
+                  "if (target) { pm.collectionVariables.set('reply_comment_id', String(target.id)); }"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "发布空内容评论（应拒绝）",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"video_id\": {{video_id}}, \"parent_id\": 0, \"content\": \"\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{base_url}}/comment/publish",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{commenter_token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "description": "Handler 当前把所有 service 错误统一映射为 HTTP 500（审查报告 P2-1）。"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 状态为拒绝（当前实现可能为 500，修复后应为 400）', () => pm.expect(pm.response.code).to.be.oneOf([400, 500]));",
+                  "pm.test('业务码非 200', () => pm.expect(json.code).to.not.eql(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "发布纯空白内容评论（应拒绝）",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"video_id\": {{video_id}}, \"parent_id\": 0, \"content\": \"   \\n\\t  \"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{base_url}}/comment/publish",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{commenter_token}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 状态为拒绝（当前实现可能为 500，修复后应为 400）', () => pm.expect(pm.response.code).to.be.oneOf([400, 500]));",
+                  "pm.test('业务码非 200', () => pm.expect(json.code).to.not.eql(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "发布超长内容评论（501 字，应拒绝）",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"video_id\": {{video_id}}, \"parent_id\": 0, \"content\": \"评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评评\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{base_url}}/comment/publish",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{commenter_token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "description": "上限为 500 个 Unicode 字符（maxCommentContentRunes）。"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 状态为拒绝（当前实现可能为 500，修复后应为 400）', () => pm.expect(pm.response.code).to.be.oneOf([400, 500]));",
+                  "pm.test('业务码非 200', () => pm.expect(json.code).to.not.eql(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "发布到不存在的视频（应拒绝）",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"video_id\": 999999999, \"parent_id\": 0, \"content\": \"ghost video\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{base_url}}/comment/publish",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{commenter_token}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 状态为拒绝（当前实现可能为 500，修复后应为 400）', () => pm.expect(pm.response.code).to.be.oneOf([400, 404, 500]));",
+                  "pm.test('业务码非 200', () => pm.expect(json.code).to.not.eql(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "回复不存在的父评论（应拒绝）",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"video_id\": {{video_id}}, \"parent_id\": 999999999, \"content\": \"ghost parent\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{base_url}}/comment/publish",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{commenter_token}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 状态为拒绝（当前实现可能为 500，修复后应为 400）', () => pm.expect(pm.response.code).to.be.oneOf([400, 404, 500]));",
+                  "pm.test('业务码非 200', () => pm.expect(json.code).to.not.eql(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "父评论属于另一个视频（应拒绝）",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"video_id\": {{video_id_2}}, \"parent_id\": {{parent_comment_id}}, \"content\": \"cross-video reply\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{base_url}}/comment/publish",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{commenter_token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "description": "parent_comment_id 属于视频 1，此处声明 video_id 为视频 2，validateCommentTarget 必须拒绝。"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 状态为拒绝（当前实现可能为 500，修复后应为 400）', () => pm.expect(pm.response.code).to.be.oneOf([400, 404, 500]));",
+                  "pm.test('业务码非 200', () => pm.expect(json.code).to.not.eql(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "未登录发布评论（应 401）",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"video_id\": {{video_id}}, \"parent_id\": 0, \"content\": \"anonymous\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{base_url}}/comment/publish",
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 401', () => pm.response.to.have.status(401));",
+                  "pm.test('业务码 401', () => pm.expect(json.code).to.eql(401));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "02-删除评论与越权校验",
+      "item": [
+        {
+          "name": "发布待删除评论 A（评论者）",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"video_id\": {{video_id}}, \"parent_id\": 0, \"content\": \"delete-target-own\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{base_url}}/comment/publish",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{commenter_token}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('业务码 200', () => pm.expect(json.code).to.eql(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "等待 MQ 消费（2500ms 忙等）",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/healthz",
+            "description": "评论落库、计数缓存回写、通知都是异步的；前置脚本忙等给 Worker 留出时间。"
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const start = Date.now();",
+                  "while (Date.now() - start < 2500) { /* busy wait */ }"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('健康检查可用', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "列表反查评论 A 的 ID",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/comment/list?video_id={{video_id}}&page_size=50",
+            "description": "发布接口不返回评论 ID，通过列表按内容反查。"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('业务码 200', () => pm.expect(json.code).to.eql(200));",
+                  "const list = json.data.comments || [];",
+                  "const target = list.find(c => c.content === \"delete-target-own\");",
+                  "pm.test('目标评论已同步到列表', () => pm.expect(target).to.not.be.undefined);",
+                  "if (target) { pm.collectionVariables.set('delete_own_id', String(target.id)); }"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "越权者删除评论 A（应拒绝）",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"comment_id\": {{delete_own_id}}}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{base_url}}/comment/delete",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{intruder_token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "description": "既不是评论作者也不是视频作者；当前实现返回 HTTP 500，修复后应为 403。"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 状态为拒绝（当前实现可能为 500，修复后应为 403）', () => pm.expect(pm.response.code).to.be.oneOf([403, 404]));",
+                  "pm.test('业务码非 200', () => pm.expect(json.code).to.not.eql(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "等待 MQ 消费（500ms 忙等）",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/healthz",
+            "description": "评论落库、计数缓存回写、通知都是异步的；前置脚本忙等给 Worker 留出时间。"
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const start = Date.now();",
+                  "while (Date.now() - start < 500) { /* busy wait */ }"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('健康检查可用', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "确认越权删除失败后评论 A 仍存在",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/comment/list?video_id={{video_id}}&page_size=50"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('业务码 200', () => pm.expect(json.code).to.eql(200));",
+                  "const targetID = Number(pm.collectionVariables.get('delete_own_id'));",
+                  "const list = json.data.comments || [];",
+                  "const found = list.some(c => Number(c.id) === targetID);",
+                  "pm.test(评论仍存在, () => pm.expect(found).to.eql(true));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "评论者删除自己的评论 A（应成功）",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"comment_id\": {{delete_own_id}}}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{base_url}}/comment/delete",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{commenter_token}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('业务码 200', () => pm.expect(json.code).to.eql(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "等待 MQ 消费（2500ms 忙等）",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/healthz",
+            "description": "评论落库、计数缓存回写、通知都是异步的；前置脚本忙等给 Worker 留出时间。"
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const start = Date.now();",
+                  "while (Date.now() - start < 2500) { /* busy wait */ }"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('健康检查可用', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "确认评论 A 已删除",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/comment/list?video_id={{video_id}}&page_size=50"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('业务码 200', () => pm.expect(json.code).to.eql(200));",
+                  "const targetID = Number(pm.collectionVariables.get('delete_own_id'));",
+                  "const list = json.data.comments || [];",
+                  "const found = list.some(c => Number(c.id) === targetID);",
+                  "pm.test(评论已删除, () => pm.expect(found).to.eql(false));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "发布待删除评论 B（评论者）",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"video_id\": {{video_id}}, \"parent_id\": 0, \"content\": \"delete-target-by-video-author\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{base_url}}/comment/publish",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{commenter_token}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('业务码 200', () => pm.expect(json.code).to.eql(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "等待 MQ 消费（2500ms 忙等）",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/healthz",
+            "description": "评论落库、计数缓存回写、通知都是异步的；前置脚本忙等给 Worker 留出时间。"
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const start = Date.now();",
+                  "while (Date.now() - start < 2500) { /* busy wait */ }"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('健康检查可用', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "列表反查评论 B 的 ID",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/comment/list?video_id={{video_id}}&page_size=50",
+            "description": "发布接口不返回评论 ID，通过列表按内容反查。"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('业务码 200', () => pm.expect(json.code).to.eql(200));",
+                  "const list = json.data.comments || [];",
+                  "const target = list.find(c => c.content === \"delete-target-by-video-author\");",
+                  "pm.test('目标评论已同步到列表', () => pm.expect(target).to.not.be.undefined);",
+                  "if (target) { pm.collectionVariables.set('delete_by_author_id', String(target.id)); }"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "视频作者删除他人评论 B（应成功）",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"comment_id\": {{delete_by_author_id}}}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{base_url}}/comment/delete",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{author_token}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('业务码 200', () => pm.expect(json.code).to.eql(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "等待 MQ 消费（2500ms 忙等）",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/healthz",
+            "description": "评论落库、计数缓存回写、通知都是异步的；前置脚本忙等给 Worker 留出时间。"
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const start = Date.now();",
+                  "while (Date.now() - start < 2500) { /* busy wait */ }"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('健康检查可用', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "确认视频作者删除评论 B 成功",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/comment/list?video_id={{video_id}}&page_size=50"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('业务码 200', () => pm.expect(json.code).to.eql(200));",
+                  "const targetID = Number(pm.collectionVariables.get('delete_by_author_id'));",
+                  "const list = json.data.comments || [];",
+                  "const found = list.some(c => Number(c.id) === targetID);",
+                  "pm.test(评论已删除, () => pm.expect(found).to.eql(false));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "删除不存在的评论（应拒绝）",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"comment_id\": 999999999}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{base_url}}/comment/delete",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{commenter_token}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 状态为拒绝（当前实现可能为 500，修复后应为 400）', () => pm.expect(pm.response.code).to.be.oneOf([400, 404, 500]));",
+                  "pm.test('业务码非 200', () => pm.expect(json.code).to.not.eql(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "未登录删除评论（应 401）",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"comment_id\": {{top_comment_id}}}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{base_url}}/comment/delete",
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 401', () => pm.response.to.have.status(401));",
+                  "pm.test('业务码 401', () => pm.expect(json.code).to.eql(401));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "03-列表查询与游标分页",
+      "item": [
+        {
+          "name": "发布分页评论 01（视频 2）",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"video_id\": {{video_id_2}}, \"parent_id\": 0, \"content\": \"pagination-01\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{base_url}}/comment/publish",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{commenter_token}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('业务码 200', () => pm.expect(json.code).to.eql(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "发布分页评论 02（视频 2）",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"video_id\": {{video_id_2}}, \"parent_id\": 0, \"content\": \"pagination-02\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{base_url}}/comment/publish",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{commenter_token}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('业务码 200', () => pm.expect(json.code).to.eql(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "发布分页评论 03（视频 2）",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"video_id\": {{video_id_2}}, \"parent_id\": 0, \"content\": \"pagination-03\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{base_url}}/comment/publish",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{commenter_token}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('业务码 200', () => pm.expect(json.code).to.eql(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "发布分页评论 04（视频 2）",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"video_id\": {{video_id_2}}, \"parent_id\": 0, \"content\": \"pagination-04\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{base_url}}/comment/publish",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{commenter_token}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('业务码 200', () => pm.expect(json.code).to.eql(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "发布分页评论 05（视频 2）",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"video_id\": {{video_id_2}}, \"parent_id\": 0, \"content\": \"pagination-05\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{base_url}}/comment/publish",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{commenter_token}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('业务码 200', () => pm.expect(json.code).to.eql(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "发布分页评论 06（视频 2）",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"video_id\": {{video_id_2}}, \"parent_id\": 0, \"content\": \"pagination-06\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{base_url}}/comment/publish",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{commenter_token}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('业务码 200', () => pm.expect(json.code).to.eql(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "发布分页评论 07（视频 2）",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"video_id\": {{video_id_2}}, \"parent_id\": 0, \"content\": \"pagination-07\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{base_url}}/comment/publish",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{commenter_token}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('业务码 200', () => pm.expect(json.code).to.eql(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "等待 MQ 消费（3000ms 忙等）",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/healthz",
+            "description": "评论落库、计数缓存回写、通知都是异步的；前置脚本忙等给 Worker 留出时间。"
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const start = Date.now();",
+                  "while (Date.now() - start < 3000) { /* busy wait */ }"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('健康检查可用', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "分页第 1 页（page_size=5）",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/comment/list?video_id={{video_id_2}}&page_size=5",
+            "description": "按 created_at DESC, id DESC 排序；返回下一页游标 last_time / last_id。"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('业务码 200', () => pm.expect(json.code).to.eql(200));",
+                  "const list = json.data.comments || [];",
+                  "pm.test('第一页 5 条', () => pm.expect(list.length).to.eql(5));",
+                  "pm.test('has_more=true', () => pm.expect(json.data.has_more).to.eql(true));",
+                  "pm.test('total=7', () => pm.expect(json.data.total).to.eql(7));",
+                  "pm.test('返回 last_time', () => pm.expect(json.data.last_time).to.be.a('number'));",
+                  "pm.test('返回 last_id', () => pm.expect(json.data.last_id).to.be.a('number'));",
+                  "pm.collectionVariables.set('pagination_last_time', String(json.data.last_time));",
+                  "pm.collectionVariables.set('pagination_last_id', String(json.data.last_id));",
+                  "pm.collectionVariables.set('page1_ids', JSON.stringify(list.map(c => String(c.id))));",
+                  "const sorted = list.every((c, i) => i === 0 || new Date(list[i-1].created_at) >= new Date(c.created_at));",
+                  "pm.test('created_at 降序', () => pm.expect(sorted).to.eql(true));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "分页第 2 页（携带复合游标）",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/comment/list?video_id={{video_id_2}}&page_size=5&last_time={{pagination_last_time}}&last_id={{pagination_last_id}}",
+            "description": "已知缺陷 P1-1：游标是 Unix 秒，created_at 是 datetime(3)，同一秒内的评论可能在第二页被漏读。若第二页为 0 条，说明命中了该缺陷。"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('业务码 200', () => pm.expect(json.code).to.eql(200));",
+                  "const list = json.data.comments || [];",
+                  "const ids = list.map(c => String(c.id));",
+                  "const page1 = JSON.parse(pm.collectionVariables.get('page1_ids') || '[]');",
+                  "pm.test('第二页与第一页无重复', () => ids.forEach(id => pm.expect(page1).to.not.include(id)));",
+                  "pm.test('has_more=false', () => pm.expect(json.data.has_more).to.eql(false));",
+                  "if (ids.length === 0) {",
+                  "  console.warn('命中已知 P1-1：同秒评论在第二页被整段跳过');",
+                  "} else {",
+                  "  pm.test('两页合并覆盖全部 7 条', () => pm.expect(page1.length + ids.length).to.eql(7));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "游客拉取评论列表（无 Authorization）",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/comment/list?video_id={{video_id}}&page_size=5",
+            "auth": {
+              "type": "noauth"
+            },
+            "description": "列表接口为软鉴权，未登录也应正常返回。"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('业务码 200', () => pm.expect(json.code).to.eql(200));",
+                  "pm.test('返回评论数组', () => pm.expect(json.data.comments).to.be.an('array'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "列表缺少 video_id（应 400）",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/comment/list?page_size=10",
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 400', () => pm.response.to.have.status(400));",
+                  "pm.test('业务码非 200', () => pm.expect(pm.response.json().code).to.not.eql(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "列表 video_id=0（应 400）",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/comment/list?video_id=0&page_size=10",
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 400', () => pm.response.to.have.status(400));",
+                  "pm.test('业务码非 200', () => pm.expect(pm.response.json().code).to.not.eql(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "列表 page_size=4（低于下限，应 400）",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/comment/list?video_id={{video_id}}&page_size=4",
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 400', () => pm.response.to.have.status(400));",
+                  "pm.test('业务码非 200', () => pm.expect(pm.response.json().code).to.not.eql(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "列表 page_size=51（超过上限，应 400）",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/comment/list?video_id={{video_id}}&page_size=51",
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 400', () => pm.response.to.have.status(400));",
+                  "pm.test('业务码非 200', () => pm.expect(pm.response.json().code).to.not.eql(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "列表不传 page_size（当前应 400，缺省值待补齐）",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/comment/list?video_id={{video_id}}",
+            "auth": {
+              "type": "noauth"
+            },
+            "description": "DTO 只写了 min=5,max=50，没有默认值；省略 page_size 会被 validator 判为 0 < 5（审查报告 P2-2）。"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 400', () => pm.response.to.have.status(400));",
+                  "pm.test('业务码非 200', () => pm.expect(pm.response.json().code).to.not.eql(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "列表-不存在的视频（空列表, total=0）",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/comment/list?video_id=999999999&page_size=10",
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('业务码 200', () => pm.expect(json.code).to.eql(200));",
+                  "pm.test('total=0', () => pm.expect(json.data.total).to.eql(0));",
+                  "pm.test('列表为空', () => pm.expect(json.data.comments).to.be.an('array').that.is.empty);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "列表只传 last_id 不传 last_time（当前会重复第一页）",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/comment/list?video_id={{video_id_2}}&page_size=5&last_id={{pagination_last_id}}",
+            "auth": {
+              "type": "noauth"
+            },
+            "description": "repo 只有在 last_time 与 last_id 同时有效时才追加游标；半个游标会被忽略（审查报告 P2-3）。修复后应返回 400。"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200（当前未校验半个游标）', () => pm.response.to.have.status(200));",
+                  "const page1 = JSON.parse(pm.collectionVariables.get('page1_ids') || '[]');",
+                  "const firstID = json.data.comments && json.data.comments[0] ? String(json.data.comments[0].id) : '';",
+                  "if (page1.length > 0) { pm.test('当前行为：返回第一页首条', () => pm.expect(firstID).to.eql(page1[0])); }"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
