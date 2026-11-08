@@ -61,9 +61,12 @@ func (r *VideoRepo) VideoList(ctx context.Context, authorID uint, lastCreatedAt 
 		return nil, 0, fmt.Errorf("video list: empty author id: %w", ErrInvalidArgument)
 	}
 
-	// 获取总数
-	if err := r.db.WithContext(ctx).Model(&model.Video{}).Where("author_id = ?", authorID).Count(&total).Error; err != nil {
-		return nil, 0, err
+	// 总数只在首页统计：翻页请求不再执行 COUNT(*)，避免视频量大的作者深翻页时全表扫描。
+	// 后续页 total 返回 0，客户端应复用首页返回的总数。
+	if lastVid == 0 {
+		if err := r.db.WithContext(ctx).Model(&model.Video{}).Where("author_id = ?", authorID).Count(&total).Error; err != nil {
+			return nil, 0, err
+		}
 	}
 
 	// 复合游标分页查询

@@ -95,8 +95,12 @@ func (s *VideoService) PublishVideo(ctx context.Context, userID uint, title, des
 		return nil, fmt.Errorf("title, video URL, and cover URL cannot be empty")
 	}
 
-	if !strings.HasPrefix(videoURL, "/upload/videos/") || !strings.HasPrefix(coverURL, "/upload/covers/") {
-		logger.Ctx(ctx).Warn("invalid publish video URL format", logger.String("video_url", videoURL), logger.String("cover_url", coverURL))
+	// 校验资源归属：路径中的用户目录必须是当前登录用户，
+	// 防止引用他人已上传的视频/封面，或发布一个不存在的伪造路径。
+	videoPrefix := fmt.Sprintf("/upload/videos/%d/", userID)
+	coverPrefix := fmt.Sprintf("/upload/covers/%d/", userID)
+	if !strings.HasPrefix(videoURL, videoPrefix) || !strings.HasPrefix(coverURL, coverPrefix) {
+		logger.Ctx(ctx).Warn("invalid publish video URL format", logger.String("video_url", videoURL), logger.String("cover_url", coverURL), logger.Uint("user_id", userID))
 		return nil, fmt.Errorf("invalid video or cover URL format")
 	}
 
@@ -132,6 +136,19 @@ func (s *VideoService) VideoDetail(ctx context.Context, videoID uint, userID uin
 		return nil, fmt.Errorf("get author %d for video %d: %w", video.AuthorID, videoID, err)
 	}
 
+	// 点赞数以点赞表/缓存为准；写路径维护的 videos.likes_count 只作为兜底，
+	// 避免异步消费滞后或计数缓存抖动时详情页展示 0。
+	likesCount := video.LikesCount
+	if s.cache.IsEnabled() && s.LikeService != nil {
+		vidKey := strconv.FormatUint(uint64(video.ID), 10)
+		counts, countErr := s.LikeService.BatchGetLikeCount(ctx, []string{vidKey})
+		if countErr != nil {
+			logger.Ctx(ctx).Error("batch get like count failed, fallback to videos.likes_count", logger.Uint("video_id", video.ID), logger.Err(countErr))
+		} else {
+			likesCount = counts[vidKey]
+		}
+	}
+
 	// 组装返回DTO
 	resp := &dto.VideoDetailResponse{
 		ID:          video.ID,
@@ -139,7 +156,7 @@ func (s *VideoService) VideoDetail(ctx context.Context, videoID uint, userID uin
 		Description: video.Description,
 		VideoURL:    video.VideoURL,
 		CoverURL:    video.CoverURL,
-		LikesCount:  video.LikesCount,
+		LikesCount:  likesCount,
 		AuthorInfo: dto.AuthorBrief{
 			UserID:    author.ID,
 			UserName:  author.Username,
@@ -252,7 +269,7 @@ func (s *VideoService) setCached(ctx context.Context, cacheKey string, video *mo
 
 // getDetail 底层方法：仅获取视频基础公共元数据，带Redis缓存+分布式锁防击穿
 func (s *VideoService) getDetail(ctx context.Context, vid uint) (*model.Video, error) {
-	cacheKey := fmt.Sprintf("video_detail:%d", vid) // Redis缓存key
+	cacheKey := cache.VideoDetailKey(vid) // Redis缓存key，与点赞消费端的失效逻辑共用同一构造函数
 
 	// 缓存禁用时跳过缓存与分布式锁，直接走数据库
 	if s.cache.IsEnabled() {
@@ -357,73 +374,108 @@ func (s *VideoService) VideoList(ctx context.Context, authorID uint, userID uint
 		AvatarURL: author.AvatarURL,
 	}
 
+	// 点赞数统一走 LikeService 的 Redis/点赞表批量查询，避免读取可能滞后的 videos.likes_count。
+	// 计数缓存异常时降级为写路径维护的数据库计数列，不影响列表整体可用性。
+	// 先收集所有vid，如果用户已登录，批量查询点赞
+	likeCountMap := make(map[string]int64, len(videos))
+	vidKeys := make([]string, 0, len(videos))
+	for _, v := range videos {
+		vidKey := strconv.FormatUint(uint64(v.ID), 10)
+		vidKeys = append(vidKeys, vidKey)
+		likeCountMap[vidKey] = v.LikesCount
+	}
+	if s.cache.IsEnabled() && s.LikeService != nil {
+		// 缓存和点赞服务都可用时，批量查询点赞数
+		counts, countErr := s.LikeService.BatchGetLikeCount(ctx, vidKeys)
+		if countErr != nil {
+			logger.Ctx(ctx).Error("batch get like count failed, fallback to videos.likes_count", logger.Err(countErr))
+		} else {
+			for _, vidKey := range vidKeys {
+				if cnt, ok := counts[vidKey]; ok {
+					likeCountMap[vidKey] = cnt
+				}
+			}
+		}
+	}
+
 	// 收集所有vid，如果用户已登录，批量查询点赞
-	var vidList []interface{}
+	vidList := make([]interface{}, 0, len(videos))
 	for _, v := range videos {
 		vidList = append(vidList, v.ID)
 	}
 
 	// 登录用户才判断点赞状态，userID!=0代表携带有效token
-	likedMap := make(map[uint]bool) // <vid, isLiked>
+	likedMap := make(map[uint]bool, len(videos)) // <vid, isLiked>
 	if userID != 0 {
 		// 查询用户是否点赞过这些视频
-		// 与 worker 消费端共用同一套 key 构造函数，结构固定为 Set（P0-8/P0-9）
+		// 与 worker 消费端共用同一套 key 构造函数，结构固定为 Set
 		key := cache.LikeUserSetKey(userID)
-		// 批量查询
-		isLikedList, err := s.cache.MIsMemberOfSet(ctx, key, vidList)
-		if err != nil {
-			logger.Ctx(ctx).Error("check like status in redis failed", logger.Uint("user_id", userID), logger.Err(err))
-			// Redis异常，兜底查数据库
-			for _, vid := range vidList {
-				isLikedResp, dbErr := s.LikeService.IsLiked(ctx, userID, vid.(uint))
-				if dbErr != nil {
-					logger.Ctx(ctx).Error("check like status in DB failed", logger.Uint("user_id", userID), logger.Any("video_id", vid), logger.Err(dbErr))
-					return nil, fmt.Errorf("failed to check like status: %w", dbErr)
+		var missVids []uint
+
+		if s.cache.IsEnabled() {
+			// 批量查询
+			isLikedList, cacheErr := s.cache.MIsMemberOfSet(ctx, key, vidList)
+			if cacheErr != nil {
+				logger.Ctx(ctx).Error("check like status in redis failed", logger.Uint("user_id", userID), logger.Err(cacheErr))
+				// Redis异常，全部回源数据库，由下面的批量查询统一兜底
+				missVids = make([]uint, 0, len(videos))
+				for _, v := range videos {
+					missVids = append(missVids, v.ID)
 				}
-				likedMap[vid.(uint)] = isLikedResp.IsLiked
-			}
-		} else {
-			logger.Ctx(ctx).Debug("redis like status batch query succeeded", logger.Uint("user_id", userID))
-			for i, vid := range vidList {
-				isLiked := isLikedList[i]
-				if !isLiked {
-					// 点赞集合的缓存未命中
-					logger.Ctx(ctx).Debug("like status cache miss", logger.Uint("user_id", userID), logger.Any("video_id", vid))
-					// 检查空占位缓存，避免缓存穿透
-					placeholderKey := cache.LikePlaceholderKey(userID, vid.(uint))
+			} else {
+				// Redis缓存命中，直接使用
+				logger.Ctx(ctx).Debug("redis like status batch query succeeded", logger.Uint("user_id", userID))
+				for i, v := range videos {
+					if isLikedList[i] {
+						// 已点赞，直接返回true
+						likedMap[v.ID] = true
+						logger.Ctx(ctx).Debug("like status cache hit", logger.Uint("user_id", userID), logger.Uint("video_id", v.ID))
+						continue
+					}
+					// 点赞集合的缓存未命中，检查空占位缓存，避免缓存穿透
+					placeholderKey := cache.LikePlaceholderKey(userID, v.ID)
 					exists, err := s.cache.Exists(ctx, placeholderKey)
 					if err == nil && exists {
-						likedMap[vid.(uint)] = false
+						likedMap[v.ID] = false
 						continue // 空占位缓存命中，说明用户未点赞过该视频，直接返回false
 					}
+					// 空占位缓存也未命中，进入批量数据库查询
+					missVids = append(missVids, v.ID)
+				}
+			}
+		} else {
+			// 缓存禁用时全部走数据库
+			missVids = make([]uint, 0, len(videos))
+			for _, v := range videos {
+				missVids = append(missVids, v.ID)
+			}
+		}
 
-					// 空占位缓存也未命中，兜底查数据库
-					isLikedResp, dbErr := s.LikeService.IsLiked(ctx, userID, vid.(uint))
-					if dbErr != nil {
-						logger.Ctx(ctx).Error("check like status in DB failed", logger.Uint("user_id", userID), logger.Any("video_id", vid), logger.Err(dbErr))
-						return nil, fmt.Errorf("failed to check like status: %w", dbErr)
-					}
-					likedMap[vid.(uint)] = isLikedResp.IsLiked
-
-					// 将数据库查询结果写入Redis缓存，避免下次重复查询
-					if isLikedResp.IsLiked {
-						// 已点赞，写入点赞集合缓存，TTL 兜底过期，避免脏 member 永久驻留
-						logger.Ctx(ctx).Debug("write like status back to redis", logger.Uint("user_id", userID), logger.Any("video_id", vid))
-						err = s.cache.AddToSet(ctx, key, vid.(uint), cache.LikeUserSetTTL)
-						if err != nil {
-							logger.Ctx(ctx).Error("add video to like set failed", logger.Any("video_id", vid), logger.Uint("user_id", userID), logger.Err(err))
-						}
-					} else {
-						// 未点赞，写入空占位缓存
-						err = s.cache.Set(ctx, placeholderKey, "1", cache.LikePlaceholderTTL)
-						if err != nil {
-							logger.Ctx(ctx).Error("set like placeholder failed", logger.String("key", placeholderKey), logger.Err(err))
-						}
+		// 一次性批量查询数据库，替代逐条 IsLiked 造成的 N+1
+		if len(missVids) > 0 {
+			dbLikedMap, dbErr := s.LikeService.BatchIsLiked(ctx, userID, missVids)
+			if dbErr != nil {
+				logger.Ctx(ctx).Error("batch check like status in DB failed", logger.Uint("user_id", userID), logger.Err(dbErr))
+				return nil, fmt.Errorf("failed to check like status: %w", dbErr)
+			}
+			for _, vid := range missVids {
+				isLiked := dbLikedMap[vid]
+				likedMap[vid] = isLiked
+				if !s.cache.IsEnabled() {
+					continue
+				}
+				// 将数据库查询结果写入Redis缓存，避免下次重复查询
+				if isLiked {
+					// 已点赞，写入点赞集合缓存，TTL 兜底过期，避免脏 member 永久驻留
+					logger.Ctx(ctx).Debug("write like status back to redis", logger.Uint("user_id", userID), logger.Uint("video_id", vid))
+					if err := s.cache.AddToSet(ctx, key, vid, cache.LikeUserSetTTL); err != nil {
+						logger.Ctx(ctx).Error("add video to like set failed", logger.Uint("video_id", vid), logger.Uint("user_id", userID), logger.Err(err))
 					}
 				} else {
-					// Redis缓存命中，直接使用
-					likedMap[vid.(uint)] = true
-					logger.Ctx(ctx).Debug("like status cache hit", logger.Uint("user_id", userID), logger.Any("video_id", vid))
+					// 未点赞，写入空占位缓存
+					if err := s.cache.Set(ctx, cache.LikePlaceholderKey(userID, vid), "1", cache.LikePlaceholderTTL); err != nil {
+						logger.Ctx(ctx).Error("set like placeholder failed", logger.Uint("user_id", userID), logger.Uint("video_id", vid), logger.Err(err))
+					}
 				}
 			}
 		}
@@ -438,7 +490,7 @@ func (s *VideoService) VideoList(ctx context.Context, authorID uint, userID uint
 			Description: v.Description,
 			VideoURL:    v.VideoURL,
 			CoverURL:    v.CoverURL,
-			LikesCount:  v.LikesCount,
+			LikesCount:  likeCountMap[strconv.FormatUint(uint64(v.ID), 10)],
 			IsLiked:     likedMap[v.ID],
 			AuthorInfo:  authorDTO,
 		}

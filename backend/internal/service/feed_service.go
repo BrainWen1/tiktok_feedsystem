@@ -149,22 +149,33 @@ func (s *FeedService) assembleFeedItems(ctx context.Context, loginUserID uint, r
 			return nil, fmt.Errorf("batch get follow status for user %d: %w", loginUserID, err)
 		}
 	}
-	// 计数，不管游客还是登录，都要拿计数展示
-	likeCntMap, err := s.likeService.BatchGetLikeCount(ctx, vidList)
-	if err != nil {
-		return nil, fmt.Errorf("batch get like count: %w", err)
+	// 计数，不管游客还是登录，都要拿计数展示。
+	// Redis 计数异常时降级为写路径维护的 videos.likes_count，避免单条计数缓存抖动拖垮整个 feed。
+	likeCntMap, likeCountErr := s.likeService.BatchGetLikeCount(ctx, vidList)
+	if likeCountErr != nil {
+		logger.Ctx(ctx).Warn("batch get like count failed, fallback to videos.likes_count", logger.Err(likeCountErr))
+		likeCntMap = make(map[string]int64, len(rawVideos))
+		for _, v := range rawVideos {
+			likeCntMap[fmt.Sprintf("%d", v.ID)] = v.LikesCount
+		}
 	}
-	commentCntMap, err = s.commentService.BatchGetCommentCount(ctx, vidList)
-	if err != nil {
-		return nil, fmt.Errorf("batch get comment count: %w", err)
+	commentCntMap, commentCountErr := s.commentService.BatchGetCommentCount(ctx, vidList)
+	if commentCountErr != nil {
+		return nil, fmt.Errorf("batch get comment count: %w", commentCountErr)
 	}
 
 	// 组装VO
 	var respList []dto.FeedItemResp
 	for _, v := range rawVideos {
 		author := authorInfoMap[v.AuthorID]
+		vidKey := fmt.Sprintf("%d", v.ID)
+		likesCnt := likeCntMap[vidKey]
+		// 计数缓存缺失（返回 0）但数据库维护列有值时，用数据库计数兜底
+		if likesCnt == 0 && v.LikesCount > 0 {
+			likesCnt = v.LikesCount
+		}
 		respList = append(respList, dto.FeedItemResp{
-			Vid:          fmt.Sprintf("%d", v.ID),
+			Vid:          vidKey,
 			Title:        v.Title,
 			Desc:         v.Description,
 			VideoURL:     v.VideoURL,
@@ -172,10 +183,10 @@ func (s *FeedService) assembleFeedItems(ctx context.Context, loginUserID uint, r
 			AuthorUserID: v.AuthorID,
 			AuthorName:   author.name,
 			AvatarURL:    author.avatar,
-			LikesCnt:     likeCntMap[fmt.Sprintf("%d", v.ID)],
-			CommentsCnt:  commentCntMap[fmt.Sprintf("%d", v.ID)],
+			LikesCnt:     likesCnt,
+			CommentsCnt:  commentCntMap[vidKey],
 			Popularity:   v.Popularity,
-			IsLike:       isLikeMap[fmt.Sprintf("%d", v.ID)],
+			IsLike:       isLikeMap[vidKey],
 			IsFollow:     isFollowMap[v.AuthorID],
 			CreatedAt:    v.CreatedAt,
 		})

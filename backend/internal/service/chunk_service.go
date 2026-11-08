@@ -1,12 +1,14 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -135,11 +137,12 @@ func (s *ChunkService) CreateUploadSession(ctx context.Context, accountID uint, 
 // SaveChunk 保存单个分片。
 //
 // 网络中断处理：
-//   - 先写同目录临时文件，fsync 后再原子 rename，失败不会留下半截分片；
+//   - 请求体直接流式写入同目录临时文件，fsync 后再原子 rename，失败不会留下半截分片；
+//   - 超过预期字节数立即判定为非法分片，不把整个分片读进堆内存；
 //   - 严格校验分片下标与字节数（最后一片为剩余大小），截断/错片直接拒绝且不标记；
 //   - 客户端重试同一分片会覆盖原文件，操作幂等；
 //   - 整个“读会话-落盘-回写标记”过程持有会话锁，避免并发上传丢标记。
-func (s *ChunkService) SaveChunk(ctx context.Context, accountID uint, uploadID string, chunkIndex int, chunkData []byte) (*model.ChunkUploadSession, error) {
+func (s *ChunkService) SaveChunk(ctx context.Context, accountID uint, uploadID string, chunkIndex int, chunkBody io.Reader) (*model.ChunkUploadSession, error) {
 	if !s.repo.Enabled() {
 		return nil, ErrStorageUnavailable
 	}
@@ -161,15 +164,15 @@ func (s *ChunkService) SaveChunk(ctx context.Context, accountID uint, uploadID s
 		return nil, fmt.Errorf("%w: index=%d total=%d", ErrInvalidChunkIndex, chunkIndex, sess.TotalChunks)
 	}
 	expected := sess.ExpectedChunkSize(chunkIndex)
-	if expected <= 0 || int64(len(chunkData)) != expected {
-		return nil, fmt.Errorf("%w: index=%d got=%d want=%d", ErrInvalidChunkSize, chunkIndex, len(chunkData), expected)
+	if expected <= 0 {
+		return nil, fmt.Errorf("%w: index=%d invalid expected size %d", ErrInvalidChunkSize, chunkIndex, expected)
 	}
 
 	chunkDir := file.ChunkUploadDir(sess.UploadID)
 	if err := file.EnsureDir(chunkDir); err != nil {
 		return nil, fmt.Errorf("ensure chunk directory: %w", err)
 	}
-	if err := writeChunkAtomic(chunkDir, chunkIndex, chunkData); err != nil {
+	if err := writeChunkFromReader(chunkDir, chunkIndex, chunkBody, expected); err != nil {
 		return nil, fmt.Errorf("write chunk %d: %w", chunkIndex, err)
 	}
 
@@ -468,9 +471,17 @@ func (s *ChunkService) releaseLock(uploadID, token string) {
 	}
 }
 
-// writeChunkAtomic 把分片写入同目录临时文件，fsync 后原子 rename 为正式分片名。
-// 任何一步失败都会删除临时文件，正式分片要么完整存在，要么不存在。
-func writeChunkAtomic(chunkDir string, chunkIndex int, data []byte) (err error) {
+// writeChunkAtomic 把内存中的分片写入同目录临时文件，fsync 后原子 rename 为正式分片名。
+// 保留该函数供内部工具与单测使用，实际请求链路走 writeChunkFromReader 流式落盘。
+func writeChunkAtomic(chunkDir string, chunkIndex int, data []byte) error {
+	return writeChunkFromReader(chunkDir, chunkIndex, bytes.NewReader(data), int64(len(data)))
+}
+
+// writeChunkFromReader 把分片请求体流式写入同目录临时文件，fsync 后原子 rename。
+// 使用 LimitReader(expected+1) 判断实际字节数：多读 1 字节即可发现超长请求，
+// 同时避免把整个分片读进堆内存；任何一步失败都会删除临时文件，
+// 正式分片要么完整存在，要么不存在。
+func writeChunkFromReader(chunkDir string, chunkIndex int, src io.Reader, expectedSize int64) (err error) {
 	tmpFile, err := os.CreateTemp(chunkDir, fmt.Sprintf(".%d.tmp-*", chunkIndex))
 	if err != nil {
 		return err
@@ -483,8 +494,17 @@ func writeChunkAtomic(chunkDir string, chunkIndex int, data []byte) (err error) 
 		}
 	}()
 
-	if _, err = tmpFile.Write(data); err != nil {
+	written, err := io.Copy(tmpFile, io.LimitReader(src, expectedSize+1))
+	if err != nil {
+		// 请求体超过 MaxBytesReader 上限时按分片大小不合法返回，客户端应修正分片大小
+		var maxBytesErr *http.MaxBytesError
+		if errors.As(err, &maxBytesErr) {
+			return fmt.Errorf("%w: %v", ErrInvalidChunkSize, err)
+		}
 		return err
+	}
+	if written != expectedSize {
+		return fmt.Errorf("%w: got=%d want=%d", ErrInvalidChunkSize, written, expectedSize)
 	}
 	if err = tmpFile.Sync(); err != nil {
 		return err

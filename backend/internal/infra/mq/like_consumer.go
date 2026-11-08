@@ -121,13 +121,17 @@ func handleLikeMessage(parent context.Context, ch *amqp.Channel, msg amqp.Delive
 		return
 	}
 
-	// 根据事件类型调用相应的repo方法处理点赞或取消点赞
-	var consumeErr error
+	// 根据事件类型调用相应的repo方法处理点赞或取消点赞。
+	// 点赞行与 videos.likes_count 在 repo 事务内同步更新，保证视频表计数与点赞表一致。
+	var (
+		consumeErr error
+		removed    int64
+	)
 	switch event.Action {
 	case "like":
 		consumeErr = likeRepo.CreateLike(ctx, event.UserID, event.VideoID)
 	case "unlike":
-		consumeErr = likeRepo.DeleteLike(ctx, event.UserID, event.VideoID)
+		removed, consumeErr = likeRepo.DeleteLike(ctx, event.UserID, event.VideoID)
 	default:
 		logger.Warn("unknown like event action", logger.String("action", event.Action))
 		_ = msg.Ack(false) // 未知的事件类型直接ACK掉，避免无限重试
@@ -156,6 +160,12 @@ func handleLikeMessage(parent context.Context, ch *amqp.Channel, msg amqp.Delive
 			if err := syncLikeCaches(ctx, redisCache, likeRepo, event); err != nil {
 				logger.Error("sync like cache on duplicate failed", logger.Err(err))
 			}
+			// 首次消费可能已插入点赞行但未完成计数更新（进程退出等），以点赞表为准重算一次
+			if err := likeRepo.SyncLikesCount(ctx, event.VideoID); err != nil {
+				logger.Error("sync likes count on duplicate failed", logger.Uint("video_id", event.VideoID), logger.Err(err))
+			}
+			// 点赞数已变化，删除详情缓存，避免详情接口在 TTL 内继续返回旧计数
+			invalidateVideoDetailCache(ctx, redisCache, event.VideoID)
 
 			return
 		}
@@ -185,6 +195,17 @@ func handleLikeMessage(parent context.Context, ch *amqp.Channel, msg amqp.Delive
 		logger.Error("sync like cache failed", logger.Err(err))
 	}
 
+	// 取消点赞未命中任何行（重复消息或点赞行已不存在）时，点赞数不会被事务递减，
+	// 这里以点赞表为准重算一次，避免计数长期偏移。
+	if event.Action == "unlike" && removed == 0 {
+		if err := likeRepo.SyncLikesCount(ctx, event.VideoID); err != nil {
+			logger.Error("sync likes count on repeated unlike failed", logger.Uint("video_id", event.VideoID), logger.Err(err))
+		}
+	}
+
+	// 点赞数已变化，删除详情缓存，避免详情接口在 10 分钟 TTL 内继续返回旧计数
+	invalidateVideoDetailCache(ctx, redisCache, event.VideoID)
+
 	// 在这里触发异步通知逻辑
 	if event.Action == "like" {
 		// 建议用 go 开个协程异步去发通知
@@ -209,6 +230,14 @@ func handleLikeMessage(parent context.Context, ch *amqp.Channel, msg amqp.Delive
 	}
 
 	_ = msg.Ack(false) // 成功处理后 ACK 掉消息
+}
+
+// invalidateVideoDetailCache 删除视频详情缓存。
+// 详情缓存里保存了点赞数，点赞/取消点赞落库后必须失效，否则详情接口会在 TTL 内返回旧值。
+func invalidateVideoDetailCache(ctx context.Context, redisCache *cache.RedisCache, vid uint) {
+	if err := redisCache.Delete(ctx, cache.VideoDetailKey(vid)); err != nil {
+		logger.Error("invalidate video detail cache failed", logger.Uint("video_id", vid), logger.Err(err))
+	}
 }
 
 // syncLikeCaches 把数据库已落库的点赞状态同步到 Redis：

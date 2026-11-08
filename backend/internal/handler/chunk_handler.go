@@ -2,7 +2,6 @@ package handler
 
 import (
 	"errors"
-	"io"
 	"net/http"
 	"strconv"
 
@@ -75,18 +74,10 @@ func (h *ChunkHandler) UploadChunk(c *gin.Context) {
 		return
 	}
 
-	// 在读取阶段就限制请求体大小，避免异常客户端把整块内存/磁盘打满
+	// 在读取阶段就限制请求体大小，避免异常客户端把整块内存/磁盘打满。
+	// 直接把请求体流式交给 service 落盘，不再 io.ReadAll 到堆内存，单片 5MB 不再整块驻留 RAM。
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxChunkRequestBytes)
-	data, err := io.ReadAll(c.Request.Body)
-	if err != nil {
-		logger.Ctx(c.Request.Context()).Warn("read chunk body failed",
-			logger.Uint("user_id", userID), logger.String("upload_id", uploadID),
-			logger.Int("index", chunkIndex), logger.Err(err))
-		response.FailResponse(c, "分片读取失败或超出大小限制")
-		return
-	}
-
-	sess, err := h.svc.SaveChunk(c.Request.Context(), userID, uploadID, chunkIndex, data)
+	sess, err := h.svc.SaveChunk(c.Request.Context(), userID, uploadID, chunkIndex, c.Request.Body)
 	if err != nil {
 		h.fail(c, err, "分片保存失败，请稍后重试")
 		return

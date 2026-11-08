@@ -94,6 +94,10 @@ func SetupRouter(sqlDB *gorm.DB, cache *cache.RedisCache, rmq *mq.RabbitMQ, auth
 	// 创建一个默认的Gin引擎
 	r := gin.Default()
 
+	// multipart 表单内存上限压到 1MB：超过部分由 net/http 落到临时文件，
+	// 避免直传大视频时多个并发请求各自在堆上驻留 32MB（Gin 默认值）导致内存放大。
+	r.MaxMultipartMemory = 1 << 20
+
 	// RequestID 必须紧跟在引擎创建之后、所有业务中间件之前注册：
 	// 这样后续 handler/service/repo 的 ctx 都携带 requestId，日志可全链路关联；
 	// 响应头 X-Request-Id 也会覆盖包括鉴权失败、限流、413 在内的所有响应。

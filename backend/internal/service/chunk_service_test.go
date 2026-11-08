@@ -55,11 +55,11 @@ func TestChunkServiceUploadAndMerge(t *testing.T) {
 		t.Fatalf("TotalChunks = %d, want 2", sess.TotalChunks)
 	}
 
-	if _, err := svc.SaveChunk(ctx, 7, sess.UploadID, 0, first); err != nil {
+	if _, err := svc.SaveChunk(ctx, 7, sess.UploadID, 0, bytes.NewReader(first)); err != nil {
 		t.Fatalf("SaveChunk(0) error = %v", err)
 	}
 	// 重传同一分片必须幂等
-	if _, err := svc.SaveChunk(ctx, 7, sess.UploadID, 0, first); err != nil {
+	if _, err := svc.SaveChunk(ctx, 7, sess.UploadID, 0, bytes.NewReader(first)); err != nil {
 		t.Fatalf("SaveChunk(0) retry error = %v", err)
 	}
 
@@ -71,7 +71,7 @@ func TestChunkServiceUploadAndMerge(t *testing.T) {
 		t.Fatalf("UploadedChunks() = %v, want [0]", got)
 	}
 
-	if _, err := svc.SaveChunk(ctx, 7, sess.UploadID, 1, last); err != nil {
+	if _, err := svc.SaveChunk(ctx, 7, sess.UploadID, 1, bytes.NewReader(last)); err != nil {
 		t.Fatalf("SaveChunk(1) error = %v", err)
 	}
 
@@ -114,7 +114,7 @@ func TestChunkServiceSaveChunkRejectsWrongSize(t *testing.T) {
 		t.Fatalf("CreateUploadSession() error = %v", err)
 	}
 
-	if _, err := svc.SaveChunk(ctx, 7, sess.UploadID, 0, []byte("truncated")); !errors.Is(err, ErrInvalidChunkSize) {
+	if _, err := svc.SaveChunk(ctx, 7, sess.UploadID, 0, strings.NewReader("truncated")); !errors.Is(err, ErrInvalidChunkSize) {
 		t.Fatalf("SaveChunk() wrong size error = %v, want ErrInvalidChunkSize", err)
 	}
 	// 校验失败不得写入标记位
@@ -127,7 +127,7 @@ func TestChunkServiceSaveChunkRejectsWrongSize(t *testing.T) {
 	}
 
 	// 下标越界
-	if _, err := svc.SaveChunk(ctx, 7, sess.UploadID, 1, []byte("x")); !errors.Is(err, ErrInvalidChunkIndex) {
+	if _, err := svc.SaveChunk(ctx, 7, sess.UploadID, 1, strings.NewReader("x")); !errors.Is(err, ErrInvalidChunkIndex) {
 		t.Fatalf("SaveChunk() out-of-range error = %v, want ErrInvalidChunkIndex", err)
 	}
 }
@@ -156,7 +156,7 @@ func TestChunkServiceOwnershipIsolation(t *testing.T) {
 	if _, err := svc.GetSession(ctx, 8, sess.UploadID); !errors.Is(err, ErrUploadForbidden) {
 		t.Fatalf("GetSession() as other user = %v, want ErrUploadForbidden", err)
 	}
-	if _, err := svc.SaveChunk(ctx, 8, sess.UploadID, 0, make([]byte, 64)); !errors.Is(err, ErrUploadForbidden) {
+	if _, err := svc.SaveChunk(ctx, 8, sess.UploadID, 0, bytes.NewReader(make([]byte, 64))); !errors.Is(err, ErrUploadForbidden) {
 		t.Fatalf("SaveChunk() as other user = %v, want ErrUploadForbidden", err)
 	}
 	if err := svc.CancelUpload(ctx, 8, sess.UploadID); !errors.Is(err, ErrUploadForbidden) {
@@ -173,7 +173,7 @@ func TestChunkServiceHashMismatchKeepsSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateUploadSession() error = %v", err)
 	}
-	if _, err := svc.SaveChunk(ctx, 7, sess.UploadID, 0, data); err != nil {
+	if _, err := svc.SaveChunk(ctx, 7, sess.UploadID, 0, bytes.NewReader(data)); err != nil {
 		t.Fatalf("SaveChunk() error = %v", err)
 	}
 
@@ -197,7 +197,7 @@ func TestChunkServiceCancelUploadCleansUp(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateUploadSession() error = %v", err)
 	}
-	if _, err := svc.SaveChunk(ctx, 7, sess.UploadID, 0, make([]byte, 64)); err != nil {
+	if _, err := svc.SaveChunk(ctx, 7, sess.UploadID, 0, bytes.NewReader(make([]byte, 64))); err != nil {
 		t.Fatalf("SaveChunk() error = %v", err)
 	}
 

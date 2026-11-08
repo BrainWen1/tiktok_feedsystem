@@ -17,6 +17,8 @@ const (
 	likeVideoZSetPrefix = "like:video:"
 	// videoRankZSetKey 视频点赞热度榜单 ZSet，member 为 video id，score 为当前点赞总数。
 	videoRankZSetKey = "video:videos"
+	// videoDetailPrefix 视频详情缓存前缀，Redis 数据结构为 String，value 为视频元数据 JSON。
+	videoDetailPrefix = "video:detail:"
 	// commentVideoCntPrefix 视频评论计数前缀，Redis 数据结构为 String 计数器。
 	commentVideoCntPrefix = "comment:video:cnt:"
 	// refreshTokenPrefix refresh token 前缀，每个 token 单独一个 key，TTL 到期自动失效。
@@ -91,6 +93,13 @@ func LikeVideoZSetKey(vid uint) string {
 // VideoRankZSetKey 返回视频点赞热度榜单 ZSet 的 Redis key，member=video id，score=点赞数。
 func VideoRankZSetKey() string {
 	return videoRankZSetKey
+}
+
+// VideoDetailKey 返回视频详情缓存的 Redis key。
+// 读侧（VideoService）与写侧（点赞消费、降级落库）必须复用该构造函数，
+// 保证点赞状态变化后能准确失效对应详情缓存。
+func VideoDetailKey(vid uint) string {
+	return fmt.Sprintf("%s%d", videoDetailPrefix, vid)
 }
 
 // CommentVideoCntKey 返回视频评论计数缓存的 Redis key。

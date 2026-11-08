@@ -19,18 +19,55 @@ func NewLikeRepo(db *gorm.DB) *LikeRepo {
 	return &LikeRepo{db: db}
 }
 
-// CreateLike 创建点赞记录
+// CreateLike 创建点赞记录，并在同一事务内递增 videos.likes_count。
+// 点赞行与计数同事务提交，保证视频表上的计数与点赞表一致；
+// 唯一键冲突时整个事务回滚，不会重复累加计数。
 func (r *LikeRepo) CreateLike(ctx context.Context, userID, vid uint) error {
-	like := &model.Like{
-		UserID:  userID,
-		VideoID: vid,
-	}
-	return r.db.WithContext(ctx).Create(like).Error
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		like := &model.Like{
+			UserID:  userID,
+			VideoID: vid,
+		}
+		if err := tx.Create(like).Error; err != nil {
+			return err
+		}
+		// 使用 UpdateColumn 跳过 UpdatedAt，避免点赞动作频繁刷新视频元数据的更新时间
+		return tx.Model(&model.Video{}).Where("id = ?", vid).
+			UpdateColumn("likes_count", gorm.Expr("likes_count + 1")).Error
+	})
 }
 
-// DeleteLike 删除点赞记录
-func (r *LikeRepo) DeleteLike(ctx context.Context, userID, vid uint) error {
-	return r.db.WithContext(ctx).Where("user_id = ? AND video_id = ?", userID, vid).Delete(&model.Like{}).Error
+// DeleteLike 删除点赞记录并递减 videos.likes_count，返回实际删除的行数。
+// 只有确实删除了点赞行才递减，且计数不会减为负数；
+// 返回 0 表示该点赞已不存在（重复消息），调用方可据此按点赞表重算计数。
+func (r *LikeRepo) DeleteLike(ctx context.Context, userID, vid uint) (int64, error) {
+	var affected int64
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		res := tx.Where("user_id = ? AND video_id = ?", userID, vid).Delete(&model.Like{})
+		if res.Error != nil {
+			return res.Error
+		}
+		affected = res.RowsAffected // 记录实际删除的行数
+		// 如果没有删除任何行，说明该点赞已不存在（重复消息）
+		if affected == 0 {
+			return nil
+		}
+		// 删除奏效了，递减计数，且计数不会减为负数
+		return tx.Model(&model.Video{}).Where("id = ?", vid).
+			UpdateColumn("likes_count", gorm.Expr("CASE WHEN likes_count > 0 THEN likes_count - 1 ELSE 0 END")).Error
+	})
+	return affected, err
+}
+
+// SyncLikesCount 以点赞表为准重算 videos.likes_count。
+// 用于重复消费、首次落库后进程退出等导致计数漏记的场景做自愈。
+func (r *LikeRepo) SyncLikesCount(ctx context.Context, vid uint) error {
+	var count int64
+	if err := r.db.WithContext(ctx).Model(&model.Like{}).Where("video_id = ?", vid).Count(&count).Error; err != nil {
+		return err
+	}
+	return r.db.WithContext(ctx).Model(&model.Video{}).Where("id = ?", vid).
+		UpdateColumn("likes_count", count).Error
 }
 
 // IsLiked 检查用户是否点赞了视频
@@ -41,6 +78,25 @@ func (r *LikeRepo) IsLiked(ctx context.Context, userID, vid uint) (bool, error) 
 		return false, err
 	}
 	return count > 0, nil
+}
+
+// IsLikedBatch 批量查询用户对一组视频的点赞状态，避免逐条 IsLiked 造成 N+1 查询。
+// 返回 map[vid]bool，未点赞的视频不会出现在结果中（调用方按 false 处理）。
+func (r *LikeRepo) IsLikedBatch(ctx context.Context, userID uint, vids []uint) (map[uint]bool, error) {
+	liked := make(map[uint]bool, len(vids))
+	if userID == 0 || len(vids) == 0 {
+		return liked, nil
+	}
+	var likedVids []uint
+	if err := r.db.WithContext(ctx).Model(&model.Like{}).
+		Where("user_id = ? AND video_id IN ?", userID, vids).
+		Pluck("video_id", &likedVids).Error; err != nil {
+		return nil, err
+	}
+	for _, vid := range likedVids {
+		liked[vid] = true
+	}
+	return liked, nil
 }
 
 // CountByVideo 统计视频的点赞总数，供缓存禁用时降级查询

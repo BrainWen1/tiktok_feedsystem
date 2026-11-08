@@ -178,7 +178,7 @@ func TestVideoDetailCachesAndResolvesLikeStatus(t *testing.T) {
 	if guestDetail.IsLiked {
 		t.Fatal("guest IsLiked should be false")
 	}
-	cacheKey := fmt.Sprintf("video_detail:%d", video.ID)
+	cacheKey := cache.VideoDetailKey(video.ID)
 	if !mr.Exists(cacheKey) {
 		t.Fatalf("video detail cache %q should be written", cacheKey)
 	}
@@ -241,8 +241,9 @@ func TestVideoListCursorPagination(t *testing.T) {
 		if err != nil {
 			t.Fatalf("VideoList() page %d error = %v", page, err)
 		}
-		if resp.Total != total {
-			t.Fatalf("VideoList() total = %d, want %d", resp.Total, total)
+		// 总数只在首页统计：翻页请求不再执行 COUNT(*)，后续页 total 为 0
+		if page == 0 && resp.Total != total {
+			t.Fatalf("VideoList() first page total = %d, want %d", resp.Total, total)
 		}
 		for _, item := range resp.Videos {
 			got = append(got, item.ID)

@@ -78,6 +78,8 @@ func (s *LikeService) LikeVideo(ctx context.Context, userID, vid uint, userName 
 		if createErr := s.likeRepo.CreateLike(ctx, userID, vid); createErr != nil {
 			return fmt.Errorf("create like fallback for user %d video %d: %w", userID, vid, createErr)
 		}
+		// 降级落库同样需要失效详情缓存，否则详情页会在 TTL 内继续展示旧点赞数
+		s.invalidateVideoDetailCache(ctx, vid)
 		// 同步写数据库成功后，异步处理通知逻辑
 		go func() {
 			nctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
@@ -129,9 +131,11 @@ func (s *LikeService) UnlikeVideo(ctx context.Context, userID, vid uint) error {
 	if err != nil {
 		logger.Ctx(ctx).Error("publish unlike event to MQ failed", logger.Err(err))
 		// MQ投递失败，降级方案：同步直接写数据库
-		if deleteErr := s.likeRepo.DeleteLike(ctx, userID, vid); deleteErr != nil {
+		if _, deleteErr := s.likeRepo.DeleteLike(ctx, userID, vid); deleteErr != nil {
 			return fmt.Errorf("delete like fallback for user %d video %d: %w", userID, vid, deleteErr)
 		}
+		// 降级落库同样需要失效详情缓存，否则详情页会在 TTL 内继续展示旧点赞数
+		s.invalidateVideoDetailCache(ctx, vid)
 		return nil
 	}
 
@@ -146,6 +150,26 @@ func (s *LikeService) IsLiked(ctx context.Context, userID, vid uint) (dto.IsLike
 		return dto.IsLikedResponse{}, fmt.Errorf("check like status for user %d video %d: %w", userID, vid, err)
 	}
 	return dto.IsLikedResponse{IsLiked: isLiked}, nil
+}
+
+// BatchIsLiked 批量查询用户对一组视频的点赞状态，供视频列表等场景替代逐条查询。
+func (s *LikeService) BatchIsLiked(ctx context.Context, userID uint, vids []uint) (map[uint]bool, error) {
+	liked, err := s.likeRepo.IsLikedBatch(ctx, userID, vids)
+	if err != nil {
+		return nil, fmt.Errorf("batch check like status for user %d: %w", userID, err)
+	}
+	return liked, nil
+}
+
+// invalidateVideoDetailCache 删除视频详情缓存，避免点赞状态变化后详情接口继续返回旧计数。
+// 使用 WithoutCancel 保证请求取消时缓存失效动作仍能执行。
+func (s *LikeService) invalidateVideoDetailCache(ctx context.Context, vid uint) {
+	if s.cache == nil {
+		return
+	}
+	if err := s.cache.Delete(context.WithoutCancel(ctx), cache.VideoDetailKey(vid)); err != nil {
+		logger.Ctx(ctx).Error("invalidate video detail cache failed", logger.Uint("video_id", vid), logger.Err(err))
+	}
 }
 
 // ListLikedVideos 列出用户点赞过的视频，使用 (created_at, video_id) 复合游标分页。
@@ -264,11 +288,15 @@ func (s *LikeService) BatchGetLikeCount(ctx context.Context, vidList []string) (
 		}
 		return countMap, nil
 	}
+
+	// 缓存优先：like:video:{vid} 固定为 ZSet，member 是 user id，ZCard 即点赞总数，
+	// 与消费端 ZADD / ZREM 写入的数据结构完全一致
 	for _, vid := range vidList {
 		vidNum, err := strconv.ParseUint(vid, 10, 64)
 		if err != nil {
 			return nil, fmt.Errorf("invalid video id %q: %w", vid, err)
 		}
+		// ZCard 直接返回 ZSet 的元素数量
 		key := cache.LikeVideoZSetKey(uint(vidNum))
 		cnt, err := s.cache.ZCard(ctx, key)
 		if err != nil {
