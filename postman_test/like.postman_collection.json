@@ -1,0 +1,1777 @@
+{
+  "info": {
+    "name": "like",
+    "description": "like 模块完整链路测试：账号准备、点赞/取消点赞、点赞状态、点赞列表与游标分页、并发点击幂等、异常边界。\n\n运行前置：\n1. API 进程与 Worker 进程均已启动（Worker 负责消费 like 事件），MySQL/Redis/RabbitMQ 可用；\n2. 默认 {{base_url}} = http://127.0.0.1:8080，可在集合变量中修改；\n3. 按 00 -> 01 -> 02 -> 03 -> 04 -> 05 顺序运行，变量由 Tests 脚本自动串联；\n4. 点赞后的状态查询依赖 MQ 异步消费，集合内用“等待 MQ 消费”请求做 1.5s/2s 忙等；\n5. 并发点调用 pm.sendRequest 在同一 Tests 脚本内并行发起 10 次请求，需在 Postman/Newman 中运行。\n\n注意：重复点赞/取消点赞返回 HTTP 200 + 业务码非 200，这是项目统一响应约定。",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{token}}",
+        "type": "string"
+      }
+    ]
+  },
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "if (!pm.collectionVariables.get('base_url')) {",
+          "  pm.collectionVariables.set('base_url', 'http://127.0.0.1:8080');",
+          "}",
+          "if (!pm.collectionVariables.get('token')) {",
+          "  console.log('token 为空：请先运行 00-鉴权与基准数据');",
+          "}"
+        ]
+      }
+    }
+  ],
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://127.0.0.1:8080",
+      "type": "string"
+    },
+    {
+      "key": "token",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "author_token",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "liker_token",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "author_username",
+      "value": "like_author_demo",
+      "type": "string"
+    },
+    {
+      "key": "author_password",
+      "value": "Passw0rd123",
+      "type": "string"
+    },
+    {
+      "key": "liker_username",
+      "value": "like_liker_demo",
+      "type": "string"
+    },
+    {
+      "key": "liker_password",
+      "value": "Passw0rd123",
+      "type": "string"
+    },
+    {
+      "key": "author_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "liker_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "video_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "video_id_2",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "like_count_base",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "like_page1_vid",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "like_cursor_last_vid",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "like_cursor_last_created_at",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "concurrent_like_ok",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "concurrent_unlike_ok",
+      "value": "",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "00-鉴权与基准数据",
+      "item": [
+        {
+          "name": "注册作者账号",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{base_url}}/user/register",
+            "description": "注册视频作者；账号已存在时忽略业务失败，后续直接登录。",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"user_name\": \"{{author_username}}\",\n  \"password\": \"{{author_password}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "// 账号已存在时业务码可能非 200，注册失败不影响后续登录",
+                  "if (json.code === 200) {",
+                  "  pm.collectionVariables.set('author_id', String(json.data.user_id));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "登录作者账号",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{base_url}}/user/login",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"user_name\": \"{{author_username}}\",\n  \"password\": \"{{author_password}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('业务码 200', () => pm.expect(json.code).to.eql(200));",
+                  "pm.test('返回 access token', () => pm.expect(json.data.token).to.be.a('string').and.not.empty);",
+                  "pm.collectionVariables.set('author_token', json.data.token);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "查询作者 ID",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{base_url}}/user/find_by_username",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"user_name\": \"{{author_username}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('业务码 200', () => pm.expect(json.code).to.eql(200));",
+                  "pm.collectionVariables.set('author_id', String(json.data.id));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "注册点赞账号",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{base_url}}/user/register",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"user_name\": \"{{liker_username}}\",\n  \"password\": \"{{liker_password}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "// 账号已存在时业务码可能非 200，注册失败不影响后续登录",
+                  "if (json.code === 200) {",
+                  "  pm.collectionVariables.set('liker_id', String(json.data.user_id));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "登录点赞账号",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{base_url}}/user/login",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"user_name\": \"{{liker_username}}\",\n  \"password\": \"{{liker_password}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('业务码 200', () => pm.expect(json.code).to.eql(200));",
+                  "pm.test('返回 access token', () => pm.expect(json.data.token).to.be.a('string').and.not.empty);",
+                  "pm.collectionVariables.set('token', json.data.token);",
+                  "",
+                  "pm.collectionVariables.set('liker_token', json.data.token);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "查询点赞账号 ID",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{base_url}}/user/find_by_username",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"user_name\": \"{{liker_username}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.collectionVariables.set('liker_id', String(json.data.id));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "发布基准视频 1",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{base_url}}/video/publish",
+            "description": "发布接口只校验 URL 目录归属，因此无需真实上传文件即可准备点赞目标。",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"like-postman-video-1\",\n  \"description\": \"created by like.postman_collection.json\",\n  \"video_url\": \"/upload/videos/{{author_id}}/like_demo_1.mp4\",\n  \"cover_url\": \"/upload/covers/{{author_id}}/like_demo_1.jpg\",\n  \"tags\": [\n    \"like\",\n    \"postman\"\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{author_token}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('业务码 200', () => pm.expect(json.code).to.eql(200));",
+                  "pm.test('返回 video_id', () => pm.expect(json.data.video_id).to.be.a('number'));",
+                  "pm.collectionVariables.set('video_id', String(json.data.video_id));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "发布基准视频 2",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{base_url}}/video/publish",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"like-postman-video-2\",\n  \"description\": \"second video for cursor pagination\",\n  \"video_url\": \"/upload/videos/{{author_id}}/like_demo_2.mp4\",\n  \"cover_url\": \"/upload/covers/{{author_id}}/like_demo_2.jpg\",\n  \"tags\": [\n    \"like\",\n    \"pagination\"\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{author_token}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('业务码 200', () => pm.expect(json.code).to.eql(200));",
+                  "pm.collectionVariables.set('video_id_2', String(json.data.video_id));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "获取基准视频详情（游客）",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/video/{{video_id}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('业务码 200', () => pm.expect(json.code).to.eql(200));",
+                  "pm.test('游客 is_liked=false', () => pm.expect(json.data.is_liked).to.eql(false));",
+                  "pm.collectionVariables.set('like_count_base', String(json.data.like_count));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "初始点赞列表（应为空）",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{base_url}}/like/list_liked",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"user_id\": \"{{liker_id}}\",\n  \"page_size\": 20\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('业务码 200', () => pm.expect(json.code).to.eql(200));",
+                  "pm.test('初始 total 为 0', () => pm.expect(json.data.total).to.eql(0));",
+                  "pm.test('初始列表为空数组', () => pm.expect(json.data.videos).to.be.an('array').that.is.empty);"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "01-点赞主链路",
+      "item": [
+        {
+          "name": "点赞视频",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{base_url}}/like/like",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"video_id\": \"{{video_id}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('业务码 200', () => pm.expect(json.code).to.eql(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "等待 MQ 消费（1.5s 忙等）",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/healthz",
+            "description": "前置脚本忙等 1.5s，给异步消费者落库留出时间。"
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Postman 没有 sleep API，用忙等给异步消费者留出落库时间。",
+                  "const start = Date.now();",
+                  "while (Date.now() - start < 1500) { /* busy wait */ }"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('健康检查可用', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "查询点赞状态（应为 true）",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{base_url}}/like/is_liked",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"video_id\": \"{{video_id}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('业务码 200', () => pm.expect(json.code).to.eql(200));",
+                  "pm.test('is_liked=true', () => pm.expect(json.data.is_liked).to.eql(true));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "视频详情（点赞数 +1 且 is_liked=true）",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}",
+                "type": "text"
+              }
+            ],
+            "url": "{{base_url}}/video/{{video_id}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "const base = Number(pm.collectionVariables.get('like_count_base'));",
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('业务码 200', () => pm.expect(json.code).to.eql(200));",
+                  "pm.test('登录用户 is_liked=true', () => pm.expect(json.data.is_liked).to.eql(true));",
+                  "pm.test('点赞数 = 初始值 + 1', () => pm.expect(json.data.like_count).to.eql(base + 1));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "点赞列表包含目标视频",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{base_url}}/like/list_liked",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"user_id\": \"{{liker_id}}\",\n  \"page_size\": 20\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "const vid = String(pm.collectionVariables.get('video_id'));",
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('业务码 200', () => pm.expect(json.code).to.eql(200));",
+                  "pm.test('total 为 1', () => pm.expect(json.data.total).to.eql(1));",
+                  "pm.test('包含目标视频', () => pm.expect(json.data.videos.map(v => String(v.video_id))).to.include(vid));",
+                  "pm.test('游客视角 is_liked=false', () => pm.expect(json.data.videos[0].is_liked).to.eql(false));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "重复点赞（应返回 already liked）",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{base_url}}/like/like",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"video_id\": \"{{video_id}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('业务码非 200', () => pm.expect(json.code).to.not.eql(200));",
+                  "pm.test('提示已点赞', () => pm.expect(json.message).to.include('already liked'));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "02-取消点赞",
+      "item": [
+        {
+          "name": "取消点赞",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{base_url}}/like/unlike",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"video_id\": \"{{video_id}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('业务码 200', () => pm.expect(json.code).to.eql(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "等待 MQ 消费（1.5s 忙等）",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/healthz"
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Postman 没有 sleep API，用忙等给异步消费者留出落库时间。",
+                  "const start = Date.now();",
+                  "while (Date.now() - start < 1500) { /* busy wait */ }"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('健康检查可用', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "查询点赞状态（应为 false）",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{base_url}}/like/is_liked",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"video_id\": \"{{video_id}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('业务码 200', () => pm.expect(json.code).to.eql(200));",
+                  "pm.test('is_liked=false', () => pm.expect(json.data.is_liked).to.eql(false));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "视频详情（点赞数回到初始值）",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}",
+                "type": "text"
+              }
+            ],
+            "url": "{{base_url}}/video/{{video_id}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "const base = Number(pm.collectionVariables.get('like_count_base'));",
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('业务码 200', () => pm.expect(json.code).to.eql(200));",
+                  "pm.test('is_liked=false', () => pm.expect(json.data.is_liked).to.eql(false));",
+                  "pm.test('点赞数回到初始值', () => pm.expect(json.data.like_count).to.eql(base));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "点赞列表不再包含目标视频",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{base_url}}/like/list_liked",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"user_id\": \"{{liker_id}}\",\n  \"page_size\": 20\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "const vid = String(pm.collectionVariables.get('video_id'));",
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('业务码 200', () => pm.expect(json.code).to.eql(200));",
+                  "pm.test('total 回到 0', () => pm.expect(json.data.total).to.eql(0));",
+                  "pm.test('不包含目标视频', () => pm.expect(json.data.videos.map(v => String(v.video_id))).to.not.include(vid));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "重复取消点赞（应返回 not liked）",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{base_url}}/like/unlike",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"video_id\": \"{{video_id}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('业务码非 200', () => pm.expect(json.code).to.not.eql(200));",
+                  "pm.test('提示未点赞', () => pm.expect(json.message).to.include('not liked'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "取消未点赞的视频",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{base_url}}/like/unlike",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"video_id\": \"{{video_id_2}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('业务码非 200', () => pm.expect(json.code).to.not.eql(200));",
+                  "pm.test('提示未点赞', () => pm.expect(json.message).to.include('not liked'));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "03-点赞列表与游标分页",
+      "item": [
+        {
+          "name": "点赞视频 1",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{base_url}}/like/like",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"video_id\": \"{{video_id}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('业务码 200', () => pm.expect(pm.response.json().code).to.eql(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "点赞视频 2",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{base_url}}/like/like",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"video_id\": \"{{video_id_2}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('业务码 200', () => pm.expect(pm.response.json().code).to.eql(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "等待 MQ 消费（1.5s 忙等）",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/healthz"
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Postman 没有 sleep API，用忙等给异步消费者留出落库时间。",
+                  "const start = Date.now();",
+                  "while (Date.now() - start < 1500) { /* busy wait */ }"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('健康检查可用', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "点赞列表首页（page_size=1）",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{base_url}}/like/list_liked",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"user_id\": \"{{liker_id}}\",\n  \"page_size\": 1\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('业务码 200', () => pm.expect(json.code).to.eql(200));",
+                  "pm.test('total=2', () => pm.expect(json.data.total).to.eql(2));",
+                  "pm.test('首页返回 1 条', () => pm.expect(json.data.videos).to.have.lengthOf(1));",
+                  "pm.test('返回 next_cursor', () => pm.expect(json.data.next_cursor).to.be.an('object'));",
+                  "const c = json.data.next_cursor;",
+                  "pm.collectionVariables.set('like_cursor_last_vid', c.last_vid);",
+                  "pm.collectionVariables.set('like_cursor_last_created_at', c.last_created_at);",
+                  "pm.collectionVariables.set('like_page1_vid', String(json.data.videos[0].video_id));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "点赞列表下一页（游标）",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{base_url}}/like/list_liked",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"user_id\": \"{{liker_id}}\",\n  \"page_size\": 1,\n  \"cursor\": {\n    \"last_vid\": \"{{like_cursor_last_vid}}\",\n    \"last_created_at\": \"{{like_cursor_last_created_at}}\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "const page1 = pm.collectionVariables.get('like_page1_vid');",
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('业务码 200', () => pm.expect(json.code).to.eql(200));",
+                  "pm.test('下一页返回 1 条', () => pm.expect(json.data.videos).to.have.lengthOf(1));",
+                  "pm.test('下一页不重复首页视频', () => pm.expect(String(json.data.videos[0].video_id)).to.not.eql(page1));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "不完整游标（缺少 last_created_at）",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{base_url}}/like/list_liked",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"user_id\": \"{{liker_id}}\",\n  \"page_size\": 1,\n  \"cursor\": {\n    \"last_vid\": \"{{video_id}}\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('业务码非 200', () => pm.expect(json.code).to.not.eql(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "清理：取消视频 1 点赞",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{base_url}}/like/unlike",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"video_id\": \"{{video_id}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('业务码 200', () => pm.expect(pm.response.json().code).to.eql(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "清理：取消视频 2 点赞",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{base_url}}/like/unlike",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"video_id\": \"{{video_id_2}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('业务码 200', () => pm.expect(pm.response.json().code).to.eql(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "等待清理消费（1.5s 忙等）",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/healthz"
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Postman 没有 sleep API，用忙等给异步消费者留出落库时间。",
+                  "const start = Date.now();",
+                  "while (Date.now() - start < 1500) { /* busy wait */ }"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('健康检查可用', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "04-并发点击与幂等",
+      "item": [
+        {
+          "name": "并发点赞（10 并发）",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{base_url}}/like/like",
+            "description": "当前请求 + Tests 脚本并行发起的 9 次请求，验证并发点赞无 5xx、至少一次成功、服务端幂等不重复计数。",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"video_id\": \"{{video_id}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "const base = pm.collectionVariables.get('base_url');",
+                  "const token = pm.collectionVariables.get('token');",
+                  "const vid = Number(pm.collectionVariables.get('video_id'));",
+                  "const TOTAL = 10;",
+                  "let done = 0, ok = 0, bizFail = 0, badResp = 0, serverErr = 0;",
+                  "const header = { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' };",
+                  "",
+                  "function finish() {",
+                  "  if (done < TOTAL) { return; }",
+                  "  pm.test('并发请求全部完成', () => pm.expect(done).to.eql(TOTAL));",
+                  "  pm.test('无 5xx 服务端错误', () => pm.expect(serverErr).to.eql(0));",
+                  "  pm.test('无非法响应体', () => pm.expect(badResp).to.eql(0));",
+                  "  pm.test('至少一次点赞成功', () => pm.expect(ok).to.be.at.least(1));",
+                  "  pm.test('成功 + 业务失败 = 全部请求', () => pm.expect(ok + bizFail).to.eql(TOTAL));",
+                  "  pm.collectionVariables.set('concurrent_like_ok', String(ok));",
+                  "}",
+                  "",
+                  "function mark(response, err) {",
+                  "  done++;",
+                  "  if (err) { serverErr++; finish(); return; }",
+                  "  let body;",
+                  "  try { body = response.json(); } catch (e) { badResp++; finish(); return; }",
+                  "  if (body.code === 200) { ok++; }",
+                  "  else if (body.code === 500) { serverErr++; }",
+                  "  else { bizFail++; }",
+                  "  finish();",
+                  "}",
+                  "",
+                  "// 当前请求本身算一次；再并行发起 TOTAL-1 次",
+                  "for (let i = 0; i < TOTAL - 1; i++) {",
+                  "  pm.sendRequest({",
+                  "    url: base + '/like/like',",
+                  "    method: 'POST',",
+                  "    header: header,",
+                  "    body: { mode: 'raw', raw: JSON.stringify({ video_id: vid }) }",
+                  "  }, (err, res) => mark(res, err));",
+                  "}",
+                  "mark(pm.response, null);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "等待 MQ 消费（2s 忙等）",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/healthz"
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Postman 没有 sleep API，用忙等给异步消费者留出落库时间。",
+                  "const start = Date.now();",
+                  "while (Date.now() - start < 2000) { /* busy wait */ }"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('健康检查可用', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "并发后 is_liked=true",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{base_url}}/like/is_liked",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"video_id\": \"{{video_id}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('并发点赞后最终 is_liked=true', () => pm.expect(json.data.is_liked).to.eql(true));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "并发后点赞数只 +1",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}",
+                "type": "text"
+              }
+            ],
+            "url": "{{base_url}}/video/{{video_id}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "const base = Number(pm.collectionVariables.get('like_count_base'));",
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('并发重复点赞不重复计数', () => pm.expect(json.data.like_count).to.eql(base + 1));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "并发取消点赞（10 并发）",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{base_url}}/like/unlike",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"video_id\": \"{{video_id}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "const base = pm.collectionVariables.get('base_url');",
+                  "const token = pm.collectionVariables.get('token');",
+                  "const vid = Number(pm.collectionVariables.get('video_id'));",
+                  "const TOTAL = 10;",
+                  "let done = 0, ok = 0, bizFail = 0, badResp = 0, serverErr = 0;",
+                  "const header = { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' };",
+                  "",
+                  "function finish() {",
+                  "  if (done < TOTAL) { return; }",
+                  "  pm.test('并发请求全部完成', () => pm.expect(done).to.eql(TOTAL));",
+                  "  pm.test('无 5xx 服务端错误', () => pm.expect(serverErr).to.eql(0));",
+                  "  pm.test('无非法响应体', () => pm.expect(badResp).to.eql(0));",
+                  "  pm.test('至少一次点赞成功', () => pm.expect(ok).to.be.at.least(1));",
+                  "  pm.test('成功 + 业务失败 = 全部请求', () => pm.expect(ok + bizFail).to.eql(TOTAL));",
+                  "  pm.collectionVariables.set('concurrent_unlike_ok', String(ok));",
+                  "}",
+                  "",
+                  "function mark(response, err) {",
+                  "  done++;",
+                  "  if (err) { serverErr++; finish(); return; }",
+                  "  let body;",
+                  "  try { body = response.json(); } catch (e) { badResp++; finish(); return; }",
+                  "  if (body.code === 200) { ok++; }",
+                  "  else if (body.code === 500) { serverErr++; }",
+                  "  else { bizFail++; }",
+                  "  finish();",
+                  "}",
+                  "",
+                  "// 当前请求本身算一次；再并行发起 TOTAL-1 次",
+                  "for (let i = 0; i < TOTAL - 1; i++) {",
+                  "  pm.sendRequest({",
+                  "    url: base + '/like/unlike',",
+                  "    method: 'POST',",
+                  "    header: header,",
+                  "    body: { mode: 'raw', raw: JSON.stringify({ video_id: vid }) }",
+                  "  }, (err, res) => mark(res, err));",
+                  "}",
+                  "mark(pm.response, null);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "等待 MQ 消费（2s 忙等）",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/healthz"
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Postman 没有 sleep API，用忙等给异步消费者留出落库时间。",
+                  "const start = Date.now();",
+                  "while (Date.now() - start < 2000) { /* busy wait */ }"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('健康检查可用', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "并发后 is_liked=false",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{base_url}}/like/is_liked",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"video_id\": \"{{video_id}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('并发取消后最终 is_liked=false', () => pm.expect(json.data.is_liked).to.eql(false));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "并发后点赞数回到初始值",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}",
+                "type": "text"
+              }
+            ],
+            "url": "{{base_url}}/video/{{video_id}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "const base = Number(pm.collectionVariables.get('like_count_base'));",
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('并发取消不把点赞数减为负数', () => pm.expect(json.data.like_count).to.eql(base));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "05-异常与边界",
+      "item": [
+        {
+          "name": "未登录点赞（401）",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{base_url}}/like/like",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"video_id\": \"{{video_id}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 401', () => pm.response.to.have.status(401));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "非法 Token 点赞（401）",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{base_url}}/like/like",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"video_id\": \"{{video_id}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "invalid.token.value",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 401', () => pm.response.to.have.status(401));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "点赞缺少 video_id（400）",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{base_url}}/like/like",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('业务码非 200', () => pm.expect(pm.response.json().code).to.not.eql(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "点赞不存在的视频",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{base_url}}/like/like",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"video_id\": 999999999\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('业务码非 200', () => pm.expect(json.code).to.not.eql(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "取消点赞缺少 video_id（400）",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{base_url}}/like/unlike",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('业务码非 200', () => pm.expect(pm.response.json().code).to.not.eql(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "点赞状态缺少 video_id（400）",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{base_url}}/like/is_liked",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('业务码非 200', () => pm.expect(pm.response.json().code).to.not.eql(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "点赞列表缺少 user_id（400）",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{base_url}}/like/list_liked",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"page_size\": 20\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('业务码非 200', () => pm.expect(json.code).to.not.eql(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "点赞列表 page_size=0（400）",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{base_url}}/like/list_liked",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"user_id\": \"{{liker_id}}\",\n  \"page_size\": 0\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('业务码非 200', () => pm.expect(pm.response.json().code).to.not.eql(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "点赞列表 page_size=31（超过上限，400）",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{base_url}}/like/list_liked",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"user_id\": \"{{liker_id}}\",\n  \"page_size\": 31\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('业务码非 200', () => pm.expect(pm.response.json().code).to.not.eql(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "点赞列表-不存在的用户（total=0）",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{base_url}}/like/list_liked",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"user_id\": 999999999,\n  \"page_size\": 20\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('业务码 200', () => pm.expect(json.code).to.eql(200));",
+                  "pm.test('total=0', () => pm.expect(json.data.total).to.eql(0));",
+                  "pm.test('列表为空', () => pm.expect(json.data.videos).to.be.an('array').that.is.empty);"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
