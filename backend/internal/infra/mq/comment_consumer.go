@@ -72,13 +72,28 @@ func StartCommentConsumer(ctx context.Context, cmq *CommentMQ, commentRepo *repo
 					logger.Warn("comment consumer delivery channel closed")
 					return
 				}
-				handleCommentMessage(consumerCtx, ch, msg, commentRepo, redisCache, notificationProcessor)
+				safeHandleCommentMessage(consumerCtx, ch, msg, commentRepo, redisCache, notificationProcessor)
 			}
 		}
 	}()
 
 	logger.Info("comment consumer running")
 	return nil
+}
+
+// safeHandleCommentMessage 在 handleCommentMessage 外层兜底 recover。
+// 消费协程中的 panic 如果没有被捕获，会直接带崩整个 Worker 进程；这里统一捕获并转入死信。
+func safeHandleCommentMessage(parent context.Context, ch *amqp.Channel, msg amqp.Delivery, commentRepo *repo.CommentRepo, redisCache *cache.RedisCache, notificationProcessor NotificationProcessor) {
+	defer func() {
+		if r := recover(); r != nil {
+			logger.Error("panic while handling comment event", logger.Any("panic", r))
+			if err := msg.Nack(false, false); err != nil {
+				logger.Error("nack comment event after panic failed", logger.Err(err))
+			}
+		}
+	}()
+
+	handleCommentMessage(parent, ch, msg, commentRepo, redisCache, notificationProcessor)
 }
 
 // handleCommentMessage 处理单条评论事件。
@@ -93,6 +108,15 @@ func handleCommentMessage(parent context.Context, ch *amqp.Channel, msg amqp.Del
 	if err := json.Unmarshal(msg.Body, &event); err != nil {
 		logger.Error("parse comment event failed", logger.Err(err))
 		_ = msg.Ack(false) // 解析失败的消息直接ACK掉，避免无限重试
+		return
+	}
+
+	// 消息体缺少 comment 时，create 会让 GORM Create(nil) panic，delete 会空指针；
+	// 必须在这里直接拒绝，不能让畸形消息进入业务分支。
+	if event.Comment == nil {
+		logger.Error("comment event missing comment payload",
+			logger.String("event_id", event.EventID), logger.String("action", event.Action))
+		_ = msg.Nack(false, false) // 不再放回原队列，进入死信队列
 		return
 	}
 
@@ -117,7 +141,8 @@ func handleCommentMessage(parent context.Context, ch *amqp.Channel, msg amqp.Del
 	case "create":
 		consumeErr = commentRepo.CreateComment(ctx, event.Comment)
 	case "delete":
-		consumeErr = commentRepo.DeleteComment(ctx, event.Comment.ID)
+		// 级联删除父评论及其子回复，避免留下孤儿评论
+		consumeErr = commentRepo.DeleteCommentCascade(ctx, event.Comment.ID)
 	default:
 		logger.Warn("unknown comment event action", logger.String("action", event.Action))
 		_ = msg.Ack(false) // 未知的事件类型直接ACK掉，避免无限重试
@@ -142,8 +167,8 @@ func handleCommentMessage(parent context.Context, ch *amqp.Channel, msg amqp.Del
 				// 再次写入失败直接跳过，避免陷入死循环，后续重复消费会再次尝试写入redis
 				logger.Error("redis set error", logger.Err(err))
 			}
-			// 重复消费说明该评论已在库中，按数据库真实计数回写，修复首次消费可能漏写缓存的问题
-			refreshCommentCountCache(ctx, redisCache, commentRepo, event.Comment.VideoID)
+			// 重复消费说明该评论已在库中；删除计数缓存，让读取端回源数据库重新计算
+			invalidateCommentCountCache(ctx, redisCache, event.Comment.VideoID)
 
 			return
 		}
@@ -167,9 +192,10 @@ func handleCommentMessage(parent context.Context, ch *amqp.Channel, msg amqp.Del
 		logger.Error("redis set event id error", logger.Err(err))
 	}
 
-	// 评论新增/删除已落库，按数据库真实计数回写视频评论计数器。
-	// key 与 feed 读取端共用 cache.CommentVideoCntKey，保证 feeds.comments_cnt 能读到真实计数。
-	refreshCommentCountCache(ctx, redisCache, commentRepo, event.Comment.VideoID)
+	// 评论新增/删除已落库，删除视频评论计数缓存。
+	// 相比 DB COUNT 后 SET，DEL 不会出现并发事件互相覆盖导致的丢失更新；
+	// key 与 feed 读取端共用 cache.CommentVideoCntKey，读取端未命中时会回源数据库重新计算。
+	invalidateCommentCountCache(ctx, redisCache, event.Comment.VideoID)
 
 	// 触发异步通知
 	if event.Action == "create" {
@@ -200,19 +226,14 @@ func handleCommentMessage(parent context.Context, ch *amqp.Channel, msg amqp.Del
 	_ = msg.Ack(false) // 成功处理后 ACK 掉消息
 }
 
-// refreshCommentCountCache 用数据库真实评论数回写 Redis 计数器。
-// 相比 INCR/DECR，DB COUNT 可以避免缓存 key 过期后从 0 开始计数产生漂移或负数，
-// 也与 feed 读取端共用 cache.CommentVideoCntKey，保证 comments_cnt 与实际一致。
-func refreshCommentCountCache(ctx context.Context, redisCache *cache.RedisCache, commentRepo *repo.CommentRepo, vid uint) {
+// invalidateCommentCountCache 删除视频评论计数缓存。
+// 写路径只负责失效，读取端在缓存未命中时回源数据库并回填，
+// 避免「DB COUNT 后再 SET」在并发事件下互相覆盖造成计数丢失更新。
+func invalidateCommentCountCache(ctx context.Context, redisCache *cache.RedisCache, vid uint) {
 	if redisCache == nil || !redisCache.IsEnabled() {
 		return // 缓存禁用时保持降级，读取端直接走数据库
 	}
-	cnt, err := commentRepo.CountByVideo(ctx, vid)
-	if err != nil {
-		logger.Error("count comments for video failed", logger.Uint("video_id", vid), logger.Err(err))
-		return
-	}
-	if err := redisCache.Set(ctx, cache.CommentVideoCntKey(vid), cnt, cache.CommentVideoCntTTL); err != nil {
-		logger.Error("set comment count cache for video failed", logger.Uint("video_id", vid), logger.Err(err))
+	if err := redisCache.Delete(ctx, cache.CommentVideoCntKey(vid)); err != nil {
+		logger.Error("delete comment count cache for video failed", logger.Uint("video_id", vid), logger.Err(err))
 	}
 }

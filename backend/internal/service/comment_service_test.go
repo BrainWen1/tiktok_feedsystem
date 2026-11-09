@@ -133,6 +133,26 @@ func TestCommentService_PublishRejectsInvalidContent(t *testing.T) {
 	}
 }
 
+// TestCommentService_PublishAcceptsEmoji 验证 IsGraphic 放行 Emoji 等图形字符。
+func TestCommentService_PublishAcceptsEmoji(t *testing.T) {
+	svc, db, _, _ := setupCommentService(t)
+	ctx := context.Background()
+	video := mustCreateCommentVideo(t, db, 1)
+
+	const content = "太好笑了 😀👍🎉"
+	if err := svc.PublishComment(ctx, video.ID, 10, 0, "user10", content); err != nil {
+		t.Fatalf("PublishComment(emoji) = %v, want nil", err)
+	}
+
+	var saved model.Comment
+	if err := db.Where("video_id = ?", video.ID).First(&saved).Error; err != nil {
+		t.Fatalf("load emoji comment: %v", err)
+	}
+	if saved.Content != content {
+		t.Fatalf("content = %q, want %q", saved.Content, content)
+	}
+}
+
 // TestCommentService_PublishValidatesTarget 覆盖视频不存在、父评论不存在、
 // 父评论不属于当前视频三种非法目标。
 func TestCommentService_PublishValidatesTarget(t *testing.T) {
@@ -328,12 +348,9 @@ func TestCommentService_ListCommentsCursorPagination(t *testing.T) {
 	}
 }
 
-// TestCommentService_ListCommentsSameSecondDoesNotDropRows 是给 P1 缺陷预留的回归用例：
-// 游标使用 Unix 秒，而 MySQL 的 created_at 是 datetime(3)，同一秒内的评论会在第二页被整段跳过。
-// 修复方式见审查报告 P1-1；修复前跳过，避免 CI 因已知缺陷变红。
+// TestCommentService_ListCommentsSameSecondDoesNotDropRows 覆盖 P1 缺陷修复：
+// 游标改用 Unix 毫秒，与 MySQL datetime(3) 精度对齐，同一秒内的评论不会被整段跳过。
 func TestCommentService_ListCommentsSameSecondDoesNotDropRows(t *testing.T) {
-	t.Skip("known P1: cursor uses Unix seconds while created_at has millisecond precision; see review P1-1")
-
 	svc, db, _, _ := setupCommentService(t)
 	ctx := context.Background()
 	video := mustCreateCommentVideo(t, db, 100)
@@ -365,26 +382,26 @@ func TestCommentService_ListCommentsSameSecondDoesNotDropRows(t *testing.T) {
 	}
 }
 
-// TestCommentService_MQFallbackKeepsCommentCountCacheInSync 是给 P1 缺陷预留的回归用例：
-// MQ 投递失败走同步写库/删库时，没有同步 comment:video:cnt:{vid}，计数会一直停留在旧值。
-// 修复方式见审查报告 P1-3；修复前跳过。
+// TestCommentService_MQFallbackKeepsCommentCountCacheInSync 覆盖 P1 缺陷修复：
+// MQ 投递失败走同步写库/删库时，必须同步失效 comment:video:cnt:{vid}，避免读取端长期返回旧值。
 func TestCommentService_MQFallbackKeepsCommentCountCacheInSync(t *testing.T) {
-	t.Skip("known P1: MQ fallback writes DB without invalidating the comment count cache; see review P1-3")
-
-	svc, db, redisCache, _ := setupCommentService(t)
+	svc, db, redisCache, mr := setupCommentService(t)
 	ctx := context.Background()
 	video := mustCreateCommentVideo(t, db, 100)
 	key := cache.CommentVideoCntKey(video.ID)
 
-	// 发布降级：缓存旧值 0，落库后应同步为 1（或直接失效）。
+	// 发布降级：缓存旧值 0，落库后应失效，下一次读取回源数据库得到 1。
 	if err := redisCache.Set(ctx, key, "0", cache.CommentVideoCntTTL); err != nil {
 		t.Fatalf("seed count cache: %v", err)
 	}
 	if err := svc.PublishComment(ctx, video.ID, 20, 0, "user20", "fallback publish"); err != nil {
 		t.Fatalf("publish: %v", err)
 	}
-	if got, _ := redisCache.Get(ctx, key); got != "1" {
-		t.Fatalf("count cache after fallback publish = %q, want \"1\"", got)
+	if mr.Exists(key) {
+		t.Fatal("count cache should be invalidated after fallback publish")
+	}
+	if cnt, err := svc.GetCommentCount(ctx, video.ID); err != nil || cnt != 1 {
+		t.Fatalf("count after fallback publish = %d, err = %v, want 1", cnt, err)
 	}
 }
 

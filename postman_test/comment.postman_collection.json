@@ -2169,7 +2169,7 @@
             "method": "GET",
             "header": [],
             "url": "{{base_url}}/comment/list?video_id={{video_id_2}}&page_size=5",
-            "description": "按 created_at DESC, id DESC 排序；返回下一页游标 last_time / last_id。"
+            "description": "按 created_at DESC, id DESC 排序；返回下一页游标 last_time（Unix 毫秒）/ last_id。"
           },
           "event": [
             {
@@ -2202,7 +2202,7 @@
             "method": "GET",
             "header": [],
             "url": "{{base_url}}/comment/list?video_id={{video_id_2}}&page_size=5&last_time={{pagination_last_time}}&last_id={{pagination_last_id}}",
-            "description": "已知缺陷 P1-1：游标是 Unix 秒，created_at 是 datetime(3)，同一秒内的评论可能在第二页被漏读。若第二页为 0 条，说明命中了该缺陷。"
+            "description": "游标使用 Unix 毫秒时间戳，与 created_at 的毫秒精度对齐；同一秒内的评论不会在第二页被漏读。"
           },
           "event": [
             {
@@ -2218,11 +2218,7 @@
                   "const page1 = JSON.parse(pm.collectionVariables.get('page1_ids') || '[]');",
                   "pm.test('第二页与第一页无重复', () => ids.forEach(id => pm.expect(page1).to.not.include(id)));",
                   "pm.test('has_more=false', () => pm.expect(json.data.has_more).to.eql(false));",
-                  "if (ids.length === 0) {",
-                  "  console.warn('命中已知 P1-1：同秒评论在第二页被整段跳过');",
-                  "} else {",
-                  "  pm.test('两页合并覆盖全部 7 条', () => pm.expect(page1.length + ids.length).to.eql(7));",
-                  "}"
+                  "pm.test('两页合并覆盖全部 7 条', () => pm.expect(page1.length + ids.length).to.eql(7));"
                 ]
               }
             }

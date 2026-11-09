@@ -39,6 +39,8 @@ var (
 	feedReadRateLimitUserID = ratelimit.Config{Scope: "feed_read", Limit: 120, Window: time.Minute, KeyByUserID: true}
 	// 点赞/取消点赞按 userID 限流，防止脚本刷赞打爆数据库与 MQ
 	likeActionRateLimit = ratelimit.Config{Scope: "like_action", Limit: 30, Window: time.Minute, KeyByUserID: true}
+	// 评论发布/删除按 userID 限流，防止脚本刷评论打爆数据库与 MQ
+	commentActionRateLimit = ratelimit.Config{Scope: "comment_action", Limit: 30, Window: time.Minute, KeyByUserID: true}
 )
 
 // blockedStaticExt 静态资源目录中禁止直接访问的敏感后缀，防止源码/配置泄露
@@ -259,8 +261,8 @@ func SetupRouter(sqlDB *gorm.DB, cache *cache.RedisCache, rmq *mq.RabbitMQ, auth
 	}
 	protectedCommentGroup := commentGroup.Group("/").Use(authMiddleware.Auth())
 	{
-		protectedCommentGroup.POST("/publish", commentHandler.PublishComment) // 发布评论
-		protectedCommentGroup.POST("/delete", commentHandler.DeleteComment)   // 删除评论
+		protectedCommentGroup.POST("/publish", limiter.Middleware(commentActionRateLimit), commentHandler.PublishComment) // 发布评论（按userID限流）
+		protectedCommentGroup.POST("/delete", limiter.Middleware(commentActionRateLimit), commentHandler.DeleteComment)   // 删除评论（按userID限流）
 	}
 
 	// 社交相关路由

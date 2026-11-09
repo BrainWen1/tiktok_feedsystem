@@ -77,6 +77,8 @@ func (s *CommentService) PublishComment(ctx context.Context, vid, userID, pid ui
 		if createErr := s.CommentRepo.CreateComment(ctx, Comment); createErr != nil {
 			return fmt.Errorf("create comment fallback for video %d user %d: %w", vid, userID, createErr)
 		}
+		// 降级写库没有经过 MQ 消费者，必须在这里同步失效评论计数缓存，避免读取端长期返回旧值
+		s.invalidateCommentCountCache(ctx, vid)
 		// 同步写数据库成功后，异步处理通知逻辑
 		go func() {
 			nctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
@@ -106,7 +108,8 @@ func (s *CommentService) PublishComment(ctx context.Context, vid, userID, pid ui
 	return nil
 }
 
-// validateCommentContent 校验评论内容：非空、长度受限，且只允许可打印字符与常见空白字符。
+// validateCommentContent 校验评论内容：非空、长度受限，且只允许 Unicode 图形字符与常见空白字符。
+// 使用 IsGraphic 而非 IsPrint，以支持 Emoji（含 ZWJ 组合序列）等可见字符。
 func validateCommentContent(content string) error {
 	if content == "" {
 		return errors.New("comment content must be non-empty")
@@ -119,8 +122,8 @@ func validateCommentContent(content string) error {
 		if r == '\n' || r == '\r' || r == '\t' || unicode.IsSpace(r) {
 			continue
 		}
-		// 控制字符、格式字符、私用区等不可打印字符一律拒绝
-		if !unicode.IsPrint(r) {
+		// 控制字符、私用区等不可见字符一律拒绝；IsGraphic 放行 Emoji 等图形字符
+		if !unicode.IsGraphic(r) {
 			return errors.New("comment content contains invalid characters")
 		}
 	}
@@ -185,10 +188,12 @@ func (s *CommentService) DeleteComment(ctx context.Context, userID, commentID ui
 	err = s.CommentMQ.DeleteComment(ctx, comment)
 	if err != nil {
 		logger.Ctx(ctx).Error("publish comment event to MQ failed", logger.Err(err))
-		// MQ投递失败，降级方案：同步直接写数据库
-		if deleteErr := s.CommentRepo.DeleteComment(ctx, commentID); deleteErr != nil {
+		// MQ投递失败，降级方案：同步直接删除数据库，父评论与子回复在同一事务内级联删除
+		if deleteErr := s.CommentRepo.DeleteCommentCascade(ctx, commentID); deleteErr != nil {
 			return fmt.Errorf("delete comment %d fallback: %w", commentID, deleteErr)
 		}
+		// 降级删除没有经过 MQ 消费者，必须在这里同步失效评论计数缓存
+		s.invalidateCommentCountCache(ctx, comment.VideoID)
 		return nil
 	}
 
@@ -247,10 +252,12 @@ func (s *CommentService) ListComments(ctx context.Context, userID uint, req dto.
 		return nil, fmt.Errorf("list comments for video %d: %w", req.VideoID, err)
 	}
 
-	// 获取评论总数
+	// 获取评论总数；计数属于附属信息，失败时降级为 0，不能阻断评论列表本身
 	total, err := s.GetCommentCount(ctx, req.VideoID)
 	if err != nil {
-		return nil, fmt.Errorf("get comment count for video %d: %w", req.VideoID, err)
+		logger.Ctx(ctx).Warn("get comment count failed, degrade total to 0",
+			logger.Uint("video_id", req.VideoID), logger.Err(err))
+		total = 0
 	}
 
 	// 组装返回DTO，填充作者信息、是否点赞（复用你之前的点赞缓存逻辑）
@@ -258,9 +265,10 @@ func (s *CommentService) ListComments(ctx context.Context, userID uint, req dto.
 	var nextLastTime *int64
 	var nextLastID *uint
 	if len(comments) > 0 {
-		// 取当前页最后一条，作为下一轮游标
+		// 取当前页最后一条，作为下一轮游标。
+		// 使用毫秒精度与数据库 datetime(3) 对齐，避免同一秒内的评论被整段跳过。
 		lastItem := comments[len(comments)-1]
-		ts := lastItem.CreatedAt.Unix()
+		ts := lastItem.CreatedAt.UnixMilli()
 		nextLastTime = &ts
 		nextLastID = &lastItem.ID
 	}
@@ -281,6 +289,18 @@ func (s *CommentService) ListComments(ctx context.Context, userID uint, req dto.
 		LastID:   nextLastID,
 		Total:    total,
 	}, nil
+}
+
+// invalidateCommentCountCache 删除视频评论计数缓存。
+// 写路径只负责失效，读取端在缓存未命中时回源数据库并回填，
+// 避免「DB COUNT 后再 SET」在并发写入下互相覆盖造成计数丢失更新。
+func (s *CommentService) invalidateCommentCountCache(ctx context.Context, vid uint) {
+	if s.cache == nil || !s.cache.IsEnabled() {
+		return
+	}
+	if err := s.cache.Delete(ctx, cache.CommentVideoCntKey(vid)); err != nil {
+		logger.Ctx(ctx).Error("delete comment count cache failed", logger.Uint("video_id", vid), logger.Err(err))
+	}
 }
 
 // BatchGetCommentCount 批量获取视频评论数量 map[vid]count

@@ -79,9 +79,9 @@ func mustSeedConsumerComment(t *testing.T, commentRepo *repo.CommentRepo, videoI
 	return comment
 }
 
-// TestHandleCommentMessage_CreateWritesDBAndCache 覆盖创建事件的主链路：
-// 评论落库、幂等标记写入、评论计数缓存按数据库真实值回写。
-func TestHandleCommentMessage_CreateWritesDBAndCache(t *testing.T) {
+// TestHandleCommentMessage_CreateWritesDBAndInvalidatesCache 覆盖创建事件的主链路：
+// 评论落库、幂等标记写入、评论计数缓存失效（由读取端回源重算）。
+func TestHandleCommentMessage_CreateWritesDBAndInvalidatesCache(t *testing.T) {
 	commentRepo, redisCache, mr, db := setupCommentConsumer(t)
 	ctx := context.Background()
 	const videoID = uint(42)
@@ -101,16 +101,16 @@ func TestHandleCommentMessage_CreateWritesDBAndCache(t *testing.T) {
 	if !mr.Exists(cache.CommentEventIDKey(event.EventID)) {
 		t.Fatalf("idempotency key %q should be written", cache.CommentEventIDKey(event.EventID))
 	}
-	got, err := mr.Get(cache.CommentVideoCntKey(videoID))
-	if err != nil || got != "1" {
-		t.Fatalf("comment count cache = %q, err = %v, want \"1\"", got, err)
+	// 写路径只负责失效计数缓存，读取端未命中时会回源数据库重新计算。
+	if mr.Exists(cache.CommentVideoCntKey(videoID)) {
+		t.Fatal("comment count cache should be invalidated after create")
 	}
 }
 
 // TestHandleCommentMessage_DuplicateDeliveryIsIdempotent 覆盖 RabbitMQ 至少一次投递：
 // 同一个 EventID 消费两次只能落一条评论，计数保持 1。
 func TestHandleCommentMessage_DuplicateDeliveryIsIdempotent(t *testing.T) {
-	commentRepo, redisCache, _, db := setupCommentConsumer(t)
+	commentRepo, redisCache, mr, db := setupCommentConsumer(t)
 	ctx := context.Background()
 	const videoID = uint(43)
 
@@ -128,20 +128,27 @@ func TestHandleCommentMessage_DuplicateDeliveryIsIdempotent(t *testing.T) {
 	if got := commentConsumerRowCount(t, db, videoID); got != 1 {
 		t.Fatalf("comment rows after duplicate delivery = %d, want 1", got)
 	}
-	if got, _ := redisCache.Get(ctx, cache.CommentVideoCntKey(videoID)); got != "1" {
-		t.Fatalf("comment count cache = %q, want \"1\"", got)
+	if mr.Exists(cache.CommentVideoCntKey(videoID)) {
+		t.Fatal("comment count cache should be invalidated after duplicate delivery")
 	}
 }
 
-// TestHandleCommentMessage_DeleteRemovesRowAndRefreshesCache 覆盖删除事件：
-// 物理删除评论后，计数缓存必须回写为数据库真实值。
-func TestHandleCommentMessage_DeleteRemovesRowAndRefreshesCache(t *testing.T) {
+// TestHandleCommentMessage_DeleteCascadesAndInvalidatesCache 覆盖删除事件：
+// 父评论与子回复在同一事务中级联删除，计数缓存必须失效。
+func TestHandleCommentMessage_DeleteCascadesAndInvalidatesCache(t *testing.T) {
 	commentRepo, redisCache, mr, db := setupCommentConsumer(t)
 	ctx := context.Background()
 	const videoID = uint(44)
 
 	first := mustSeedConsumerComment(t, commentRepo, videoID, 9, "first")
 	mustSeedConsumerComment(t, commentRepo, videoID, 10, "second")
+	// 给父评论挂一条子回复，删除父评论时必须级联删除，不能留下孤儿。
+	child := &model.Comment{
+		VideoID: videoID, UserID: 11, UserName: "user11", ParentID: first.ID, Content: "child",
+	}
+	if err := commentRepo.CreateComment(ctx, child); err != nil {
+		t.Fatalf("seed child comment: %v", err)
+	}
 
 	event := CommentEvent{
 		EventID: "comment-evt-delete",
@@ -150,14 +157,18 @@ func TestHandleCommentMessage_DeleteRemovesRowAndRefreshesCache(t *testing.T) {
 	}
 	handleCommentMessage(ctx, nil, mustCommentDelivery(t, event), commentRepo, redisCache, noopNotificationProcessor{})
 
+	// first 与 child 被级联删除，只剩 second。
 	if got := commentConsumerRowCount(t, db, videoID); got != 1 {
-		t.Fatalf("comment rows after delete = %d, want 1", got)
+		t.Fatalf("comment rows after cascade delete = %d, want 1", got)
 	}
 	if _, err := commentRepo.FindByID(ctx, first.ID); err == nil {
-		t.Fatal("deleted comment should not be found")
+		t.Fatal("deleted parent comment should not be found")
 	}
-	if got, err := mr.Get(cache.CommentVideoCntKey(videoID)); err != nil || got != "1" {
-		t.Fatalf("comment count cache = %q, err = %v, want \"1\"", got, err)
+	if _, err := commentRepo.FindByID(ctx, child.ID); err == nil {
+		t.Fatal("child comment should be cascade-deleted with its parent")
+	}
+	if mr.Exists(cache.CommentVideoCntKey(videoID)) {
+		t.Fatal("comment count cache should be invalidated after delete")
 	}
 }
 
@@ -193,13 +204,10 @@ func TestHandleCommentMessage_UnknownActionIsDropped(t *testing.T) {
 	}
 }
 
-// TestHandleCommentMessage_NilCommentDoesNotCrashWorker 是给 P0 缺陷预留的回归用例：
-// 消息体缺少 comment 字段时，create 会调用 GORM Create(nil) panic，delete 会直接空指针，
-// 未经 recover 的消费协程 panic 会带崩整个 worker 进程。
-// 修复方式见审查报告 P0-1；修复前跳过。
+// TestHandleCommentMessage_NilCommentDoesNotCrashWorker 覆盖 P0 缺陷修复：
+// 消息体缺少 comment 字段时，create 会让 GORM Create(nil) panic，delete 会空指针。
+// 现在 handleCommentMessage 会在进入业务分支前拒绝该消息并 Nack，不再带崩 Worker。
 func TestHandleCommentMessage_NilCommentDoesNotCrashWorker(t *testing.T) {
-	t.Skip("known P0: nil event.Comment panics the worker; see review P0-1")
-
 	commentRepo, redisCache, _, db := setupCommentConsumer(t)
 
 	for _, action := range []string{"create", "delete"} {
