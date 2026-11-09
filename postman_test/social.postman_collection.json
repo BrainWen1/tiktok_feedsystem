@@ -1,0 +1,1834 @@
+{
+  "info": {
+    "_postman_id": "b1e2c3d4-5f60-4a71-8b92-1c2d3e4f5a60",
+    "name": "social",
+    "description": "社交（关注/粉丝）模块接口测试集合。\n\n覆盖范围：\n- 关注、取关、重复关注、重复取关、自关注；\n- 关注关系双向查询、关注数/粉丝数；\n- 关注列表/粉丝列表（登录态与游客态）、复合游标分页；\n- 参数校验、鉴权失败、游标非法、分页边界、不存在用户等异常场景。\n\n使用方式：\n1. 启动 API 服务并确认 {{base_url}} 可访问；\n2. 按 00 -> 01 -> 02 -> 03 顺序运行；\n3. “登录主账号/登录目标账号”的 Tests 脚本会自动提取 token 到集合变量；受保护请求通过集合级 Bearer Auth 携带 {{token}}；\n4. 注册请求的 Pre-request Script 会生成每次运行唯一的用户名，避免重复注册。\n\n已知缺陷标注（当前断言按实现行为编写，修复后需同步调整）：\n- 重复关注/重复取关当前返回业务错误码 400，语义上应改为幂等成功或 409；\n- 关注不存在的用户当前未校验并返回 200，会污染关注列表（P1）；\n- is_follow 自己当前返回 400；\n- 查询不存在用户的计数/关系返回 200 + 0/false，未做存在性校验。",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{token}}",
+        "type": "string"
+      }
+    ]
+  },
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "// 集合级前置脚本：补齐基础变量。",
+          "if (!pm.collectionVariables.get('base_url')) {",
+          "  pm.collectionVariables.set('base_url', 'http://127.0.0.1:8080');",
+          "}",
+          "if (!pm.collectionVariables.get('nonexistent_user_id')) {",
+          "  pm.collectionVariables.set('nonexistent_user_id', '999999999');",
+          "}",
+          "if (!pm.collectionVariables.get('token')) {",
+          "  console.log('token 为空：请先运行“登录主账号”请求');",
+          "}"
+        ]
+      }
+    }
+  ],
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://127.0.0.1:8080",
+      "type": "string"
+    },
+    {
+      "key": "token",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "target_token",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "primary_username",
+      "value": "social_primary_demo",
+      "type": "string"
+    },
+    {
+      "key": "primary_password",
+      "value": "Passw0rd123",
+      "type": "string"
+    },
+    {
+      "key": "target_username",
+      "value": "social_target_demo",
+      "type": "string"
+    },
+    {
+      "key": "target_password",
+      "value": "Passw0rd456",
+      "type": "string"
+    },
+    {
+      "key": "primary_user_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "target_user_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "cursor_last_uid",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "cursor_last_created_at",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "nonexistent_user_id",
+      "value": "999999999",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "00-准备账号",
+      "item": [
+        {
+          "name": "健康检查",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/healthz",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "healthz"
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            },
+            "description": "确认 API 进程已启动。"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('业务码 200', () => pm.expect(json.code).to.eql(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "注册主账号",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/user/register",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "user",
+                "register"
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"user_name\": \"{{primary_username}}\",\n  \"password\": \"{{primary_password}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "每次运行生成唯一用户名，并清空上一次运行残留的登录态与游标。"
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const suffix = Date.now().toString().slice(-8);",
+                  "pm.collectionVariables.set('primary_username', 'social_a_' + suffix);",
+                  "pm.collectionVariables.set('primary_password', 'Passw0rd123');",
+                  "pm.collectionVariables.set('target_username', 'social_b_' + suffix);",
+                  "pm.collectionVariables.set('target_password', 'Passw0rd456');",
+                  "pm.collectionVariables.set('token', '');",
+                  "pm.collectionVariables.set('target_token', '');",
+                  "pm.collectionVariables.set('cursor_last_uid', '');",
+                  "pm.collectionVariables.set('cursor_last_created_at', '');"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('业务码 200', () => pm.expect(json.code).to.eql(200));",
+                  "pm.test('注册成功', () => {",
+                  "  pm.expect(json.data.status).to.eql('Register successfully');",
+                  "  pm.expect(json.data.username).to.eql(pm.collectionVariables.get('primary_username'));",
+                  "});",
+                  "pm.collectionVariables.set('primary_user_id', String(json.data.user_id));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "注册目标账号",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/user/register",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "user",
+                "register"
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"user_name\": \"{{target_username}}\",\n  \"password\": \"{{target_password}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('业务码 200', () => pm.expect(json.code).to.eql(200));",
+                  "pm.test('目标账号注册成功', () => pm.expect(json.data.username).to.eql(pm.collectionVariables.get('target_username')));",
+                  "pm.collectionVariables.set('target_user_id', String(json.data.user_id));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "登录主账号",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/user/login",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "user",
+                "login"
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"user_name\": \"{{primary_username}}\",\n  \"password\": \"{{primary_password}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Tests 脚本从响应中提取 access token，写入集合变量 {{token}}。"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('业务码 200', () => pm.expect(json.code).to.eql(200));",
+                  "pm.test('返回 access token', () => pm.expect(json.data.token).to.be.a('string').and.not.empty);",
+                  "pm.collectionVariables.set('token', json.data.token);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "登录目标账号",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/user/login",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "user",
+                "login"
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"user_name\": \"{{target_username}}\",\n  \"password\": \"{{target_password}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "用于以目标账号视角登录；Tests 脚本把 token 写入 {{target_token}}。"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('业务码 200', () => pm.expect(json.code).to.eql(200));",
+                  "pm.collectionVariables.set('target_token', json.data.token);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "按ID查询主账号",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/user/find_by_id",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "user",
+                "find_by_id"
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"user_id\": {{primary_user_id}}\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('按ID查询主账号正确', () => pm.expect(String(json.data.id)).to.eql(String(pm.collectionVariables.get('primary_user_id'))));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "按ID查询目标账号",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/user/find_by_id",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "user",
+                "find_by_id"
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"user_id\": {{target_user_id}}\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('按ID查询目标账号正确', () => pm.expect(String(json.data.id)).to.eql(String(pm.collectionVariables.get('target_user_id'))));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "01-正常关注流程",
+      "item": [
+        {
+          "name": "关注目标用户",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/social/follow",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "social",
+                "follow"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"blogger_id\": {{target_user_id}}\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "登录态由集合级 Bearer Auth 提供。成功时业务码 200。"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('业务码 200', () => pm.expect(json.code).to.eql(200));",
+                  "pm.test('返回关注成功提示', () => pm.expect(json.data).to.eql('Followed successfully'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "查询关注关系-已关注",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/social/is_follow?target_id={{target_user_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "social",
+                "is_follow"
+              ],
+              "query": [
+                {
+                  "key": "target_id",
+                  "value": "{{target_user_id}}"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('业务码 200', () => pm.expect(json.code).to.eql(200));",
+                  "pm.test('已关注且对方未回关', () => {",
+                  "  pm.expect(json.data.is_follow).to.eql(true);",
+                  "  pm.expect(json.data.is_fan).to.eql(false);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "查询主账号关注/粉丝数",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/social/count?target_id={{primary_user_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "social",
+                "count"
+              ],
+              "query": [
+                {
+                  "key": "target_id",
+                  "value": "{{primary_user_id}}"
+                }
+              ]
+            },
+            "description": "首次请求会触发缓存回源，关注数/粉丝数应分别来自 Redis ZSet 或 MySQL 回源结果。"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('业务码 200', () => pm.expect(json.code).to.eql(200));",
+                  "pm.test('主账号关注 1 人、0 粉丝', () => {",
+                  "  pm.expect(json.data.follow_count).to.eql(1);",
+                  "  pm.expect(json.data.fan_count).to.eql(0);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "查询目标账号关注/粉丝数",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/social/count?target_id={{target_user_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "social",
+                "count"
+              ],
+              "query": [
+                {
+                  "key": "target_id",
+                  "value": "{{target_user_id}}"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('业务码 200', () => pm.expect(json.code).to.eql(200));",
+                  "pm.test('目标账号 0 关注、1 粉丝', () => {",
+                  "  pm.expect(json.data.follow_count).to.eql(0);",
+                  "  pm.expect(json.data.fan_count).to.eql(1);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "拉取主账号关注列表",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/social/bloggers?uid={{primary_user_id}}&page_size=10",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "social",
+                "bloggers"
+              ],
+              "query": [
+                {
+                  "key": "uid",
+                  "value": "{{primary_user_id}}"
+                },
+                {
+                  "key": "page_size",
+                  "value": "10"
+                }
+              ]
+            },
+            "description": "查看自己的关注列表时，列表项 is_follow 全部为 true；若返回 next_cursor 则写入集合变量，供第二页请求复用。"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('业务码 200', () => pm.expect(json.code).to.eql(200));",
+                  "const bloggers = json.data.bloggers || [];",
+                  "pm.test('包含目标用户', () => {",
+                  "  pm.expect(json.data.total).to.be.at.least(1);",
+                  "  pm.expect(bloggers.some(u => String(u.uid) === String(pm.collectionVariables.get('target_user_id')))).to.eql(true);",
+                  "});",
+                  "pm.test('查看自己的关注列表时 is_follow=true', () => bloggers.forEach(u => pm.expect(u.is_follow).to.eql(true)));",
+                  "if (json.data.next_cursor) {",
+                  "  pm.collectionVariables.set('cursor_last_uid', String(json.data.next_cursor.last_uid));",
+                  "  pm.collectionVariables.set('cursor_last_created_at', json.data.next_cursor.last_created_at);",
+                  "} else {",
+                  "  pm.collectionVariables.set('cursor_last_uid', '');",
+                  "  pm.collectionVariables.set('cursor_last_created_at', '');",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "拉取目标账号粉丝列表",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/social/followers?uid={{target_user_id}}&page_size=10",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "social",
+                "followers"
+              ],
+              "query": [
+                {
+                  "key": "uid",
+                  "value": "{{target_user_id}}"
+                },
+                {
+                  "key": "page_size",
+                  "value": "10"
+                }
+              ]
+            },
+            "description": "以主账号身份查看目标账号的粉丝列表，is_follow 表示主账号是否关注该粉丝。"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('业务码 200', () => pm.expect(json.code).to.eql(200));",
+                  "const followers = json.data.followers || [];",
+                  "pm.test('包含主账号', () => {",
+                  "  pm.expect(json.data.total).to.be.at.least(1);",
+                  "  pm.expect(followers.some(u => String(u.uid) === String(pm.collectionVariables.get('primary_user_id')))).to.eql(true);",
+                  "});",
+                  "pm.test('主账号已关注该粉丝（即目标账号）', () => followers.forEach(u => pm.expect(u.is_follow).to.eql(true)));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "游客查看主账号关注列表",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/social/bloggers?uid={{primary_user_id}}&page_size=10",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "social",
+                "bloggers"
+              ],
+              "query": [
+                {
+                  "key": "uid",
+                  "value": "{{primary_user_id}}"
+                },
+                {
+                  "key": "page_size",
+                  "value": "10"
+                }
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            },
+            "description": "列表接口支持软鉴权：无 token 也能读取，但 is_follow 应为 false。隐私策略为公开可读（见审查报告 P1）。"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('业务码 200', () => pm.expect(json.code).to.eql(200));",
+                  "pm.test('游客态 is_follow 均为 false', () => (json.data.bloggers || []).forEach(u => pm.expect(u.is_follow).to.eql(false)));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "关注列表-第二页（有游标时）",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/social/bloggers?uid={{primary_user_id}}&page_size=10&cursor.last_uid={{cursor_last_uid}}&cursor.last_created_at={{cursor_last_created_at}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "social",
+                "bloggers"
+              ],
+              "query": [
+                {
+                  "key": "uid",
+                  "value": "{{primary_user_id}}"
+                },
+                {
+                  "key": "page_size",
+                  "value": "10"
+                },
+                {
+                  "key": "cursor.last_uid",
+                  "value": "{{cursor_last_uid}}"
+                },
+                {
+                  "key": "cursor.last_created_at",
+                  "value": "{{cursor_last_created_at}}"
+                }
+              ]
+            },
+            "description": "复合游标分页：last_uid + last_created_at 必须同时存在。数据不足一页时本请求会被跳过。"
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// 第一页没有 next_cursor 时跳过第二页，避免断言因数据量不足而失败。",
+                  "if (pm.execution && pm.execution.skipRequest && !pm.collectionVariables.get('cursor_last_uid')) {",
+                  "  pm.execution.skipRequest();",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('业务码 200', () => pm.expect(json.code).to.eql(200));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "02-重复关注与取关",
+      "item": [
+        {
+          "name": "重复关注（当前返回 400）",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/social/follow",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "social",
+                "follow"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"blogger_id\": {{target_user_id}}\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "已知缺陷（P1 幂等）：service 返回“already follows”，handler 统一映射为 400“关注失败”。建议改为幂等成功或 409，并在修复后更新本断言。"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('当前实现：HTTP 400', () => pm.response.to.have.status(400));",
+                  "pm.test('当前实现：业务码 400 且未重复落库', () => {",
+                  "  pm.expect(json.code).to.eql(400);",
+                  "  pm.expect(json.message).to.eql('关注失败');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "取消关注",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/social/unfollow",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "social",
+                "unfollow"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"blogger_id\": {{target_user_id}}\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('业务码 200', () => pm.expect(json.code).to.eql(200));",
+                  "pm.test('返回取关成功提示', () => pm.expect(json.data).to.eql('Unfollowed successfully'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "取关后查询关注关系",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/social/is_follow?target_id={{target_user_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "social",
+                "is_follow"
+              ],
+              "query": [
+                {
+                  "key": "target_id",
+                  "value": "{{target_user_id}}"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('双向均未关注', () => {",
+                  "  pm.expect(json.data.is_follow).to.eql(false);",
+                  "  pm.expect(json.data.is_fan).to.eql(false);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "取关后查询计数",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/social/count?target_id={{primary_user_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "social",
+                "count"
+              ],
+              "query": [
+                {
+                  "key": "target_id",
+                  "value": "{{primary_user_id}}"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('取关后计数归零', () => {",
+                  "  pm.expect(json.data.follow_count).to.eql(0);",
+                  "  pm.expect(json.data.fan_count).to.eql(0);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "重复取消关注（当前返回 400）",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/social/unfollow",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "social",
+                "unfollow"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"blogger_id\": {{target_user_id}}\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "已知缺陷（P1 幂等）：关系不存在时返回 400“取消关注失败”。建议按幂等成功处理，修复后更新断言。"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('当前实现：HTTP 400', () => pm.response.to.have.status(400));",
+                  "pm.test('当前实现：业务码 400', () => {",
+                  "  pm.expect(json.code).to.eql(400);",
+                  "  pm.expect(json.message).to.eql('取消关注失败');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "03-异常与边界",
+      "item": [
+        {
+          "name": "关注自己",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/social/follow",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "social",
+                "follow"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"blogger_id\": {{primary_user_id}}\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 400', () => pm.response.to.have.status(400));",
+                  "pm.test('业务码 400', () => pm.expect(json.code).to.eql(400));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "关注-缺少 blogger_id",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/social/follow",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "social",
+                "follow"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 400', () => pm.response.to.have.status(400));",
+                  "pm.test('返回参数错误', () => pm.expect(json.message).to.eql('请求参数错误'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "关注-blogger_id=0",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/social/follow",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "social",
+                "follow"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"blogger_id\": 0\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 400', () => pm.response.to.have.status(400));",
+                  "pm.test('binding required 拦截 0 值', () => pm.expect(json.code).to.eql(400));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "未登录关注",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/social/follow",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "social",
+                "follow"
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"blogger_id\": {{target_user_id}}\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 401', () => pm.response.to.have.status(401));",
+                  "pm.test('业务码 401', () => pm.expect(json.code).to.eql(401));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "非法Token关注",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer invalid.token.value"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/social/follow",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "social",
+                "follow"
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"blogger_id\": {{target_user_id}}\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 401', () => pm.response.to.have.status(401));",
+                  "pm.test('业务码 401', () => pm.expect(json.code).to.eql(401));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "关注列表-缺少 page_size",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/social/bloggers?uid={{primary_user_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "social",
+                "bloggers"
+              ],
+              "query": [
+                {
+                  "key": "uid",
+                  "value": "{{primary_user_id}}"
+                }
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 400', () => pm.response.to.have.status(400));",
+                  "pm.test('返回参数错误', () => pm.expect(json.message).to.eql('请求参数错误'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "关注列表-page_size=9",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/social/bloggers?uid={{primary_user_id}}&page_size=9",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "social",
+                "bloggers"
+              ],
+              "query": [
+                {
+                  "key": "uid",
+                  "value": "{{primary_user_id}}"
+                },
+                {
+                  "key": "page_size",
+                  "value": "9"
+                }
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            },
+            "description": "page_size 约束为 min=10,max=50。"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 400', () => pm.response.to.have.status(400));",
+                  "pm.test('业务码 400', () => pm.expect(json.code).to.eql(400));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "关注列表-page_size=51",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/social/bloggers?uid={{primary_user_id}}&page_size=51",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "social",
+                "bloggers"
+              ],
+              "query": [
+                {
+                  "key": "uid",
+                  "value": "{{primary_user_id}}"
+                },
+                {
+                  "key": "page_size",
+                  "value": "51"
+                }
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 400', () => pm.response.to.have.status(400));",
+                  "pm.test('业务码 400', () => pm.expect(json.code).to.eql(400));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "关注列表-半个游标（仅 last_uid）",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/social/bloggers?uid={{primary_user_id}}&page_size=10&cursor.last_uid=1",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "social",
+                "bloggers"
+              ],
+              "query": [
+                {
+                  "key": "uid",
+                  "value": "{{primary_user_id}}"
+                },
+                {
+                  "key": "page_size",
+                  "value": "10"
+                },
+                {
+                  "key": "cursor.last_uid",
+                  "value": "1"
+                }
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            },
+            "description": "last_uid 与 last_created_at 必须同时提供；仅提供一半时 service 返回错误，handler 统一映射为 400。"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 400', () => pm.response.to.have.status(400));",
+                  "pm.test('业务码 400', () => pm.expect(json.code).to.eql(400));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "粉丝列表-缺少 uid",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/social/followers?page_size=10",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "social",
+                "followers"
+              ],
+              "query": [
+                {
+                  "key": "page_size",
+                  "value": "10"
+                }
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 400', () => pm.response.to.have.status(400));",
+                  "pm.test('返回参数错误', () => pm.expect(json.message).to.eql('请求参数错误'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "计数-缺少 target_id",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/social/count",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "social",
+                "count"
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 400', () => pm.response.to.have.status(400));",
+                  "pm.test('返回参数错误', () => pm.expect(json.message).to.eql('请求参数错误'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "计数-不存在的用户",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/social/count?target_id={{nonexistent_user_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "social",
+                "count"
+              ],
+              "query": [
+                {
+                  "key": "target_id",
+                  "value": "{{nonexistent_user_id}}"
+                }
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            },
+            "description": "已知缺陷（P2）：未校验用户是否存在，返回 200 + 0/0。"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('当前实现：HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('当前实现：计数为 0/0（建议改为 404/用户不存在）', () => {",
+                  "  pm.expect(json.data.follow_count).to.eql(0);",
+                  "  pm.expect(json.data.fan_count).to.eql(0);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "关注关系-查询自己",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/social/is_follow?target_id={{primary_user_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "social",
+                "is_follow"
+              ],
+              "query": [
+                {
+                  "key": "target_id",
+                  "value": "{{primary_user_id}}"
+                }
+              ]
+            },
+            "description": "已知缺陷（P2）：service 直接拒绝自查询并返回错误，资料页展示自己时无法复用该接口。"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('当前实现：HTTP 400', () => pm.response.to.have.status(400));",
+                  "pm.test('当前实现：业务码 400', () => pm.expect(json.code).to.eql(400));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "关注关系-不存在的用户",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/social/is_follow?target_id={{nonexistent_user_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "social",
+                "is_follow"
+              ],
+              "query": [
+                {
+                  "key": "target_id",
+                  "value": "{{nonexistent_user_id}}"
+                }
+              ]
+            },
+            "description": "已知缺陷（P2）：未校验目标用户存在性，返回 false/false。"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('当前实现：HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('当前实现：false/false', () => {",
+                  "  pm.expect(json.data.is_follow).to.eql(false);",
+                  "  pm.expect(json.data.is_fan).to.eql(false);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "粉丝列表-不存在的用户",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/social/followers?uid={{nonexistent_user_id}}&page_size=10",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "social",
+                "followers"
+              ],
+              "query": [
+                {
+                  "key": "uid",
+                  "value": "{{nonexistent_user_id}}"
+                },
+                {
+                  "key": "page_size",
+                  "value": "10"
+                }
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            },
+            "description": "已知缺陷（P2）：未校验 uid 存在性，返回空列表。"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('当前实现：HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('当前实现：空列表', () => {",
+                  "  pm.expect(json.data.total).to.eql(0);",
+                  "  pm.expect(json.data.followers).to.be.an('array').and.have.lengthOf(0);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "关注不存在的用户（当前未校验）",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/social/follow",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "social",
+                "follow"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"blogger_id\": {{nonexistent_user_id}}\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "已知缺陷（P1）：Follow 不校验目标用户是否存在，当前会成功写入 social 行，并导致后续关注列表因用户信息查不到而整体失败。修复后应返回 400/404。"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('当前实现：HTTP 200（缺陷，修复后应失败）', () => pm.response.to.have.status(200));",
+                  "pm.test('当前实现：业务码 200', () => pm.expect(json.code).to.eql(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "关注列表-含不存在用户（当前整体失败）",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/social/bloggers?uid={{primary_user_id}}&page_size=10",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "social",
+                "bloggers"
+              ],
+              "query": [
+                {
+                  "key": "uid",
+                  "value": "{{primary_user_id}}"
+                },
+                {
+                  "key": "page_size",
+                  "value": "10"
+                }
+              ]
+            },
+            "description": "验证 P1 缺陷：只要关注列表里存在一条指向不存在用户的记录，batchGetUserSimple 就会返回错误，整页列表失败。"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('当前实现：HTTP 400', () => pm.response.to.have.status(400));",
+                  "pm.test('当前实现：业务码 400', () => pm.expect(json.code).to.eql(400));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "清理-取消关注不存在的用户",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/social/unfollow",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "social",
+                "unfollow"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"blogger_id\": {{nonexistent_user_id}}\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "清理上一条缺陷用例产生的脏关系，保证集合可重复运行。"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('业务码 200', () => pm.expect(json.code).to.eql(200));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
