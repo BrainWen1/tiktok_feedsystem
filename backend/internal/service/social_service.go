@@ -771,68 +771,6 @@ func (s *SocialService) GetCounts(ctx context.Context, targetID uint) (int64, in
 	return followCount, fanCount, nil
 }
 
-// GetMyFollowUserIDList 获取当前用户关注的全部userID集合（给feed关注流使用）
-func (s *SocialService) GetMyFollowUserIDList(ctx context.Context, userID uint) ([]uint, error) {
-	key := fmt.Sprintf("%s%d", socialBloggersKey, userID)
-	// 1. 先查Redis缓存
-	strUserIDs, err := s.cache.ZRange(ctx, key, 0, -1, true)
-	if err != nil {
-		// 缓存异常不阻断关注流，记录日志后回源数据库
-		logger.Ctx(ctx).Warn("get follow list from cache failed", logger.Uint("user_id", userID), logger.Err(err))
-	}
-	if err == nil && len(strUserIDs) > 0 {
-		// 缓存命中，字符串转uint数组直接返回；占位成员 userID=0 不是真实用户，跳过
-		userIDList := make([]uint, 0, len(strUserIDs))
-		for _, strUserID := range strUserIDs {
-			num, parseErr := strconv.ParseUint(strUserID, 10, 64)
-			if parseErr != nil {
-				logger.Ctx(ctx).Warn("skip invalid cached user id", logger.Uint("user_id", userID), logger.String("member", strUserID), logger.Err(parseErr))
-				continue
-			}
-			if num == 0 {
-				// 空集合占位成员，不是真实用户
-				continue
-			}
-			userIDList = append(userIDList, uint(num))
-		}
-		return userIDList, nil
-	}
-
-	// 2. 缓存未命中，调用repo查DB（repo只做SQL查询）
-	dbRecords, err := s.SocialRepo.QueryMyFollowList(ctx, userID)
-	if err != nil {
-		return nil, fmt.Errorf("query follow list for user %d: %w", userID, err)
-	}
-	if len(dbRecords) == 0 {
-		// 无关注数据也写入空集合占位，避免 feed 每次请求都回源数据库
-		if err := s.writeSocialZSet(ctx, key, nil); err != nil {
-			logger.Ctx(ctx).Error("write empty follow list cache failed", logger.Uint("user_id", userID), logger.Err(err))
-		}
-		return []uint{}, nil
-	}
-
-	// 3. 查询成功，回填Redis ZSet，score=关注时间毫秒
-	zPairs := make([]redis.Z, 0, len(dbRecords))
-	for _, item := range dbRecords {
-		zPairs = append(zPairs, redis.Z{
-			Score:  float64(item.CreatedAt.UnixMilli()),
-			Member: strconv.FormatUint(uint64(item.BloggerID), 10),
-		})
-	}
-
-	err = s.cache.ZAdd(ctx, key, zPairs, socialUserIDsTTL)
-	if err != nil {
-		logger.Ctx(ctx).Error("write follow list to cache failed", logger.Uint("user_id", userID), logger.Err(err))
-	}
-
-	// 组装返回uint数组
-	userIDList := make([]uint, 0, len(dbRecords))
-	for _, item := range dbRecords {
-		userIDList = append(userIDList, item.BloggerID)
-	}
-	return userIDList, nil
-}
-
 // BatchIsFollow 批量查询：loginUserID 是否关注 authorUserIDList 里面的作者
 func (s *SocialService) BatchIsFollow(ctx context.Context, loginUserID uint, authorUserIDList []uint) (map[uint]bool, error) {
 	resMap := make(map[uint]bool)

@@ -4,7 +4,7 @@ import "time"
 
 // Video 模型
 type Video struct {
-	ID uint `gorm:"primaryKey;index:idx_videos_author_created_id,priority:3,sort:desc" json:"id"` // 视频ID
+	ID uint `gorm:"primaryKey;index:idx_videos_author_created_id,priority:3,sort:desc;index:idx_videos_created_id,priority:2,sort:desc;index:idx_videos_popularity_id,priority:2,sort:desc" json:"id"` // 视频ID
 	// AuthorID 联合 created_at、id 建立复合索引，覆盖“按作者 + 复合游标倒序分页”的查询，
 	// 避免深翻页时回表排序产生 filesort。
 	AuthorID    uint   `gorm:"index;not null;index:idx_videos_author_created_id,priority:1" json:"author_id"` // 作者ID
@@ -15,9 +15,13 @@ type Video struct {
 
 	CreateTime time.Time `gorm:"autoCreateTime;index:idx_videos_create_time;index:idx_videos_popularity_time_id,priority:2,sort:desc" json:"create_time"` // 创建时间
 	LikesCount int64     `gorm:"column:likes_count;not null;default:0;index:idx_videos_likes_count_id,priority:1,sort:desc" json:"likes_count"`           // 点赞数
-	Popularity int64     `gorm:"column:popularity;not null;default:0;index:idx_videos_popularity_time_id,priority:1,sort:desc" json:"popularity"`         // 热度值
+	// Popularity 同时参与 (popularity, create_time, id) 与 (popularity, id) 两个复合索引。
+	// 热度榜查询只按 popularity + id 排序，第二列必须是 id，否则无法覆盖排序键。
+	Popularity int64 `gorm:"column:popularity;not null;default:0;index:idx_videos_popularity_time_id,priority:1,sort:desc;index:idx_videos_popularity_id,priority:1,sort:desc" json:"popularity"` // 热度值
 
-	CreatedAt time.Time `gorm:"autoCreateTime;index:idx_videos_author_created_id,priority:2,sort:desc"`
+	// CreatedAt 增加 (created_at, id) 复合索引，覆盖最新流/标签流“按创建时间 + 主键倒序分页”的查询，
+	// 避免全局最新流找不到匹配索引而走全表扫 + filesort。
+	CreatedAt time.Time `gorm:"autoCreateTime;index:idx_videos_author_created_id,priority:2,sort:desc;index:idx_videos_created_id,priority:1,sort:desc"`
 	UpdatedAt time.Time `gorm:"autoUpdateTime"`
 }
 

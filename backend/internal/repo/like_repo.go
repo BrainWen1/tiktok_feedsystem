@@ -72,6 +72,19 @@ func (r *LikeRepo) SyncLikesCount(ctx context.Context, vid uint) error {
 	).Error
 }
 
+// SyncPopularity 以点赞数为准刷新 videos.popularity，供热度榜按 (popularity, id) 排序。
+// 点赞/取消点赞的计数事务提交后调用；用单条 UPDATE 读取最新 likes_count，
+// 避免应用层先读后写被并发点赞覆盖。失败由调用方决定是否重试，不影响主流程。
+func (r *LikeRepo) SyncPopularity(ctx context.Context, vid uint) error {
+	if vid == 0 {
+		return fmt.Errorf("sync popularity: empty video id: %w", ErrInvalidArgument)
+	}
+	return r.db.WithContext(ctx).Exec(
+		"UPDATE videos SET popularity = likes_count WHERE id = ?",
+		vid,
+	).Error
+}
+
 // IsLiked 检查用户是否点赞了视频
 func (r *LikeRepo) IsLiked(ctx context.Context, userID, vid uint) (bool, error) {
 	var count int64

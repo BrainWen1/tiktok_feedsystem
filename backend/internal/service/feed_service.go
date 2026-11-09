@@ -80,27 +80,29 @@ func parseTimeFeedCursor(cursor dto.FeedCursor) (time.Time, uint, bool, error) {
 	return cursor.LastCreatedAt, vid, true, nil
 }
 
+// buildAuthorInfoMap 批量查询作者昵称与头像，返回 map[authorID]authorInfo。
+// 一次 SQL 查全整页作者，替代逐作者 FindByID 的 N+1 查询；
+// 作者信息属于附属数据，查询失败时整体降级为空作者字段，不阻断 feed 主流程。
 func (s *FeedService) buildAuthorInfoMap(ctx context.Context, authorIDs []uint) map[uint]authorInfo {
-	authorMap := make(map[uint]authorInfo)
+	authorMap := make(map[uint]authorInfo, len(authorIDs))
 	if s.userService == nil {
 		logger.Ctx(ctx).Warn("user service unavailable, feed author info will be empty")
 		return authorMap
 	}
+	if len(authorIDs) == 0 {
+		return authorMap
+	}
 
-	for _, authorID := range authorIDs {
-		if _, exists := authorMap[authorID]; exists {
-			continue
-		}
+	profiles, err := s.userService.BatchGetProfiles(ctx, authorIDs)
+	if err != nil {
+		logger.Ctx(ctx).Warn("batch get feed author info failed, degrade to empty", logger.Err(err))
+		return authorMap
+	}
 
-		author, err := s.userService.FindByID(ctx, authorID)
-		if err != nil {
-			// 单个作者信息缺失不影响整条 feed 读取，降级为空作者字段
-			logger.Ctx(ctx).Warn("get feed author info failed", logger.Uint("author_id", authorID), logger.Err(err))
-			continue
-		}
+	for authorID, profile := range profiles {
 		authorMap[authorID] = authorInfo{
-			name:   author.Username,
-			avatar: author.AvatarURL,
+			name:   profile.Username,
+			avatar: profile.AvatarURL,
 		}
 	}
 
@@ -138,15 +140,18 @@ func (s *FeedService) assembleFeedItems(ctx context.Context, loginUserID uint, r
 		isLikeMap = make(map[string]bool)
 		isFollowMap = make(map[uint]bool)
 	} else {
-		// 登录用户：批量查询状态
+		// 登录用户：批量查询状态。
+		// 点赞/关注状态属于附属信息，任一查询失败都降级为 false，不能阻断 feed 主流程。
 		var err error
 		isLikeMap, err = s.likeService.BatchGetIsLike(ctx, loginUserID, vidList)
 		if err != nil {
-			return nil, fmt.Errorf("batch get like status for user %d: %w", loginUserID, err)
+			logger.Ctx(ctx).Warn("batch get like status failed, degrade to false", logger.Uint("user_id", loginUserID), logger.Err(err))
+			isLikeMap = make(map[string]bool, len(vidList))
 		}
 		isFollowMap, err = s.socialService.BatchIsFollow(ctx, loginUserID, authorUserIDList)
 		if err != nil {
-			return nil, fmt.Errorf("batch get follow status for user %d: %w", loginUserID, err)
+			logger.Ctx(ctx).Warn("batch get follow status failed, degrade to false", logger.Uint("user_id", loginUserID), logger.Err(err))
+			isFollowMap = make(map[uint]bool, len(authorUserIDList))
 		}
 	}
 	// 计数，不管游客还是登录，都要拿计数展示。
@@ -161,7 +166,9 @@ func (s *FeedService) assembleFeedItems(ctx context.Context, loginUserID uint, r
 	}
 	commentCntMap, commentCountErr := s.commentService.BatchGetCommentCount(ctx, vidList)
 	if commentCountErr != nil {
-		return nil, fmt.Errorf("batch get comment count: %w", commentCountErr)
+		// 评论数属于附属信息，查询失败时降级为 0，避免单个依赖异常让整个 feed 返回 500
+		logger.Ctx(ctx).Warn("batch get comment count failed, degrade to 0", logger.Err(commentCountErr))
+		commentCntMap = make(map[string]int64, len(vidList))
 	}
 
 	// 组装VO
@@ -175,20 +182,21 @@ func (s *FeedService) assembleFeedItems(ctx context.Context, loginUserID uint, r
 			likesCnt = v.LikesCount
 		}
 		respList = append(respList, dto.FeedItemResp{
-			Vid:          vidKey,
-			Title:        v.Title,
-			Desc:         v.Description,
-			VideoURL:     v.VideoURL,
-			CoverURL:     v.CoverURL,
-			AuthorUserID: v.AuthorID,
-			AuthorName:   author.name,
-			AvatarURL:    author.avatar,
-			LikesCnt:     likesCnt,
-			CommentsCnt:  commentCntMap[vidKey],
-			Popularity:   v.Popularity,
-			IsLike:       isLikeMap[vidKey],
-			IsFollow:     isFollowMap[v.AuthorID],
-			CreatedAt:    v.CreatedAt,
+			Vid:            vidKey,
+			Title:          v.Title,
+			Desc:           v.Description,
+			VideoURL:       v.VideoURL,
+			CoverURL:       v.CoverURL,
+			AuthorUserID:   v.AuthorID,
+			AuthorName:     author.name,
+			AvatarURL:      author.avatar,
+			LikesCnt:       likesCnt,
+			CommentsCnt:    commentCntMap[vidKey],
+			Popularity:     v.Popularity,
+			SortLikesCount: v.LikesCount,
+			IsLike:         isLikeMap[vidKey],
+			IsFollow:       isFollowMap[v.AuthorID],
+			CreatedAt:      v.CreatedAt,
 		})
 	}
 	return respList, nil
@@ -205,7 +213,9 @@ func buildVideoListResp(videos []dto.FeedItemResp) dto.FeedListResp {
 		resp.NextCursor = &dto.FeedCursor{
 			LastPopularity: last.Popularity,
 			LastCreatedAt:  last.CreatedAt,
-			LastLikesCount: last.LikesCnt,
+			// 必须使用数据库排序键 likes_count，而不是可能来自缓存的展示值 LikesCnt，
+			// 否则缓存与数据库不一致时，下一页会跳数据或重复。
+			LastLikesCount: last.SortLikesCount,
 			LastVid:        last.Vid,
 		}
 	}
@@ -238,15 +248,9 @@ func (s *FeedService) ListByFollowing(ctx context.Context, loginUserID uint, cur
 		return dto.FeedListResp{}, err
 	}
 
-	followUserIDList, err := s.socialService.GetMyFollowUserIDList(ctx, loginUserID)
-	if err != nil {
-		return dto.FeedListResp{}, fmt.Errorf("get following user list for user %d: %w", loginUserID, err)
-	}
-	if len(followUserIDList) == 0 {
-		return dto.FeedListResp{}, nil
-	}
-
-	rawVideos, err := s.feedRepo.ListByFollowing(ctx, followUserIDList, lastCreatedAt, lastVid, limit)
+	// 直接按 follower_id JOIN social 表过滤关注关系，
+	// 避免把全量关注 ID 拉进内存再拼进 IN 子句（关注量大时会撑爆 SQL 占位符与内存）。
+	rawVideos, err := s.feedRepo.ListByFollowing(ctx, loginUserID, lastCreatedAt, lastVid, limit)
 	if err != nil {
 		return dto.FeedListResp{}, fmt.Errorf("list following feeds: %w", err)
 	}

@@ -20,9 +20,14 @@ type FeedItemResp struct {
 	AuthorName   string `json:"author_name"`
 	AvatarURL    string `json:"avatar_url"`
 
-	LikesCnt    int64 `json:"likes_cnt"`    // 点赞总数
+	LikesCnt    int64 `json:"likes_cnt"`    // 点赞总数，优先取缓存中的实时展示值
 	CommentsCnt int64 `json:"comments_cnt"` // 评论总数
 	Popularity  int64 `json:"popularity"`   // 热度值，越大越热
+
+	// SortLikesCount 数据库排序键 videos.likes_count，仅用于生成游标，不对外输出。
+	// 点赞榜按数据库 likes_count 排序，若用缓存展示值生成游标，
+	// 缓存与数据库不一致时会导致翻页跳数据或重复。
+	SortLikesCount int64 `json:"-"`
 
 	IsLike   bool `json:"is_like"`   // 当前登录用户是否点赞该视频
 	IsFollow bool `json:"is_follow"` // 当前登录用户是否关注作者

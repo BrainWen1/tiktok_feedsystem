@@ -164,6 +164,10 @@ func handleLikeMessage(parent context.Context, ch *amqp.Channel, msg amqp.Delive
 			if err := likeRepo.SyncLikesCount(ctx, event.VideoID); err != nil {
 				logger.Error("sync likes count on duplicate failed", logger.Uint("video_id", event.VideoID), logger.Err(err))
 			}
+			// 点赞数已重算，同步刷新热度值，保证热度榜 (popularity, id) 排序数据正确
+			if err := likeRepo.SyncPopularity(ctx, event.VideoID); err != nil {
+				logger.Error("sync video popularity on duplicate failed", logger.Uint("video_id", event.VideoID), logger.Err(err))
+			}
 			// 点赞数已变化，删除详情缓存，避免详情接口在 TTL 内继续返回旧计数
 			invalidateVideoDetailCache(ctx, redisCache, event.VideoID)
 
@@ -201,6 +205,12 @@ func handleLikeMessage(parent context.Context, ch *amqp.Channel, msg amqp.Delive
 		if err := likeRepo.SyncLikesCount(ctx, event.VideoID); err != nil {
 			logger.Error("sync likes count on repeated unlike failed", logger.Uint("video_id", event.VideoID), logger.Err(err))
 		}
+	}
+
+	// 点赞/取消点赞已在事务内更新 videos.likes_count，这里同步刷新热度值，
+	// 让 /feed/listByPopularity 有真实排序数据；失败只记录日志，不影响消息 ACK。
+	if err := likeRepo.SyncPopularity(ctx, event.VideoID); err != nil {
+		logger.Error("sync video popularity failed", logger.Uint("video_id", event.VideoID), logger.Err(err))
 	}
 
 	// 点赞数已变化，删除详情缓存，避免详情接口在 10 分钟 TTL 内继续返回旧计数

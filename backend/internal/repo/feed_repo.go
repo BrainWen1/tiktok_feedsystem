@@ -36,14 +36,19 @@ func (r *FeedRepo) ListLatest(ctx context.Context, lastCreatedAt time.Time, last
 }
 
 // ListByFollowing 获取关注用户发布视频流。
+// 直接 JOIN social 表按 follower_id 过滤关注关系，不再接收全量关注 ID 数组，
+// 避免关注量大时 SQL 占位符与内存膨胀；social 上的 (follower_id, blogger_id) 唯一索引可加速 JOIN。
 // 复合游标为 (created_at, id)，按创建时间与主键同时降序，保证翻页顺序稳定。
-func (r *FeedRepo) ListByFollowing(ctx context.Context, followUserIDs []uint, lastCreatedAt time.Time, lastVid uint, limit int) ([]model.Video, error) {
+func (r *FeedRepo) ListByFollowing(ctx context.Context, followerID uint, lastCreatedAt time.Time, lastVid uint, limit int) ([]model.Video, error) {
 	var videos []model.Video
 	db := r.db.WithContext(ctx)
-	q := db.Where("author_id IN ?", followUserIDs).Order("created_at DESC, id DESC")
+	q := db.Model(&model.Video{}).
+		Joins("JOIN socials ON socials.blogger_id = videos.author_id AND socials.follower_id = ?", followerID).
+		Select("videos.*").
+		Order("videos.created_at DESC, videos.id DESC")
 
 	if lastVid != 0 {
-		q = q.Where("(created_at, id) < (?, ?)", lastCreatedAt, lastVid)
+		q = q.Where("(videos.created_at, videos.id) < (?, ?)", lastCreatedAt, lastVid)
 	}
 
 	err := q.Limit(limit).Find(&videos).Error

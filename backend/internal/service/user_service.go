@@ -603,6 +603,33 @@ func (s *UserService) FindByUsername(ctx context.Context, username string) (*dto
 	}, nil
 }
 
+// BatchGetProfiles 批量获取用户资料，一次 SQL 查全，供 feed 等列表场景聚合作者信息。
+// 返回 map[userID]ProfileResponse；不存在的用户不会出现在结果中，由调用方按空值降级。
+func (s *UserService) BatchGetProfiles(ctx context.Context, userIDs []uint) (map[uint]*dto.ProfileResponse, error) {
+	profileMap := make(map[uint]*dto.ProfileResponse, len(userIDs))
+	if len(userIDs) == 0 {
+		return profileMap, nil
+	}
+
+	users, err := s.UserRepo.BatchFindByIDs(ctx, userIDs)
+	if err != nil {
+		logger.Ctx(ctx).Error("batch find user profiles by IDs failed", logger.Err(err))
+		return nil, fmt.Errorf("batch find user profiles by IDs: %w", err)
+	}
+
+	for i := range users {
+		user := users[i]
+		profileMap[user.ID] = &dto.ProfileResponse{
+			ID:        user.ID,
+			Username:  user.UserName,
+			AvatarURL: user.AvatarURL,
+			Bio:       user.Bio,
+		}
+	}
+
+	return profileMap, nil
+}
+
 // BatchGetUserNames 批量获取用户昵称
 func (s *UserService) BatchGetUserNames(ctx context.Context, userIDs []uint) (map[uint]string, error) {
 	if len(userIDs) == 0 {
