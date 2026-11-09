@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strconv"
 	"sync/atomic"
 	"time"
@@ -67,6 +68,32 @@ func NewRabbitMQ() (*RabbitMQ, error) {
 	}
 	r.Conn = conn
 	return r, nil
+}
+
+// ConnectWithRetry 尝试连接 RabbitMQ，失败时按指数退避重试，直到成功或达到最大重试次数
+func ConnectRabbitMQWithRetry(maxRetries int) (*RabbitMQ, error) {
+	var rmq *RabbitMQ
+	var err error
+
+	for i := 0; i < maxRetries; i++ {
+		// 尝试连接 RabbitMQ
+		rmq, err = NewRabbitMQ()
+		if err == nil {
+			return rmq, nil
+		}
+
+		logger.Warn("connect to rabbitmq failed, retrying...",
+			logger.Int("attempt", i+1),
+			logger.Err(err))
+
+		// 指数退避：第 1 次等 2s，第 2 次等 4s，第 3 次等 8s...
+		waitTime := time.Duration(1<<i) * time.Second
+		if waitTime > 10*time.Second {
+			waitTime = 10 * time.Second
+		} // 封顶 10s，之后的重试间隔都是 10s
+		time.Sleep(waitTime)
+	}
+	return nil, fmt.Errorf("failed to connect after %d retries: %w", maxRetries, err)
 }
 
 // Close 关闭 RabbitMQ 连接

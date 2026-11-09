@@ -69,9 +69,9 @@ func run() error {
 	defer database.CloseDB() // 注册关闭数据库连接的延迟调用
 
 	// 初始化MQ
-	rmq, err := mq.NewRabbitMQ()
+	rmq, err := mq.ConnectRabbitMQWithRetry(6) // 尝试连接 RabbitMQ，失败时按指数退避重试，最多重试5次（2s, 4s, 8s，10s，10s，10s）
 	if err != nil {
-		return fmt.Errorf("initialize RabbitMQ: %w", err)
+		return fmt.Errorf("connect rabbitmq: %w", err)
 	}
 	defer rmq.Close() // 退出时释放MQ连接
 

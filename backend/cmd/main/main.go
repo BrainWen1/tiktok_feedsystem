@@ -105,10 +105,10 @@ func main() {
 	}
 
 	// RabbitMQ
-	rmq, err := mq.NewRabbitMQ()
+	rmq, err := mq.ConnectRabbitMQWithRetry(6) // 尝试连接 RabbitMQ，失败时按指数退避重试，最多重试5次（2s, 4s, 8s，10s，10s，10s）
 	if err != nil {
 		// MQ不可用时降级运行：NewRabbitMQ已返回禁用的合法实例，投递由service层回退数据库
-		logger.Warn("rabbitmq unavailable, mq disabled, service continues", logger.Err(err))
+		logger.Warn("rabbitmq remained unavailable after waiting for 6 times retry", logger.Err(err))
 	} else {
 		logger.Info("rabbitmq connected")
 	}
