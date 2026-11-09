@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // SocialRepo 关注关系仓库，只负责 social 表的原始 SQL 读写。
@@ -19,13 +20,21 @@ func NewSocialRepo(db *gorm.DB) *SocialRepo {
 	return &SocialRepo{db: db}
 }
 
-// CreateFollow 创建关注关系。
-func (r *SocialRepo) CreateFollow(ctx context.Context, followerID, bloggerID uint) error {
+// CreateFollow 创建关注关系，返回是否真的插入了新记录。
+// 依赖 (follower_id, blogger_id) 唯一索引 + ON CONFLICT DO NOTHING 保证重复关注幂等：
+// 并发或重复请求不会报唯一键冲突，只有第一个请求 created=true。
+func (r *SocialRepo) CreateFollow(ctx context.Context, followerID, bloggerID uint) (created bool, err error) {
 	social := &model.Social{
 		FollowerID: followerID,
 		BloggerID:  bloggerID,
 	}
-	return r.db.WithContext(ctx).Create(social).Error
+	tx := r.db.WithContext(ctx).
+		Clauses(clause.OnConflict{DoNothing: true}).
+		Create(social)
+	if tx.Error != nil {
+		return false, tx.Error
+	}
+	return tx.RowsAffected > 0, nil
 }
 
 // DeleteFollow 删除关注关系，并返回是否真的删除到记录。
@@ -52,10 +61,53 @@ func (r *SocialRepo) IsFollowing(ctx context.Context, followerID, bloggerID uint
 	return count > 0, nil
 }
 
+// BatchIsFollowing 批量查询 followerID 是否关注了 bloggerIDs 中的每个用户。
+// 一次 IN 查询替代列表场景逐条 IsFollowing，避免 N+1。
+func (r *SocialRepo) BatchIsFollowing(ctx context.Context, followerID uint, bloggerIDs []uint) (map[uint]bool, error) {
+	result := make(map[uint]bool, len(bloggerIDs))
+	if followerID == 0 || len(bloggerIDs) == 0 {
+		return result, nil
+	}
+
+	var rows []struct{ BloggerID uint }
+	if err := r.db.WithContext(ctx).
+		Model(&model.Social{}).
+		Select("blogger_id").
+		Where("follower_id = ? AND blogger_id IN ?", followerID, bloggerIDs).
+		Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	for _, row := range rows {
+		result[row.BloggerID] = true
+	}
+	return result, nil
+}
+
+// BatchIsFollowedBy 批量查询 followerIDs 中的用户是否关注了 bloggerID。
+// 用于“查看自己的粉丝列表时判断回关”的场景，同样一次 IN 查询。
+func (r *SocialRepo) BatchIsFollowedBy(ctx context.Context, bloggerID uint, followerIDs []uint) (map[uint]bool, error) {
+	result := make(map[uint]bool, len(followerIDs))
+	if bloggerID == 0 || len(followerIDs) == 0 {
+		return result, nil
+	}
+
+	var rows []struct{ FollowerID uint }
+	if err := r.db.WithContext(ctx).
+		Model(&model.Social{}).
+		Select("follower_id").
+		Where("blogger_id = ? AND follower_id IN ?", bloggerID, followerIDs).
+		Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	for _, row := range rows {
+		result[row.FollowerID] = true
+	}
+	return result, nil
+}
+
 // ListBloggers 获取用户的关注列表，按复合游标分页。
-// orderByFollowTime=true 时按 (created_at DESC, blogger_id DESC) 排序，游标为最近一条关注记录；
+// orderByFollowTime=true 时按 (created_at DESC, blogger_id DESC) 排序，游标为上一页最后一条关注记录；
 // false 时按 blogger_id ASC 排序，游标为上一页最后一个博主ID。
-// TODO: 待确认使用 —— 当前无调用方，确认后再决定是否删除。
 func (r *SocialRepo) ListBloggers(ctx context.Context, followerID uint, lastCreatedAt time.Time, lastUserID uint, pageSize int, orderByFollowTime bool) ([]*model.Social, int64, error) {
 	if followerID == 0 {
 		return nil, 0, fmt.Errorf("list bloggers: empty follower id: %w", ErrInvalidArgument)
@@ -74,7 +126,14 @@ func (r *SocialRepo) ListBloggers(ctx context.Context, followerID uint, lastCrea
 	query := r.db.WithContext(ctx).Model(&model.Social{}).Where("follower_id = ?", followerID)
 	if orderByFollowTime {
 		if lastUserID != 0 {
-			query = query.Where("(created_at, blogger_id) < (?, ?)", lastCreatedAt, lastUserID)
+			// 与缓存 ZSet 对齐：score 精确到秒。先取更早的秒，
+			// 同一秒内再按 blogger_id 倒序续页。
+			cursorStart := lastCreatedAt.Truncate(time.Second)
+			cursorEnd := cursorStart.Add(time.Second)
+			query = query.Where(
+				"(created_at < ? OR (created_at >= ? AND created_at < ? AND blogger_id < ?))",
+				cursorStart, cursorStart, cursorEnd, lastUserID,
+			)
 		}
 		query = query.Order("created_at DESC, blogger_id DESC")
 	} else {
@@ -132,7 +191,6 @@ func (r *SocialRepo) FindByFollowerAndBlogger(ctx context.Context, followerID, b
 }
 
 // ListFollowers 获取用户粉丝列表，按复合游标分页。
-// TODO: 待确认使用 —— 当前无调用方，确认后再决定是否删除。
 func (r *SocialRepo) ListFollowers(ctx context.Context, bloggerID uint, lastCreatedAt time.Time, lastUserID uint, pageSize int, orderByFollowTime bool) ([]*model.Social, int64, error) {
 	if bloggerID == 0 {
 		return nil, 0, fmt.Errorf("list followers: empty blogger id: %w", ErrInvalidArgument)
@@ -150,7 +208,14 @@ func (r *SocialRepo) ListFollowers(ctx context.Context, bloggerID uint, lastCrea
 	query := r.db.WithContext(ctx).Model(&model.Social{}).Where("blogger_id = ?", bloggerID)
 	if orderByFollowTime {
 		if lastUserID != 0 {
-			query = query.Where("(created_at, follower_id) < (?, ?)", lastCreatedAt, lastUserID)
+			// 与缓存 ZSet 对齐：score 精确到秒。先取更早的秒，
+			// 同一秒内再按 follower_id 倒序续页。
+			cursorStart := lastCreatedAt.Truncate(time.Second)
+			cursorEnd := cursorStart.Add(time.Second)
+			query = query.Where(
+				"(created_at < ? OR (created_at >= ? AND created_at < ? AND follower_id < ?))",
+				cursorStart, cursorStart, cursorEnd, lastUserID,
+			)
 		}
 		query = query.Order("created_at DESC, follower_id DESC")
 	} else {

@@ -128,6 +128,14 @@ func TestFollow_WritesDBAndBothCaches(t *testing.T) {
 	alice := mustCreateSocialUser(t, db, "alice")
 	bob := mustCreateSocialUser(t, db, "bob")
 
+	// Follow 只对已存在的缓存 key 做单成员增量写入，先通过 GetCounts 建立空集合占位。
+	if _, _, err := svc.GetCounts(ctx, alice.ID); err != nil {
+		t.Fatalf("init alice cache: %v", err)
+	}
+	if _, _, err := svc.GetCounts(ctx, bob.ID); err != nil {
+		t.Fatalf("init bob cache: %v", err)
+	}
+
 	if err := svc.Follow(ctx, alice.ID, bob.ID, alice.UserName); err != nil {
 		t.Fatalf("follow: %v", err)
 	}
@@ -185,21 +193,83 @@ func TestFollow_ValidationAndDuplicate(t *testing.T) {
 	}
 	waitForFollowNotification(t, db, bob.ID)
 
-	// 缓存命中的重复关注。
-	if err := svc.Follow(ctx, alice.ID, bob.ID, alice.UserName); err == nil {
-		t.Fatal("duplicate follow via cache should fail")
+	// 重复关注是幂等成功，不应报错也不应重复落库。
+	if err := svc.Follow(ctx, alice.ID, bob.ID, alice.UserName); err != nil {
+		t.Fatalf("duplicate follow via cache should be idempotent: %v", err)
 	}
 	if got := countSocialRows(t, db, alice.ID, bob.ID); got != 1 {
 		t.Fatalf("social rows after duplicate follow = %d, want 1", got)
 	}
 
-	// 清空 Redis，模拟缓存过期后重复关注：走 DB 二次检查，不应重复落库。
+	// 清空 Redis，模拟缓存过期后重复关注：依赖唯一索引兜底，仍然幂等。
 	mr.FlushAll()
-	if err := svc.Follow(ctx, alice.ID, bob.ID, alice.UserName); err == nil {
-		t.Fatal("duplicate follow via db should fail")
+	if err := svc.Follow(ctx, alice.ID, bob.ID, alice.UserName); err != nil {
+		t.Fatalf("duplicate follow via db should be idempotent: %v", err)
 	}
 	if got := countSocialRows(t, db, alice.ID, bob.ID); got != 1 {
 		t.Fatalf("social rows after cache-loss duplicate follow = %d, want 1", got)
+	}
+}
+
+// TestFollow_TargetUserNotFound 验证关注前会校验目标用户存在，不写入脏关注关系。
+func TestFollow_TargetUserNotFound(t *testing.T) {
+	svc, db, _, _ := setupSocialService(t)
+	ctx := context.Background()
+	alice := mustCreateSocialUser(t, db, "alice")
+
+	if err := svc.Follow(ctx, alice.ID, 999999, alice.UserName); err == nil {
+		t.Fatal("follow nonexistent target should fail")
+	}
+	if got := countSocialRows(t, db, alice.ID, 999999); got != 0 {
+		t.Fatalf("social rows for nonexistent target = %d, want 0", got)
+	}
+}
+
+// TestGetLists_FillIsFollowBatch 验证列表 IsFollow 字段使用批量 IN 查询后结果仍然正确：
+// 自己的关注列表全部已关注、自己的粉丝列表判断回关、他人粉丝列表判断当前登录用户是否关注。
+func TestGetLists_FillIsFollowBatch(t *testing.T) {
+	svc, db, _, _ := setupSocialService(t)
+	ctx := context.Background()
+	alice := mustCreateSocialUser(t, db, "alice")
+	bob := mustCreateSocialUser(t, db, "bob")
+	carol := mustCreateSocialUser(t, db, "carol")
+
+	base := time.Now().Add(-time.Hour).Truncate(time.Second)
+	mustInsertSocial(t, db, alice.ID, bob.ID, base)
+	mustInsertSocial(t, db, alice.ID, carol.ID, base.Add(time.Minute))
+	mustInsertSocial(t, db, bob.ID, alice.ID, base.Add(2*time.Minute)) // bob 是 alice 的粉丝
+	mustInsertSocial(t, db, carol.ID, bob.ID, base.Add(3*time.Minute)) // carol 关注 bob
+
+	// 自己的关注列表：全部为已关注
+	bloggers, _, _, err := svc.GetBloggers(ctx, alice.ID, alice.ID, dto.FeedCursor{}, 10)
+	if err != nil {
+		t.Fatalf("get own bloggers: %v", err)
+	}
+	if len(bloggers) != 2 {
+		t.Fatalf("own bloggers len = %d, want 2", len(bloggers))
+	}
+	for _, user := range bloggers {
+		if !user.IsFollow {
+			t.Fatalf("own bloggers user %d IsFollow = false, want true", user.UserID)
+		}
+	}
+
+	// 自己的粉丝列表：bob 已关注 alice（回关）
+	fans, _, _, err := svc.GetFollowers(ctx, alice.ID, alice.ID, dto.FeedCursor{}, 10)
+	if err != nil {
+		t.Fatalf("get own followers: %v", err)
+	}
+	if len(fans) != 1 || fans[0].UserID != bob.ID || !fans[0].IsFollow {
+		t.Fatalf("own followers = %+v, want [bob IsFollow=true]", fans)
+	}
+
+	// 他人粉丝列表：carol 关注 bob，查看 alice 的粉丝（bob）时 IsFollow 应为 true
+	fans, _, _, err = svc.GetFollowers(ctx, alice.ID, carol.ID, dto.FeedCursor{}, 10)
+	if err != nil {
+		t.Fatalf("get others followers: %v", err)
+	}
+	if len(fans) != 1 || fans[0].UserID != bob.ID || !fans[0].IsFollow {
+		t.Fatalf("others followers = %+v, want [bob IsFollow=true]", fans)
 	}
 }
 
@@ -244,8 +314,8 @@ func TestUnfollow_RemovesDBAndBothCaches(t *testing.T) {
 		t.Fatalf("empty followers cache placeholder exists = (%v, %v), want (true, nil)", exists, err)
 	}
 
-	if err := svc.Unfollow(ctx, alice.ID, bob.ID); err == nil {
-		t.Fatal("repeated unfollow should fail")
+	if err := svc.Unfollow(ctx, alice.ID, bob.ID); err != nil {
+		t.Fatalf("repeated unfollow should be idempotent: %v", err)
 	}
 }
 
@@ -320,7 +390,10 @@ func TestGetBloggers_PaginatesAcrossDBAndCache(t *testing.T) {
 		t.Fatalf("cursor last uid = %q, want %d", cursor.LastUserID, carol.ID)
 	}
 
-	// 等待异步回写完成，确保第二页确定走缓存路径。
+	// 列表未命中不再全量回写缓存；用 GetCounts 的全量回源重建 ZSet，确保第二页走缓存路径。
+	if _, _, err := svc.GetCounts(ctx, alice.ID); err != nil {
+		t.Fatalf("build bloggers cache: %v", err)
+	}
 	waitForSocialCacheKey(t, svc.cache, socialCacheKey(socialBloggersKey, alice.ID))
 
 	page2, total, cursor, err := svc.GetBloggers(ctx, alice.ID, 0, *cursor, 2)
@@ -490,6 +563,7 @@ func TestBatchIsFollow_RebuildsCacheOnMiss(t *testing.T) {
 		t.Fatalf("batch result = %v, want %v", got, want)
 	}
 
+	waitForSocialCacheKey(t, redisCache, socialCacheKey(socialBloggersKey, alice.ID))
 	zcard, err := redisCache.ZCard(ctx, socialCacheKey(socialBloggersKey, alice.ID))
 	if err != nil || zcard != 2 {
 		t.Fatalf("rebuilt zcard = (%d, %v), want (2, nil)", zcard, err)
@@ -543,7 +617,7 @@ func TestIsFollow_Bidirectional(t *testing.T) {
 }
 
 // TestFollowConcurrent_SamePair 验证并发关注同一人时：
-// 只有一个请求成功，DB 只有一行，Redis 计数不会重复累加。
+// 唯一索引保证 DB 只有一行，重复请求幂等成功，Redis 计数不会重复累加。
 func TestFollowConcurrent_SamePair(t *testing.T) {
 	svc, db, redisCache, _ := setupSocialService(t)
 	ctx := context.Background()
@@ -568,8 +642,8 @@ func TestFollowConcurrent_SamePair(t *testing.T) {
 			success++
 		}
 	}
-	if success != 1 {
-		t.Fatalf("successful follows = %d, want 1 (errs=%v)", success, errs)
+	if success != 2 {
+		t.Fatalf("idempotent follows = %d, want 2 (errs=%v)", success, errs)
 	}
 	if got := countSocialRows(t, db, alice.ID, bob.ID); got != 1 {
 		t.Fatalf("social rows = %d, want 1", got)
@@ -583,6 +657,10 @@ func TestFollowConcurrent_SamePair(t *testing.T) {
 		t.Fatalf("alice counts = (%d,%d), want (1,0)", followCount, fanCount)
 	}
 
+	// 主动触发一次全量重建，确认 DB 只有一行时粉丝集合也只有 1 个成员（没有重复累加）。
+	if _, _, err := svc.GetCounts(ctx, bob.ID); err != nil {
+		t.Fatalf("get bob counts: %v", err)
+	}
 	zcard, err := redisCache.ZCard(ctx, socialCacheKey(socialFollowersKey, bob.ID))
 	if err != nil || zcard != 1 {
 		t.Fatalf("bob followers zcard = (%d, %v), want (1, nil)", zcard, err)
@@ -590,10 +668,9 @@ func TestFollowConcurrent_SamePair(t *testing.T) {
 }
 
 // TestFollow_AfterCacheLoss_Regression 是 P0 缺陷的回归用例：
-// Redis 中关注集合过期后，Follow 只 ZAdd 单个成员，会让读路径把不完整的 ZSet 当成全量，
-// 导致关注数/关注列表只剩刚关注的那一个。修复“key 缺失时不得写单成员（应全量重建或跳过）”后移除 Skip。
+// Redis 中关注集合过期后，Follow 不得只 ZAdd 单个成员，否则读路径会把不完整的 ZSet 当成全量。
+// 修复后 Follow 会跳过缺失 key 的单成员写入，由 GetCounts 全量回源重建。
 func TestFollow_AfterCacheLoss_Regression(t *testing.T) {
-	t.Skip("P0: Follow/IsFollow 在 ZSet key 缺失时只写入单个成员，会把不完整集合当成全量；修复后删除本行")
 
 	svc, db, _, mr := setupSocialService(t)
 	ctx := context.Background()

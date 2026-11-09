@@ -2,7 +2,7 @@
   "info": {
     "_postman_id": "b1e2c3d4-5f60-4a71-8b92-1c2d3e4f5a60",
     "name": "social",
-    "description": "社交（关注/粉丝）模块接口测试集合。\n\n覆盖范围：\n- 关注、取关、重复关注、重复取关、自关注；\n- 关注关系双向查询、关注数/粉丝数；\n- 关注列表/粉丝列表（登录态与游客态）、复合游标分页；\n- 参数校验、鉴权失败、游标非法、分页边界、不存在用户等异常场景。\n\n使用方式：\n1. 启动 API 服务并确认 {{base_url}} 可访问；\n2. 按 00 -> 01 -> 02 -> 03 顺序运行；\n3. “登录主账号/登录目标账号”的 Tests 脚本会自动提取 token 到集合变量；受保护请求通过集合级 Bearer Auth 携带 {{token}}；\n4. 注册请求的 Pre-request Script 会生成每次运行唯一的用户名，避免重复注册。\n\n已知缺陷标注（当前断言按实现行为编写，修复后需同步调整）：\n- 重复关注/重复取关当前返回业务错误码 400，语义上应改为幂等成功或 409；\n- 关注不存在的用户当前未校验并返回 200，会污染关注列表（P1）；\n- is_follow 自己当前返回 400；\n- 查询不存在用户的计数/关系返回 200 + 0/false，未做存在性校验。",
+    "description": "社交（关注/粉丝）模块接口测试集合。\n\n覆盖范围：\n- 关注、取关、重复关注、重复取关、自关注；\n- 关注关系双向查询、关注数/粉丝数；\n- 关注列表/粉丝列表（登录态与游客态）、复合游标分页；\n- 参数校验、鉴权失败、游标非法、分页边界、不存在用户等异常场景。\n\n使用方式：\n1. 启动 API 服务并确认 {{base_url}} 可访问；\n2. 按 00 -> 01 -> 02 -> 03 顺序运行；\n3. “登录主账号/登录目标账号”的 Tests 脚本会自动提取 token 到集合变量；受保护请求通过集合级 Bearer Auth 携带 {{token}}；\n4. 注册请求的 Pre-request Script 会生成每次运行唯一的用户名，避免重复注册。\n\n行为说明：\n- 重复关注/重复取关已做幂等处理，返回 200 且不会重复落库；\n- 关注不存在的用户会返回 400；\n- 列表中的不存在用户会被跳过，不会导致整页失败；\n- is_follow 自己当前返回 400；\n- 查询不存在用户的计数/关系返回 200 + 0/false。",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "auth": {
@@ -831,7 +831,7 @@
       "name": "02-重复关注与取关",
       "item": [
         {
-          "name": "重复关注（当前返回 400）",
+          "name": "重复关注（幂等成功）",
           "request": {
             "method": "POST",
             "header": [
@@ -859,7 +859,7 @@
                 }
               }
             },
-            "description": "已知缺陷（P1 幂等）：service 返回“already follows”，handler 统一映射为 400“关注失败”。建议改为幂等成功或 409，并在修复后更新本断言。"
+            "description": "重复关注按幂等成功处理：唯一索引 + ON CONFLICT DO NOTHING 保证不会重复落库，也不会重复发送通知。"
           },
           "event": [
             {
@@ -868,11 +868,8 @@
                 "type": "text/javascript",
                 "exec": [
                   "const json = pm.response.json();",
-                  "pm.test('当前实现：HTTP 400', () => pm.response.to.have.status(400));",
-                  "pm.test('当前实现：业务码 400 且未重复落库', () => {",
-                  "  pm.expect(json.code).to.eql(400);",
-                  "  pm.expect(json.message).to.eql('关注失败');",
-                  "});"
+                  "pm.test('HTTP 200（幂等成功）', () => pm.response.to.have.status(200));",
+                  "pm.test('业务码 200', () => pm.expect(json.code).to.eql(200));"
                 ]
               }
             }
@@ -1002,7 +999,7 @@
           ]
         },
         {
-          "name": "重复取消关注（当前返回 400）",
+          "name": "重复取消关注（幂等成功）",
           "request": {
             "method": "POST",
             "header": [
@@ -1030,7 +1027,7 @@
                 }
               }
             },
-            "description": "已知缺陷（P1 幂等）：关系不存在时返回 400“取消关注失败”。建议按幂等成功处理，修复后更新断言。"
+            "description": "重复取关按幂等成功处理：DeleteFollow 的 RowsAffected==0 视为已经取关，不返回业务错误。"
           },
           "event": [
             {
@@ -1039,11 +1036,8 @@
                 "type": "text/javascript",
                 "exec": [
                   "const json = pm.response.json();",
-                  "pm.test('当前实现：HTTP 400', () => pm.response.to.have.status(400));",
-                  "pm.test('当前实现：业务码 400', () => {",
-                  "  pm.expect(json.code).to.eql(400);",
-                  "  pm.expect(json.message).to.eql('取消关注失败');",
-                  "});"
+                  "pm.test('HTTP 200（幂等成功）', () => pm.response.to.have.status(200));",
+                  "pm.test('业务码 200', () => pm.expect(json.code).to.eql(200));"
                 ]
               }
             }
@@ -1698,7 +1692,7 @@
           ]
         },
         {
-          "name": "关注不存在的用户（当前未校验）",
+          "name": "关注不存在的用户（返回 400）",
           "request": {
             "method": "POST",
             "header": [
@@ -1726,7 +1720,7 @@
                 }
               }
             },
-            "description": "已知缺陷（P1）：Follow 不校验目标用户是否存在，当前会成功写入 social 行，并导致后续关注列表因用户信息查不到而整体失败。修复后应返回 400/404。"
+            "description": "Follow 会先校验目标用户是否存在；不存在时返回 400，不会写入脏关注关系。"
           },
           "event": [
             {
@@ -1735,15 +1729,15 @@
                 "type": "text/javascript",
                 "exec": [
                   "const json = pm.response.json();",
-                  "pm.test('当前实现：HTTP 200（缺陷，修复后应失败）', () => pm.response.to.have.status(200));",
-                  "pm.test('当前实现：业务码 200', () => pm.expect(json.code).to.eql(200));"
+                  "pm.test('HTTP 400（目标用户不存在）', () => pm.response.to.have.status(400));",
+                  "pm.test('业务码 400', () => pm.expect(json.code).to.eql(400));"
                 ]
               }
             }
           ]
         },
         {
-          "name": "关注列表-含不存在用户（当前整体失败）",
+          "name": "关注列表-不存在用户不会导致整页失败",
           "request": {
             "method": "GET",
             "header": [],
@@ -1767,7 +1761,7 @@
                 }
               ]
             },
-            "description": "验证 P1 缺陷：只要关注列表里存在一条指向不存在用户的记录，batchGetUserSimple 就会返回错误，整页列表失败。"
+            "description": "batchGetUserSimple 已改为 BatchGetProfiles 批量查询并跳过查不到的用户；即使历史脏数据指向不存在用户，也不会导致整页失败。"
           },
           "event": [
             {
@@ -1776,8 +1770,12 @@
                 "type": "text/javascript",
                 "exec": [
                   "const json = pm.response.json();",
-                  "pm.test('当前实现：HTTP 400', () => pm.response.to.have.status(400));",
-                  "pm.test('当前实现：业务码 400', () => pm.expect(json.code).to.eql(400));"
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('业务码 200', () => pm.expect(json.code).to.eql(200));",
+                  "pm.test('列表不包含不存在的用户', () => {",
+                  "  const ids = (json.data.bloggers || []).map(item => item.user_id);",
+                  "  pm.expect(ids).to.not.include(pm.collectionVariables.get('nonexistent_user_id'));",
+                  "});"
                 ]
               }
             }
