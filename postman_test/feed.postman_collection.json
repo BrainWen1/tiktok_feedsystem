@@ -1,0 +1,1044 @@
+{
+  "info": {
+    "_postman_id": "f4e8b6a2-1c7d-4c3e-9b6f-2d5a8e0c7b11",
+    "name": "feed",
+    "description": "Feed 流模块接口测试集合。\n\n覆盖接口：\n- GET /feed/list（最新流，复合游标 created_at + id）\n- GET /feed/listByPopularity（热度榜，游标 popularity + id）\n- GET /feed/listByLikesCount（点赞榜，游标 likes_count + id）\n- GET /feed/listByTag（标签过滤，游标 created_at + id）\n- GET /feed/listByFollowing（关注流，需登录）\n\n使用方式：\n1. 启动 API 服务，确认 {{base_url}} 可访问；\n2. 先在“00-准备（可选）”登录并自动提取 {{token}}（也可手动填集合变量 token）；\n3. 按顺序运行“01-正常流程”，游标由每条请求的 Tests 脚本自动写入集合变量；\n4. 再运行“02-边界与异常”，验证非法游标、空标签、未登录与重复游标稳定性。\n\n注意：\n- feed_limit 默认 2，便于在少量数据下触发多级游标翻页；\n- 公开接口在请求级设置为 noauth，避免集合级 Bearer Auth 干扰游客场景；\n- 关注流需要提前准备关注关系，否则返回空列表属于正常结果。",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{token}}",
+        "type": "string"
+      }
+    ]
+  },
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "// 集合级前置脚本：初始化 feed 测试所需的游标与参数变量。",
+          "const defaults = {",
+          "  base_url: 'http://127.0.0.1:8080',",
+          "  feed_limit: '2',",
+          "  feed_tag: 'go',",
+          "  missing_tag: 'definitely_no_such_tag_9527',",
+          "  invalid_token: 'invalid.jwt.token',",
+          "  login_username: 'feed_demo',",
+          "  login_password: 'Passw0rd123',",
+          "  latest_last_vid: '',",
+          "  latest_last_created_at: '',",
+          "  latest_page_ids: '[]',",
+          "  stable_last_vid: '',",
+          "  stable_last_created_at: '',",
+          "  stable_first_vid_a: '',",
+          "  popular_last_vid: '',",
+          "  popular_last_popularity: '',",
+          "  popular_page_ids: '[]',",
+          "  likes_last_vid: '',",
+          "  likes_last_likes_count: '',",
+          "  likes_page_ids: '[]',",
+          "  tag_last_vid: '',",
+          "  tag_last_created_at: '',",
+          "  tag_page_ids: '[]',",
+          "  following_last_vid: '',",
+          "  following_last_created_at: '',",
+          "  following_page_ids: '[]'",
+          "};",
+          "Object.keys(defaults).forEach((key) => {",
+          "  if (pm.collectionVariables.get(key) === undefined) {",
+          "    pm.collectionVariables.set(key, defaults[key]);",
+          "  }",
+          "});",
+          "if (!pm.collectionVariables.get('token')) {",
+          "  console.log('token 为空：请先运行登录请求或手动设置集合变量 token');",
+          "}"
+        ]
+      }
+    }
+  ],
+  "variable": [
+    { "key": "base_url", "value": "http://127.0.0.1:8080", "type": "string" },
+    { "key": "token", "value": "", "type": "string" },
+    { "key": "login_username", "value": "feed_demo", "type": "string" },
+    { "key": "login_password", "value": "Passw0rd123", "type": "string" },
+    { "key": "invalid_token", "value": "invalid.jwt.token", "type": "string" },
+    { "key": "feed_limit", "value": "2", "type": "string" },
+    { "key": "feed_tag", "value": "go", "type": "string" },
+    { "key": "missing_tag", "value": "definitely_no_such_tag_9527", "type": "string" },
+    { "key": "latest_last_vid", "value": "", "type": "string" },
+    { "key": "latest_last_created_at", "value": "", "type": "string" },
+    { "key": "latest_page_ids", "value": "[]", "type": "string" },
+    { "key": "stable_last_vid", "value": "", "type": "string" },
+    { "key": "stable_last_created_at", "value": "", "type": "string" },
+    { "key": "stable_first_vid_a", "value": "", "type": "string" },
+    { "key": "popular_last_vid", "value": "", "type": "string" },
+    { "key": "popular_last_popularity", "value": "", "type": "string" },
+    { "key": "popular_page_ids", "value": "[]", "type": "string" },
+    { "key": "likes_last_vid", "value": "", "type": "string" },
+    { "key": "likes_last_likes_count", "value": "", "type": "string" },
+    { "key": "likes_page_ids", "value": "[]", "type": "string" },
+    { "key": "tag_last_vid", "value": "", "type": "string" },
+    { "key": "tag_last_created_at", "value": "", "type": "string" },
+    { "key": "tag_page_ids", "value": "[]", "type": "string" },
+    { "key": "following_last_vid", "value": "", "type": "string" },
+    { "key": "following_last_created_at", "value": "", "type": "string" },
+    { "key": "following_page_ids", "value": "[]", "type": "string" }
+  ],
+  "item": [
+    {
+      "name": "00-准备（可选）",
+      "description": "登录并自动提取 token；如已有可用 token，可跳过本文件夹。",
+      "item": [
+        {
+          "name": "登录并提取 token",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "auth": { "type": "noauth" },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"user_name\": \"{{login_username}}\",\n  \"password\": \"{{login_password}}\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{base_url}}/user/login",
+              "host": ["{{base_url}}"],
+              "path": ["user", "login"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', function () { pm.expect(pm.response.code).to.eql(200); });",
+                  "if (json && json.code === 200 && json.data && json.data.token) {",
+                  "  pm.collectionVariables.set('token', json.data.token);",
+                  "  pm.test('token extracted', function () { pm.expect(pm.collectionVariables.get('token')).to.be.a('string').and.not.empty; });",
+                  "} else {",
+                  "  console.log('登录未成功：请检查 login_username / login_password，或手动设置 token');",
+                  "}"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "01-正常流程",
+      "description": "覆盖最新流、热度榜、点赞榜、标签过滤、登录态聚合与关注流的多级游标翻页。",
+      "item": [
+        {
+          "name": "游客-最新视频流-第一页",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "auth": { "type": "noauth" },
+            "url": {
+              "raw": "{{base_url}}/feed/list?limit={{feed_limit}}",
+              "host": ["{{base_url}}"],
+              "path": ["feed", "list"],
+              "query": [
+                { "key": "limit", "value": "{{feed_limit}}" }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', function () { pm.expect(pm.response.code).to.eql(200); });",
+                  "pm.test('business success code', function () { pm.expect(json.code).to.eql(200); });",
+                  "pm.test('list is array', function () { pm.expect(json.data.list).to.be.an('array'); });",
+                  "const list = (json.data && json.data.list) || [];",
+                  "pm.collectionVariables.set('latest_page_ids', JSON.stringify(list.map((item) => item.vid)));",
+                  "const cursor = json.data && json.data.next_cursor;",
+                  "pm.collectionVariables.set('latest_last_vid', cursor ? (cursor.last_vid || '') : '');",
+                  "pm.collectionVariables.set('latest_last_created_at', cursor ? (cursor.last_created_at || '') : '');",
+                  "// 额外保存一份固定游标，供“重复游标稳定性”用例复用",
+                  "pm.collectionVariables.set('stable_last_vid', cursor ? (cursor.last_vid || '') : '');",
+                  "pm.collectionVariables.set('stable_last_created_at', cursor ? (cursor.last_created_at || '') : '');",
+                  "if (list.length > 0) {",
+                  "  const item = list[0];",
+                  "  pm.test('feed item shape', function () {",
+                  "    pm.expect(item).to.have.all.keys('vid','title','desc','video_url','cover_url','author_uid','author_name','avatar_url','likes_cnt','comments_cnt','popularity','is_like','is_follow','created_at');",
+                  "  });",
+                  "  pm.test('guest is_like/is_follow false', function () {",
+                  "    pm.expect(item.is_like).to.eql(false);",
+                  "    pm.expect(item.is_follow).to.eql(false);",
+                  "  });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "游客-最新视频流-第二页",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "auth": { "type": "noauth" },
+            "url": {
+              "raw": "{{base_url}}/feed/list?limit={{feed_limit}}&cursor.last_vid={{latest_last_vid}}&cursor.last_created_at={{latest_last_created_at}}",
+              "host": ["{{base_url}}"],
+              "path": ["feed", "list"],
+              "query": [
+                { "key": "limit", "value": "{{feed_limit}}" },
+                { "key": "cursor.last_vid", "value": "{{latest_last_vid}}" },
+                { "key": "cursor.last_created_at", "value": "{{latest_last_created_at}}" }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', function () { pm.expect(pm.response.code).to.eql(200); });",
+                  "pm.test('business success code', function () { pm.expect(json.code).to.eql(200); });",
+                  "const list = (json.data && json.data.list) || [];",
+                  "const firstPage = JSON.parse(pm.collectionVariables.get('latest_page_ids') || '[]');",
+                  "const current = list.map((item) => item.vid);",
+                  "pm.test('no duplicate vid across pages', function () {",
+                  "  const overlap = current.filter((vid) => firstPage.indexOf(vid) >= 0);",
+                  "  pm.expect(overlap).to.be.an('array').that.is.empty;",
+                  "});",
+                  "pm.collectionVariables.set('latest_page_ids', JSON.stringify(firstPage.concat(current)));",
+                  "const cursor = json.data && json.data.next_cursor;",
+                  "pm.collectionVariables.set('latest_last_vid', cursor ? (cursor.last_vid || '') : '');",
+                  "pm.collectionVariables.set('latest_last_created_at', cursor ? (cursor.last_created_at || '') : '');"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "游客-最新视频流-第三页（多级游标）",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "auth": { "type": "noauth" },
+            "url": {
+              "raw": "{{base_url}}/feed/list?limit={{feed_limit}}&cursor.last_vid={{latest_last_vid}}&cursor.last_created_at={{latest_last_created_at}}",
+              "host": ["{{base_url}}"],
+              "path": ["feed", "list"],
+              "query": [
+                { "key": "limit", "value": "{{feed_limit}}" },
+                { "key": "cursor.last_vid", "value": "{{latest_last_vid}}" },
+                { "key": "cursor.last_created_at", "value": "{{latest_last_created_at}}" }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', function () { pm.expect(pm.response.code).to.eql(200); });",
+                  "const list = (json.data && json.data.list) || [];",
+                  "const seen = JSON.parse(pm.collectionVariables.get('latest_page_ids') || '[]');",
+                  "const current = list.map((item) => item.vid);",
+                  "pm.test('third page has no previously seen vid', function () {",
+                  "  const overlap = current.filter((vid) => seen.indexOf(vid) >= 0);",
+                  "  pm.expect(overlap).to.be.an('array').that.is.empty;",
+                  "});",
+                  "pm.collectionVariables.set('latest_page_ids', JSON.stringify(seen.concat(current)));",
+                  "const cursor = json.data && json.data.next_cursor;",
+                  "pm.collectionVariables.set('latest_last_vid', cursor ? (cursor.last_vid || '') : '');",
+                  "pm.collectionVariables.set('latest_last_created_at', cursor ? (cursor.last_created_at || '') : '');"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "游客-热门视频流-第一页",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "auth": { "type": "noauth" },
+            "url": {
+              "raw": "{{base_url}}/feed/listByPopularity?limit={{feed_limit}}",
+              "host": ["{{base_url}}"],
+              "path": ["feed", "listByPopularity"],
+              "query": [
+                { "key": "limit", "value": "{{feed_limit}}" }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', function () { pm.expect(pm.response.code).to.eql(200); });",
+                  "pm.test('business success code', function () { pm.expect(json.code).to.eql(200); });",
+                  "const list = (json.data && json.data.list) || [];",
+                  "pm.collectionVariables.set('popular_page_ids', JSON.stringify(list.map((item) => item.vid)));",
+                  "pm.test('popularity descending', function () {",
+                  "  const values = list.map((item) => item.popularity);",
+                  "  const sorted = values.slice().sort((a, b) => b - a);",
+                  "  pm.expect(values).to.eql(sorted);",
+                  "});",
+                  "const cursor = json.data && json.data.next_cursor;",
+                  "pm.collectionVariables.set('popular_last_vid', cursor ? (cursor.last_vid || '') : '');",
+                  "pm.collectionVariables.set('popular_last_popularity', cursor ? String(cursor.last_popularity || '') : '');"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "游客-热门视频流-第二页",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "auth": { "type": "noauth" },
+            "url": {
+              "raw": "{{base_url}}/feed/listByPopularity?limit={{feed_limit}}&cursor.last_vid={{popular_last_vid}}&cursor.last_popularity={{popular_last_popularity}}",
+              "host": ["{{base_url}}"],
+              "path": ["feed", "listByPopularity"],
+              "query": [
+                { "key": "limit", "value": "{{feed_limit}}" },
+                { "key": "cursor.last_vid", "value": "{{popular_last_vid}}" },
+                { "key": "cursor.last_popularity", "value": "{{popular_last_popularity}}" }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', function () { pm.expect(pm.response.code).to.eql(200); });",
+                  "const list = (json.data && json.data.list) || [];",
+                  "const seen = JSON.parse(pm.collectionVariables.get('popular_page_ids') || '[]');",
+                  "const current = list.map((item) => item.vid);",
+                  "pm.test('no duplicate vid across pages', function () {",
+                  "  pm.expect(current.filter((vid) => seen.indexOf(vid) >= 0)).to.be.an('array').that.is.empty;",
+                  "});",
+                  "pm.collectionVariables.set('popular_page_ids', JSON.stringify(seen.concat(current)));",
+                  "const cursor = json.data && json.data.next_cursor;",
+                  "pm.collectionVariables.set('popular_last_vid', cursor ? (cursor.last_vid || '') : '');",
+                  "pm.collectionVariables.set('popular_last_popularity', cursor ? String(cursor.last_popularity || '') : '');"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "游客-点赞榜-第一页",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "auth": { "type": "noauth" },
+            "url": {
+              "raw": "{{base_url}}/feed/listByLikesCount?limit={{feed_limit}}",
+              "host": ["{{base_url}}"],
+              "path": ["feed", "listByLikesCount"],
+              "query": [
+                { "key": "limit", "value": "{{feed_limit}}" }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', function () { pm.expect(pm.response.code).to.eql(200); });",
+                  "pm.test('business success code', function () { pm.expect(json.code).to.eql(200); });",
+                  "const list = (json.data && json.data.list) || [];",
+                  "pm.collectionVariables.set('likes_page_ids', JSON.stringify(list.map((item) => item.vid)));",
+                  "pm.test('likes_cnt descending', function () {",
+                  "  const values = list.map((item) => item.likes_cnt);",
+                  "  const sorted = values.slice().sort((a, b) => b - a);",
+                  "  pm.expect(values).to.eql(sorted);",
+                  "});",
+                  "const cursor = json.data && json.data.next_cursor;",
+                  "pm.collectionVariables.set('likes_last_vid', cursor ? (cursor.last_vid || '') : '');",
+                  "pm.collectionVariables.set('likes_last_likes_count', cursor ? String(cursor.last_likes_count || '') : '');"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "游客-点赞榜-第二页",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "auth": { "type": "noauth" },
+            "url": {
+              "raw": "{{base_url}}/feed/listByLikesCount?limit={{feed_limit}}&cursor.last_vid={{likes_last_vid}}&cursor.last_likes_count={{likes_last_likes_count}}",
+              "host": ["{{base_url}}"],
+              "path": ["feed", "listByLikesCount"],
+              "query": [
+                { "key": "limit", "value": "{{feed_limit}}" },
+                { "key": "cursor.last_vid", "value": "{{likes_last_vid}}" },
+                { "key": "cursor.last_likes_count", "value": "{{likes_last_likes_count}}" }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', function () { pm.expect(pm.response.code).to.eql(200); });",
+                  "const list = (json.data && json.data.list) || [];",
+                  "const seen = JSON.parse(pm.collectionVariables.get('likes_page_ids') || '[]');",
+                  "const current = list.map((item) => item.vid);",
+                  "pm.test('no duplicate vid across pages', function () {",
+                  "  pm.expect(current.filter((vid) => seen.indexOf(vid) >= 0)).to.be.an('array').that.is.empty;",
+                  "});",
+                  "pm.collectionVariables.set('likes_page_ids', JSON.stringify(seen.concat(current)));",
+                  "const cursor = json.data && json.data.next_cursor;",
+                  "pm.collectionVariables.set('likes_last_vid', cursor ? (cursor.last_vid || '') : '');",
+                  "pm.collectionVariables.set('likes_last_likes_count', cursor ? String(cursor.last_likes_count || '') : '');"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "游客-标签过滤-第一页",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "auth": { "type": "noauth" },
+            "url": {
+              "raw": "{{base_url}}/feed/listByTag?tag={{feed_tag}}&limit={{feed_limit}}",
+              "host": ["{{base_url}}"],
+              "path": ["feed", "listByTag"],
+              "query": [
+                { "key": "tag", "value": "{{feed_tag}}" },
+                { "key": "limit", "value": "{{feed_limit}}" }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', function () { pm.expect(pm.response.code).to.eql(200); });",
+                  "pm.test('business success code', function () { pm.expect(json.code).to.eql(200); });",
+                  "const list = (json.data && json.data.list) || [];",
+                  "pm.collectionVariables.set('tag_page_ids', JSON.stringify(list.map((item) => item.vid)));",
+                  "const cursor = json.data && json.data.next_cursor;",
+                  "pm.collectionVariables.set('tag_last_vid', cursor ? (cursor.last_vid || '') : '');",
+                  "pm.collectionVariables.set('tag_last_created_at', cursor ? (cursor.last_created_at || '') : '');"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "游客-标签过滤-第二页",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "auth": { "type": "noauth" },
+            "url": {
+              "raw": "{{base_url}}/feed/listByTag?tag={{feed_tag}}&limit={{feed_limit}}&cursor.last_vid={{tag_last_vid}}&cursor.last_created_at={{tag_last_created_at}}",
+              "host": ["{{base_url}}"],
+              "path": ["feed", "listByTag"],
+              "query": [
+                { "key": "tag", "value": "{{feed_tag}}" },
+                { "key": "limit", "value": "{{feed_limit}}" },
+                { "key": "cursor.last_vid", "value": "{{tag_last_vid}}" },
+                { "key": "cursor.last_created_at", "value": "{{tag_last_created_at}}" }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', function () { pm.expect(pm.response.code).to.eql(200); });",
+                  "const list = (json.data && json.data.list) || [];",
+                  "const seen = JSON.parse(pm.collectionVariables.get('tag_page_ids') || '[]');",
+                  "const current = list.map((item) => item.vid);",
+                  "pm.test('no duplicate vid across pages', function () {",
+                  "  pm.expect(current.filter((vid) => seen.indexOf(vid) >= 0)).to.be.an('array').that.is.empty;",
+                  "});",
+                  "pm.collectionVariables.set('tag_page_ids', JSON.stringify(seen.concat(current)));",
+                  "const cursor = json.data && json.data.next_cursor;",
+                  "pm.collectionVariables.set('tag_last_vid', cursor ? (cursor.last_vid || '') : '');",
+                  "pm.collectionVariables.set('tag_last_created_at', cursor ? (cursor.last_created_at || '') : '');"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "登录-最新视频流（聚合点赞/关注状态）",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/feed/list?limit={{feed_limit}}",
+              "host": ["{{base_url}}"],
+              "path": ["feed", "list"],
+              "query": [
+                { "key": "limit", "value": "{{feed_limit}}" }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', function () { pm.expect(pm.response.code).to.eql(200); });",
+                  "pm.test('business success code', function () { pm.expect(json.code).to.eql(200); });",
+                  "const list = (json.data && json.data.list) || [];",
+                  "pm.test('is_like/is_follow are booleans', function () {",
+                  "  list.forEach((item) => {",
+                  "    pm.expect(item.is_like).to.be.a('boolean');",
+                  "    pm.expect(item.is_follow).to.be.a('boolean');",
+                  "  });",
+                  "});",
+                  "pm.test('counts are non-negative', function () {",
+                  "  list.forEach((item) => {",
+                  "    pm.expect(item.likes_cnt).to.be.at.least(0);",
+                  "    pm.expect(item.comments_cnt).to.be.at.least(0);",
+                  "  });",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "登录-关注流-第一页",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/feed/listByFollowing?limit={{feed_limit}}",
+              "host": ["{{base_url}}"],
+              "path": ["feed", "listByFollowing"],
+              "query": [
+                { "key": "limit", "value": "{{feed_limit}}" }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', function () { pm.expect(pm.response.code).to.eql(200); });",
+                  "pm.test('business success code', function () { pm.expect(json.code).to.eql(200); });",
+                  "pm.test('list is array or null for no follows', function () {",
+                  "  pm.expect(json.data.list === null || Array.isArray(json.data.list)).to.eql(true);",
+                  "});",
+                  "const list = (json.data && json.data.list) || [];",
+                  "pm.collectionVariables.set('following_page_ids', JSON.stringify(list.map((item) => item.vid)));",
+                  "const cursor = json.data && json.data.next_cursor;",
+                  "pm.collectionVariables.set('following_last_vid', cursor ? (cursor.last_vid || '') : '');",
+                  "pm.collectionVariables.set('following_last_created_at', cursor ? (cursor.last_created_at || '') : '');"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "登录-关注流-第二页",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/feed/listByFollowing?limit={{feed_limit}}&cursor.last_vid={{following_last_vid}}&cursor.last_created_at={{following_last_created_at}}",
+              "host": ["{{base_url}}"],
+              "path": ["feed", "listByFollowing"],
+              "query": [
+                { "key": "limit", "value": "{{feed_limit}}" },
+                { "key": "cursor.last_vid", "value": "{{following_last_vid}}" },
+                { "key": "cursor.last_created_at", "value": "{{following_last_created_at}}" }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', function () { pm.expect(pm.response.code).to.eql(200); });",
+                  "const list = (json.data && json.data.list) || [];",
+                  "const seen = JSON.parse(pm.collectionVariables.get('following_page_ids') || '[]');",
+                  "const current = list.map((item) => item.vid);",
+                  "pm.test('no duplicate vid across pages', function () {",
+                  "  pm.expect(current.filter((vid) => seen.indexOf(vid) >= 0)).to.be.an('array').that.is.empty;",
+                  "});",
+                  "pm.collectionVariables.set('following_page_ids', JSON.stringify(seen.concat(current)));",
+                  "const cursor = json.data && json.data.next_cursor;",
+                  "pm.collectionVariables.set('following_last_vid', cursor ? (cursor.last_vid || '') : '');",
+                  "pm.collectionVariables.set('following_last_created_at', cursor ? (cursor.last_created_at || '') : '');"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "02-边界与异常",
+      "description": "覆盖 limit 越界、非法/不完整游标、空标签、不存在的标签、未登录/伪造 token 与重复游标稳定性。",
+      "item": [
+        {
+          "name": "limit=0 走默认值",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "auth": { "type": "noauth" },
+            "url": {
+              "raw": "{{base_url}}/feed/list?limit=0",
+              "host": ["{{base_url}}"],
+              "path": ["feed", "list"],
+              "query": [
+                { "key": "limit", "value": "0" }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', function () { pm.expect(pm.response.code).to.eql(200); });",
+                  "pm.test('defaulted limit keeps page <= 20', function () {",
+                  "  pm.expect((json.data.list || []).length).to.be.at.most(20);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "limit=999 被钳制到上限",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "auth": { "type": "noauth" },
+            "url": {
+              "raw": "{{base_url}}/feed/list?limit=999",
+              "host": ["{{base_url}}"],
+              "path": ["feed", "list"],
+              "query": [
+                { "key": "limit", "value": "999" }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', function () { pm.expect(pm.response.code).to.eql(200); });",
+                  "pm.test('limit is clamped to at most 20', function () {",
+                  "  pm.expect((json.data.list || []).length).to.be.at.most(20);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "limit=-1 走默认值",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "auth": { "type": "noauth" },
+            "url": {
+              "raw": "{{base_url}}/feed/list?limit=-1",
+              "host": ["{{base_url}}"],
+              "path": ["feed", "list"],
+              "query": [
+                { "key": "limit", "value": "-1" }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', function () { pm.expect(pm.response.code).to.eql(200); });",
+                  "pm.test('negative limit keeps page <= 20', function () {",
+                  "  pm.expect((json.data.list || []).length).to.be.at.most(20);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "最新流-非法 last_vid",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "auth": { "type": "noauth" },
+            "url": {
+              "raw": "{{base_url}}/feed/list?limit=2&cursor.last_vid=abc&cursor.last_created_at=2026-01-01T00:00:00Z",
+              "host": ["{{base_url}}"],
+              "path": ["feed", "list"],
+              "query": [
+                { "key": "limit", "value": "2" },
+                { "key": "cursor.last_vid", "value": "abc" },
+                { "key": "cursor.last_created_at", "value": "2026-01-01T00:00:00Z" }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('invalid cursor must not succeed', function () {",
+                  "  pm.expect(json.code).to.not.eql(200);",
+                  "});",
+                  "pm.test('no list payload on invalid cursor', function () {",
+                  "  pm.expect(json.data).to.eql(null);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "最新流-不完整游标（只有 last_vid）",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "auth": { "type": "noauth" },
+            "url": {
+              "raw": "{{base_url}}/feed/list?limit=2&cursor.last_vid=1",
+              "host": ["{{base_url}}"],
+              "path": ["feed", "list"],
+              "query": [
+                { "key": "limit", "value": "2" },
+                { "key": "cursor.last_vid", "value": "1" }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('incomplete cursor must not succeed', function () {",
+                  "  pm.expect(json.code).to.not.eql(200);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "最新流-last_created_at 格式错误",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "auth": { "type": "noauth" },
+            "url": {
+              "raw": "{{base_url}}/feed/list?limit=2&cursor.last_vid=1&cursor.last_created_at=not-a-time",
+              "host": ["{{base_url}}"],
+              "path": ["feed", "list"],
+              "query": [
+                { "key": "limit", "value": "2" },
+                { "key": "cursor.last_vid", "value": "1" },
+                { "key": "cursor.last_created_at", "value": "not-a-time" }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('malformed time must be rejected', function () {",
+                  "  pm.expect(json.code).to.not.eql(200);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "热门流-非法 last_vid",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "auth": { "type": "noauth" },
+            "url": {
+              "raw": "{{base_url}}/feed/listByPopularity?limit=2&cursor.last_vid=abc&cursor.last_popularity=10",
+              "host": ["{{base_url}}"],
+              "path": ["feed", "listByPopularity"],
+              "query": [
+                { "key": "limit", "value": "2" },
+                { "key": "cursor.last_vid", "value": "abc" },
+                { "key": "cursor.last_popularity", "value": "10" }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('invalid popularity cursor must not succeed', function () {",
+                  "  pm.expect(json.code).to.not.eql(200);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "标签过滤-空标签",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "auth": { "type": "noauth" },
+            "url": {
+              "raw": "{{base_url}}/feed/listByTag?tag=&limit=2",
+              "host": ["{{base_url}}"],
+              "path": ["feed", "listByTag"],
+              "query": [
+                { "key": "tag", "value": "" },
+                { "key": "limit", "value": "2" }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('empty tag must not succeed', function () {",
+                  "  pm.expect(json.code).to.not.eql(200);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "标签过滤-不存在的标签返回空列表",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "auth": { "type": "noauth" },
+            "url": {
+              "raw": "{{base_url}}/feed/listByTag?tag={{missing_tag}}&limit=2",
+              "host": ["{{base_url}}"],
+              "path": ["feed", "listByTag"],
+              "query": [
+                { "key": "tag", "value": "{{missing_tag}}" },
+                { "key": "limit", "value": "2" }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', function () { pm.expect(pm.response.code).to.eql(200); });",
+                  "pm.test('unknown tag returns empty list', function () {",
+                  "  pm.expect((json.data.list || []).length).to.eql(0);",
+                  "});",
+                  "pm.test('no next cursor for empty page', function () {",
+                  "  pm.expect(json.data.next_cursor).to.be.undefined;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "关注流-未登录返回 401",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "auth": { "type": "noauth" },
+            "url": {
+              "raw": "{{base_url}}/feed/listByFollowing?limit=2",
+              "host": ["{{base_url}}"],
+              "path": ["feed", "listByFollowing"],
+              "query": [
+                { "key": "limit", "value": "2" }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 401', function () { pm.expect(pm.response.code).to.eql(401); });",
+                  "const json = pm.response.json();",
+                  "pm.test('business code 401', function () { pm.expect(json.code).to.eql(401); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "关注流-伪造 token 返回 401",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{invalid_token}}" }
+            ],
+            "auth": { "type": "noauth" },
+            "url": {
+              "raw": "{{base_url}}/feed/listByFollowing?limit=2",
+              "host": ["{{base_url}}"],
+              "path": ["feed", "listByFollowing"],
+              "query": [
+                { "key": "limit", "value": "2" }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 401', function () { pm.expect(pm.response.code).to.eql(401); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "稳定游标-重复请求 A",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "auth": { "type": "noauth" },
+            "url": {
+              "raw": "{{base_url}}/feed/list?limit={{feed_limit}}&cursor.last_vid={{stable_last_vid}}&cursor.last_created_at={{stable_last_created_at}}",
+              "host": ["{{base_url}}"],
+              "path": ["feed", "list"],
+              "query": [
+                { "key": "limit", "value": "{{feed_limit}}" },
+                { "key": "cursor.last_vid", "value": "{{stable_last_vid}}" },
+                { "key": "cursor.last_created_at", "value": "{{stable_last_created_at}}" }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('HTTP 200', function () { pm.expect(pm.response.code).to.eql(200); });",
+                  "const list = (json.data && json.data.list) || [];",
+                  "pm.collectionVariables.set('stable_first_vid_a', list.length > 0 ? list[0].vid : '');"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "稳定游标-重复请求 B（结果应与 A 一致）",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "auth": { "type": "noauth" },
+            "url": {
+              "raw": "{{base_url}}/feed/list?limit={{feed_limit}}&cursor.last_vid={{stable_last_vid}}&cursor.last_created_at={{stable_last_created_at}}",
+              "host": ["{{base_url}}"],
+              "path": ["feed", "list"],
+              "query": [
+                { "key": "limit", "value": "{{feed_limit}}" },
+                { "key": "cursor.last_vid", "value": "{{stable_last_vid}}" },
+                { "key": "cursor.last_created_at", "value": "{{stable_last_created_at}}" }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "const list = (json.data && json.data.list) || [];",
+                  "const firstA = pm.collectionVariables.get('stable_first_vid_a') || '';",
+                  "pm.test('same cursor returns same first vid', function () {",
+                  "  pm.expect(list.length > 0 ? list[0].vid : '').to.eql(firstA);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
