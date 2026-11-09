@@ -6,3 +6,44 @@
 
 # 用户上传资源不入库（StorageRoot 默认为 backend/assets）
 backend/assets/upload/
+
+# =========================
+# Node & Vue Frontend
+# =========================
+# 依赖目录 (核心)
+frontend/node_modules/
+.pnpm-store/
+
+# 构建输出目录 (Vite 默认输出 dist)
+dist/
+dist-ssr/
+
+# 本地环境变量文件 (防止密钥泄露)
+.env
+.env.local
+.env.*.local
+
+# 日志文件
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# 编辑器/IDE 的本地配置
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# 系统生成文件 (Mac / Windows)
+.DS_Store
+Thumbs.db
+
+# Vite 缓存
+.vite/
+.cache/
