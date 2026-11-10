@@ -16,6 +16,15 @@ export default defineConfig({
       '/sse': {
         target: 'http://127.0.0.1:8080',
         changeOrigin: true
+      },
+      // 后端内置静态资源（默认头像等）与用户上传资源，生产由 Nginx 直接托管
+      '/static': {
+        target: 'http://127.0.0.1:8080',
+        changeOrigin: true
+      },
+      '/upload': {
+        target: 'http://127.0.0.1:8080',
+        changeOrigin: true
       }
     }
   }

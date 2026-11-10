@@ -4,6 +4,7 @@ import Home from '../views/Home.vue'
 import Message from '../views/Message.vue'
 import VideoPlay from '../views/VideoPlay.vue'
 import Publish from '../views/Publish.vue'
+import UserProfile from '../views/UserProfile.vue'
 
 const routes = [
   {
@@ -31,6 +32,11 @@ const routes = [
     path: '/publish',
     name: 'Publish',
     component: Publish
+  },
+  {
+    path: '/user/:id',
+    name: 'UserProfile',
+    component: UserProfile
   },
   {
     path: '/:pathMatch(.*)*',

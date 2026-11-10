@@ -42,6 +42,13 @@ function backHome() {
   router.push('/')
 }
 
+// 作者/评论者头像或名字统一跳到个人主页
+function openUser(id) {
+  const uid = Number(id)
+  if (!uid) return
+  router.push(`/user/${uid}`)
+}
+
 async function loadVideo() {
   if (!Number.isInteger(videoId) || videoId <= 0) {
     errorMsg.value = '视频 ID 不合法'
@@ -227,7 +234,12 @@ onMounted(() => {
     </div>
 
     <aside v-if="video" class="rail">
-      <div class="rail-item author-item">
+      <div
+        class="rail-item author-item"
+        :class="{ clickable: video.author?.user_id }"
+        title="查看作者主页"
+        @click="openUser(video.author?.user_id)"
+      >
         <el-avatar :size="56" :src="resolveAsset(video.author?.avatar_url)">
           {{ initial(video.author?.user_name) }}
         </el-avatar>
@@ -277,9 +289,18 @@ onMounted(() => {
         />
 
         <div v-for="thread in commentThreads" :key="thread.id" class="comment-item">
-          <el-avatar :size="36" class="comment-avatar">{{ initial(thread.user_name) }}</el-avatar>
+          <el-avatar
+            :size="36"
+            class="comment-avatar"
+            title="查看评论者主页"
+            @click.stop="openUser(thread.user_id)"
+          >
+            {{ initial(thread.user_name) }}
+          </el-avatar>
           <div class="comment-body">
-            <div class="comment-name">{{ thread.user_name || '匿名用户' }}</div>
+            <div class="comment-name clickable" @click.stop="openUser(thread.user_id)">
+              {{ thread.user_name || '匿名用户' }}
+            </div>
             <div class="comment-text">{{ thread.content }}</div>
             <div class="comment-meta">
               <span>{{ formatTime(thread.created_at) }}</span>
@@ -288,7 +309,10 @@ onMounted(() => {
 
             <div v-if="thread.replies.length" class="reply-list">
               <div v-for="reply in thread.replies" :key="reply.id" class="reply-item">
-                <span class="reply-name">{{ reply.user_name || '匿名用户' }}：</span>
+                <span
+                  class="reply-name clickable"
+                  @click.stop="openUser(reply.user_id)"
+                >{{ reply.user_name || '匿名用户' }}：</span>
                 <span class="reply-text">{{ reply.content }}</span>
                 <div class="comment-meta">
                   <span>{{ formatTime(reply.created_at) }}</span>
@@ -405,6 +429,17 @@ onMounted(() => {
   max-width: 80px;
 }
 
+.author-item.clickable,
+.clickable {
+  cursor: pointer;
+}
+
+.author-item.clickable:hover .rail-author-name,
+.comment-name.clickable:hover,
+.reply-name.clickable:hover {
+  color: #409eff;
+}
+
 .rail-author-name {
   max-width: 80px;
   overflow: hidden;
@@ -497,6 +532,7 @@ onMounted(() => {
   flex: none;
   color: #fff;
   background: #409eff;
+  cursor: pointer;
 }
 
 .comment-body {

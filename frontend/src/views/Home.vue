@@ -1,14 +1,19 @@
 <script setup>
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import request from '../utils/request'
-import { resolveAsset } from '../utils/asset'
+import VideoCard from '../components/VideoCard.vue'
+import { normalizeFeedItem, resolveAvatar } from '../utils/video'
 
 const PAGE_SIZE = 10
 
 const router = useRouter()
 const userName = localStorage.getItem('user_name') || '用户'
+const myUserId = Number(localStorage.getItem('user_id')) || 0
+// 导航栏头像需要单独拉一次自己的资料，失败时回退默认头像
+const myAvatar = ref('')
+const myAvatarSrc = computed(() => resolveAvatar(myAvatar.value))
 
 const videos = ref([])
 const nextCursor = ref(null)
@@ -44,7 +49,7 @@ async function loadFirstPage() {
   errorMsg.value = ''
   try {
     const payload = await fetchFeed(null)
-    videos.value = payload.list || []
+    videos.value = (payload.list || []).map(normalizeFeedItem).filter(Boolean)
     nextCursor.value = payload.next_cursor || null
     // 不足一页说明已经到底，避免多请求一次
     if (videos.value.length < PAGE_SIZE) nextCursor.value = null
@@ -62,7 +67,7 @@ async function loadMore() {
   errorMsg.value = ''
   try {
     const payload = await fetchFeed(nextCursor.value)
-    const list = payload.list || []
+    const list = (payload.list || []).map(normalizeFeedItem).filter(Boolean)
     videos.value = videos.value.concat(list)
     nextCursor.value = payload.next_cursor || null
     if (list.length < PAGE_SIZE) {
@@ -76,13 +81,32 @@ async function loadMore() {
   }
 }
 
-function openVideo(video) {
-  if (!video.vid) return
-  router.push(`/video/${video.vid}`)
-}
-
 function goPublish() {
   router.push('/publish')
+}
+
+function goMyProfile() {
+  if (!myUserId) return
+  router.push(`/user/${myUserId}`)
+}
+
+// 卡片内点赞成功后同步列表中的同一视频，避免切换页面回来状态不一致
+function onLikeChange({ vid, isLiked, likeCount }) {
+  const item = videos.value.find((video) => String(video.vid) === String(vid))
+  if (item) {
+    item.isLiked = isLiked
+    item.likeCount = likeCount
+  }
+}
+
+async function loadMyProfile() {
+  if (!myUserId) return
+  try {
+    const res = await request.get('/user/profile')
+    myAvatar.value = res.data?.avatar_url || ''
+  } catch (error) {
+    // 头像加载失败不影响 Feed 展示
+  }
 }
 
 // 私信页在下一步实现，路由就绪后自动跳转
@@ -102,7 +126,10 @@ function handleLogout() {
   router.replace('/login')
 }
 
-onMounted(loadFirstPage)
+onMounted(() => {
+  loadFirstPage()
+  loadMyProfile()
+})
 </script>
 
 <template>
@@ -111,7 +138,12 @@ onMounted(loadFirstPage)
       <span class="brand">TikTok Feed 演示</span>
       <div class="actions">
         <el-button size="small" type="primary" @click="goPublish">发布视频</el-button>
-        <span class="user">{{ userName }}</span>
+        <button class="user-chip" title="我的主页" @click="goMyProfile">
+          <el-avatar class="user-avatar" :size="28" :src="myAvatarSrc">
+            {{ userName.slice(0, 1).toUpperCase() }}
+          </el-avatar>
+          <span class="user">{{ userName }}</span>
+        </button>
         <el-button size="small" @click="goMessage">私信</el-button>
         <el-button size="small" @click="handleLogout">退出登录</el-button>
       </div>
@@ -135,39 +167,12 @@ onMounted(loadFirstPage)
         />
 
         <div v-else class="video-grid">
-          <el-card
+          <VideoCard
             v-for="video in videos"
             :key="video.vid"
-            class="video-card"
-            shadow="hover"
-            @click="openVideo(video)"
-          >
-            <el-image
-              class="cover"
-              :src="resolveAsset(video.cover_url)"
-              fit="cover"
-              lazy
-            >
-              <template #error>
-                <div class="cover-fallback">暂无封面</div>
-              </template>
-            </el-image>
-
-            <div class="card-meta">
-              <span class="author" :title="video.author_name || '匿名用户'">
-                @{{ video.author_name || '匿名用户' }}
-              </span>
-              <span class="like-count">
-                <svg class="heart" viewBox="0 0 24 24" aria-hidden="true">
-                  <path
-                    d="M12 21s-7.5-4.9-9.5-9.2C1 8.3 3.2 4.5 7 4.5c2 0 3.4 1.1 4.3 2.4l.7 1 .7-1c.9-1.3 2.3-2.4 4.3-2.4 3.8 0 6 3.8 4.5 7.3C19.5 16.1 12 21 12 21z"
-                    fill="currentColor"
-                  />
-                </svg>
-                {{ video.likes_cnt || 0 }}
-              </span>
-            </div>
-          </el-card>
+            :video="video"
+            @like-change="onLikeChange"
+          />
         </div>
       </div>
 
@@ -212,6 +217,31 @@ onMounted(loadFirstPage)
   color: #606266;
 }
 
+.user-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 8px 2px 2px;
+  color: #606266;
+  background: none;
+  border: none;
+  border-radius: 16px;
+  cursor: pointer;
+}
+
+.user-chip:hover {
+  background: #f5f7fa;
+}
+
+.user-avatar {
+  flex: none;
+  background: #409eff;
+}
+
+.user-chip .user {
+  font-size: 14px;
+}
+
 .content {
   flex: 1;
   width: 100%;
@@ -232,60 +262,6 @@ onMounted(loadFirstPage)
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
   gap: 20px;
-}
-
-.video-card {
-  display: flex;
-  flex-direction: column;
-  cursor: pointer;
-}
-
-.cover {
-  width: 100%;
-  aspect-ratio: 16 / 9;
-  border-radius: 6px;
-  background: #f0f2f5;
-}
-
-.cover-fallback {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 100%;
-  height: 100%;
-  color: #909399;
-  font-size: 13px;
-  background: #f0f2f5;
-}
-
-.card-meta {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin-top: 12px;
-}
-
-.author {
-  overflow: hidden;
-  color: #606266;
-  font-size: 13px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.like-count {
-  display: inline-flex;
-  flex: none;
-  align-items: center;
-  gap: 4px;
-  color: #909399;
-  font-size: 13px;
-}
-
-.heart {
-  width: 15px;
-  height: 15px;
 }
 
 .load-more {
