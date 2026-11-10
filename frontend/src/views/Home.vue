@@ -1,14 +1,18 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
+import { storeToRefs } from 'pinia'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import request from '../utils/request'
 import VideoCard from '../components/VideoCard.vue'
 import { normalizeFeedItem, resolveAvatar } from '../utils/video'
+import { useMessageStore } from '../store/message'
 
 const PAGE_SIZE = 10
 
 const router = useRouter()
+const messageStore = useMessageStore()
+const { unreadCount } = storeToRefs(messageStore)
 const userName = localStorage.getItem('user_name') || '用户'
 const myUserId = Number(localStorage.getItem('user_id')) || 0
 // 导航栏头像需要单独拉一次自己的资料，失败时回退默认头像
@@ -119,6 +123,7 @@ function goMessage() {
 }
 
 function handleLogout() {
+  messageStore.reset()
   localStorage.removeItem('token')
   localStorage.removeItem('refresh_token')
   localStorage.removeItem('user_id')
@@ -144,7 +149,14 @@ onMounted(() => {
           </el-avatar>
           <span class="user">{{ userName }}</span>
         </button>
-        <el-button size="small" @click="goMessage">私信</el-button>
+        <el-badge
+          :value="unreadCount"
+          :max="99"
+          :hidden="unreadCount === 0"
+          class="message-badge"
+        >
+          <el-button size="small" @click="goMessage">私信</el-button>
+        </el-badge>
         <el-button size="small" @click="handleLogout">退出登录</el-button>
       </div>
     </header>

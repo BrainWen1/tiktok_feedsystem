@@ -1,9 +1,14 @@
 <script setup>
-import { nextTick, onMounted, onUnmounted, ref } from 'vue'
+import { nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
+import { storeToRefs } from 'pinia'
 import { useRouter } from 'vue-router'
 import request from '../utils/request'
+import { useMessageStore } from '../store/message'
 
 const router = useRouter()
+const messageStore = useMessageStore()
+// SSE 连接由 App.vue 全局维护，这里只消费全局状态
+const { latestMessage, sseStatus } = storeToRefs(messageStore)
 
 const myName = localStorage.getItem('user_name') || '我'
 // 当前登录用户 ID：登录成功后由 Login.vue 写入 localStorage。
@@ -19,7 +24,6 @@ const sessionsLoading = ref(false)
 const historyLoading = ref(false)
 const sending = ref(false)
 const errorMsg = ref('')
-const sseStatus = ref('connecting') // connecting | connected | disconnected
 
 const messageListRef = ref(null)
 
@@ -62,12 +66,6 @@ function formatTime(value, short = false) {
 
 function getErrorMessage(error) {
   return error.response?.data?.message || error.message || '请求失败'
-}
-
-// 后端 SSE 推送的 content 形如 "用户名: 正文"，渲染时去掉前缀，和聊天历史保持一致
-function stripSenderPrefix(content, senderName) {
-  const prefix = `${senderName}: `
-  return content.startsWith(prefix) ? content.slice(prefix.length) : content
 }
 
 // 消息归属只看发送者是否为当前登录用户，不能拿 currentSession.target_id 反推
@@ -117,6 +115,9 @@ async function selectSession(session) {
   if (currentSession.value?.target_id === session.target_id) return
 
   currentSession.value = session
+  messageStore.setActiveChat(session.target_id)
+  // 打开会话即视为已读：同步清零左侧徽标和全局未读数
+  messageStore.reduceUnread(session.unread_count)
   session.unread_count = 0
   messages.value = []
   errorMsg.value = ''
@@ -193,118 +194,48 @@ function onEnter(event) {
   sendMessage()
 }
 
-// ------------------------- SSE -------------------------
+// ------------------------- 全局 SSE 消息 -------------------------
 
-let eventSource = null
-let reconnectTimer = null
-let disposed = false
-let localMessageSeq = 0
+// 全局连接收到新消息后，App.vue 里的 store 会更新 latestMessage。
+// 私信页只负责把它反映到会话列表和当前聊天窗口。
+watch(latestMessage, (message) => {
+  if (!message) return
 
-async function connectSSE() {
-  if (disposed) return
-  sseStatus.value = 'connecting'
-
-  try {
-    const res = await request.post('/sse/ticket')
-    const ticket = res.data?.ticket
-    if (!ticket) throw new Error('未获取到 SSE ticket')
-    if (disposed) return
-
-    eventSource = new EventSource(`/sse?ticket=${encodeURIComponent(ticket)}`)
-    eventSource.onopen = () => {
-      sseStatus.value = 'connected'
-    }
-    eventSource.onmessage = handleSseMessage
-    eventSource.onerror = () => {
-      // ticket 是一次性的，EventSource 自动重连会带着旧 ticket 失败，这里用新 ticket 重建
-      sseStatus.value = 'disconnected'
-      closeEventSource()
-      scheduleReconnect()
-    }
-  } catch (error) {
-    sseStatus.value = 'disconnected'
-    errorMsg.value = getErrorMessage(error)
-    scheduleReconnect()
-  }
-}
-
-function handleSseMessage(event) {
-  let data
-  try {
-    data = JSON.parse(event.data)
-  } catch {
-    return
-  }
-
-  if (data.type !== 'message') return
-
-  const senderId = Number(data.sender_id)
-  const senderName = data.sender_name || `用户${senderId}`
-  const content = stripSenderPrefix(data.content || '', senderName)
-  const createdAt = data.created_at || Math.floor(Date.now() / 1000)
-
-  // 先看这条消息的发送者是不是当前打开的会话对象
-  const isCurrentTarget = Number(currentSession.value?.target_id) === senderId
-
+  const senderId = Number(message.sender_id)
   const session = sessions.value.find((item) => Number(item.target_id) === senderId)
+
   if (session) {
-    updateSessionSummary(senderId, content, createdAt)
+    updateSessionSummary(senderId, message.content, message.created_ts)
   } else {
     sessions.value.unshift({
       target_id: senderId,
-      target_name: senderName,
-      content,
-      created_at: createdAt,
+      target_name: message.sender_name,
+      content: message.content,
+      created_at: message.created_ts,
       unread_count: 0
     })
   }
 
-  if (isCurrentTarget) {
-    // 只有发送者正是当前会话对象时，才追加进聊天窗口
-    messages.value.push({
-      id: `sse-${Date.now()}-${++localMessageSeq}`,
-      sender_id: senderId,
-      receiver_id: myUserId,
-      sender_name: senderName,
-      content,
-      created_at: new Date(createdAt * 1000).toISOString(),
-      is_read: false
-    })
+  if (Number(currentSession.value?.target_id) === senderId) {
+    // 发送者正是当前聊天对象，直接追加进聊天窗口
+    messages.value.push(message)
     scrollToBottom()
   } else {
-    // 其他任何人发来的消息只更新左侧会话预览，不污染当前聊天窗口
+    // 其他会话只更新左侧预览和未读徽标，不污染当前聊天窗口
     const target = sessions.value.find((item) => Number(item.target_id) === senderId)
     if (target) target.unread_count = Number(target.unread_count || 0) + 1
   }
-}
-
-function closeEventSource() {
-  if (eventSource) {
-    eventSource.close()
-    eventSource = null
-  }
-}
-
-function scheduleReconnect() {
-  if (disposed || reconnectTimer) return
-  reconnectTimer = setTimeout(() => {
-    reconnectTimer = null
-    connectSSE()
-  }, 3000)
-}
+})
 
 onMounted(() => {
+  messageStore.setMessagePageActive(true)
+  // 进入私信页即清空导航栏的全局未读徽标
+  messageStore.clearUnread()
   loadSessions()
-  connectSSE()
 })
 
 onUnmounted(() => {
-  disposed = true
-  if (reconnectTimer) {
-    clearTimeout(reconnectTimer)
-    reconnectTimer = null
-  }
-  closeEventSource()
+  messageStore.setMessagePageActive(false)
 })
 </script>
 
