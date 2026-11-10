@@ -116,6 +116,7 @@ function goMessage() {
 function handleLogout() {
   localStorage.removeItem('token')
   localStorage.removeItem('refresh_token')
+  localStorage.removeItem('user_id')
   localStorage.removeItem('user_name')
   router.replace('/login')
 }

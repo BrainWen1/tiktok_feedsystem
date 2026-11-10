@@ -166,10 +166,11 @@ func (s *UserService) Register(ctx context.Context, username, password string) (
 }
 
 // Login 用户登录
-func (s *UserService) Login(ctx context.Context, username, password string) (accessToken string, refreshToken string, err error) {
+// 返回 userID 与 userName，便于 handler 组装登录响应，前端据此判断消息归属。
+func (s *UserService) Login(ctx context.Context, username, password string) (accessToken string, refreshToken string, userID uint, userName string, err error) {
 	// 空用户名/密码直接按凭证错误处理，禁止把空用户名下推到 repo 生成无 WHERE 查询
 	if strings.TrimSpace(username) == "" || password == "" {
-		return "", "", ErrInvalidCredentials
+		return "", "", 0, "", ErrInvalidCredentials
 	}
 
 	// 查找用户：账号不存在与底层错误分开处理，对外统一为凭证错误
@@ -179,32 +180,32 @@ func (s *UserService) Login(ctx context.Context, username, password string) (acc
 			// 使用 bcrypt.CompareHashAndPassword(dummyPasswordHash, []byte(password)) 来抹平账号不存在的时间差，避免被攻击者通过时间差进行账号枚举
 			_ = bcrypt.CompareHashAndPassword(dummyPasswordHash, []byte(password))
 			logger.Ctx(ctx).Warn("login failed: user not found")
-			return "", "", ErrInvalidCredentials
+			return "", "", 0, "", ErrInvalidCredentials
 		}
-		return "", "", fmt.Errorf("find user for login: %w", err)
+		return "", "", 0, "", fmt.Errorf("find user for login: %w", err)
 	}
 
 	// 验证密码：失败时返回与账号不存在完全一致的错误
 	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(password)); err != nil {
 		logger.Ctx(ctx).Warn("login failed: invalid password")
-		return "", "", ErrInvalidCredentials
+		return "", "", 0, "", ErrInvalidCredentials
 	}
 
 	// 生成访问令牌和刷新令牌
 	accessToken, err = jwt.GenerateToken(user.ID, user.UserName)
 	if err != nil {
-		return "", "", fmt.Errorf("generate access token for user %d: %w", user.ID, err)
+		return "", "", 0, "", fmt.Errorf("generate access token for user %d: %w", user.ID, err)
 	}
 
 	refreshToken, err = jwt.GenerateRefreshToken(user.ID)
 	if err != nil {
-		return "", "", fmt.Errorf("generate refresh token for user %d: %w", user.ID, err)
+		return "", "", 0, "", fmt.Errorf("generate refresh token for user %d: %w", user.ID, err)
 	}
 
 	// 缓存禁用时无法持久化refresh token，仅返回令牌，不阻断登录主流程
 	if !s.cache.IsEnabled() {
 		logger.Ctx(ctx).Warn("cache disabled, refresh token not persisted", logger.Uint("user_id", user.ID))
-		return accessToken, refreshToken, nil
+		return accessToken, refreshToken, user.ID, user.UserName, nil
 	}
 
 	// 改用Redis缓存保存刷新令牌
@@ -214,16 +215,16 @@ func (s *UserService) Login(ctx context.Context, username, password string) (acc
 	err = s.cache.Set(ctx, redisKey, user.ID, ttl)
 	if err != nil {
 		logger.Ctx(ctx).Error("save refresh token to redis failed", logger.Err(err))
-		return "", "", fmt.Errorf("save refresh token to redis failed: %w", err)
+		return "", "", 0, "", fmt.Errorf("save refresh token to redis failed: %w", err)
 	}
 	// 双向索引<userID, refreshToken>
 	if setErr := s.cache.AddUserRefreshSet(ctx, user.ID, refreshToken, ttl); setErr != nil {
 		// 捕获内部真实错误，避免打印外层通常为 nil 的 err 导致日志误导
 		logger.Ctx(ctx).Error("add refresh token to user set failed", logger.Uint("user_id", user.ID), logger.Err(setErr))
-		return "", "", fmt.Errorf("add refresh token to user set failed: %w", setErr)
+		return "", "", 0, "", fmt.Errorf("add refresh token to user set failed: %w", setErr)
 	}
 
-	return accessToken, refreshToken, nil
+	return accessToken, refreshToken, user.ID, user.UserName, nil
 }
 
 // RefreshToken 刷新令牌

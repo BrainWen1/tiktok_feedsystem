@@ -82,7 +82,7 @@ func (h *UserHandler) Login(c *gin.Context) {
 	}
 
 	// 调用服务层进行登录
-	accessToken, refreshToken, err := h.UserService.Login(c.Request.Context(), req.Username, req.Password)
+	accessToken, refreshToken, userID, userName, err := h.UserService.Login(c.Request.Context(), req.Username, req.Password)
 	if err != nil {
 		logger.Ctx(c.Request.Context()).Error("login user failed", logger.String("username", req.Username), logger.Err(err))
 		// 账号不存在与密码错误返回完全一致的提示，防止账号枚举
@@ -96,9 +96,10 @@ func (h *UserHandler) Login(c *gin.Context) {
 
 	// 返回成功响应，将 accessToken 和 refreshToken 打包发回前端
 	response.SuccessResponse(c, dto.LoginResponse{
+		UserID:       userID,
 		Token:        accessToken,
 		RefreshToken: refreshToken,
-		Username:     req.Username,
+		Username:     userName,
 	})
 }
 

@@ -81,7 +81,7 @@ func mustRegister(t *testing.T, s *UserService, username, password string) *mode
 
 func mustLogin(t *testing.T, s *UserService, username, password string) (string, string) {
 	t.Helper()
-	accessToken, refreshToken, err := s.Login(context.Background(), username, password)
+	accessToken, refreshToken, _, _, err := s.Login(context.Background(), username, password)
 	if err != nil {
 		t.Fatalf("login %q: %v", username, err)
 	}
@@ -227,7 +227,7 @@ func TestLoginEmptyCredentialsRejectedBeforeRepo(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if _, _, err := s.Login(context.Background(), tt.username, tt.password); !errors.Is(err, ErrInvalidCredentials) {
+			if _, _, _, _, err := s.Login(context.Background(), tt.username, tt.password); !errors.Is(err, ErrInvalidCredentials) {
 				t.Fatalf("login error = %v, want ErrInvalidCredentials", err)
 			}
 		})
@@ -283,7 +283,7 @@ func TestLoginRejectsBadCredentials(t *testing.T) {
 		{name: "missing user", username: "nobody", password: testUserPassword},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			if _, _, err := s.Login(ctx, tt.username, tt.password); !errors.Is(err, ErrInvalidCredentials) {
+			if _, _, _, _, err := s.Login(ctx, tt.username, tt.password); !errors.Is(err, ErrInvalidCredentials) {
 				t.Fatalf("login error = %v, want ErrInvalidCredentials", err)
 			}
 		})
@@ -550,10 +550,10 @@ func TestChangePasswordRotatesHashAndRevokesTokens(t *testing.T) {
 	}
 
 	// 旧密码必须立即失效，新密码必须可用。
-	if _, _, err := s.Login(ctx, "jack_01", testUserPassword); !errors.Is(err, ErrInvalidCredentials) {
+	if _, _, _, _, err := s.Login(ctx, "jack_01", testUserPassword); !errors.Is(err, ErrInvalidCredentials) {
 		t.Fatalf("old password login error = %v, want ErrInvalidCredentials", err)
 	}
-	if _, _, err := s.Login(ctx, "jack_01", testNewPassword); err != nil {
+	if _, _, _, _, err := s.Login(ctx, "jack_01", testNewPassword); err != nil {
 		t.Fatalf("new password login: %v", err)
 	}
 
@@ -615,7 +615,7 @@ func TestChangePasswordWithCacheDisabledStillUpdatesPassword(t *testing.T) {
 	if err := s.ChangePassword(ctx, user.ID, testUserPassword, testNewPassword, "at", 3600); err != nil {
 		t.Fatalf("change password with cache disabled: %v", err)
 	}
-	if _, _, err := s.Login(ctx, "lily_01", testNewPassword); err != nil {
+	if _, _, _, _, err := s.Login(ctx, "lily_01", testNewPassword); err != nil {
 		t.Fatalf("login with new password: %v", err)
 	}
 }

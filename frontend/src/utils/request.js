@@ -27,6 +27,7 @@ async function redirectToLogin() {
 
   localStorage.removeItem('token')
   localStorage.removeItem('refresh_token')
+  localStorage.removeItem('user_id')
   localStorage.removeItem('user_name')
   ElMessage.error('登录已过期，请重新登录')
   router.replace({ path: '/login', query: { redirect: current.fullPath } })

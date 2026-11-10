@@ -29,6 +29,7 @@ type LoginRequest struct {
 
 // 登陆响应
 type LoginResponse struct {
+	UserID       uint   `json:"user_id"`
 	Token        string `json:"token"`
 	RefreshToken string `json:"refresh_token"`
 	Username     string `json:"user_name"`

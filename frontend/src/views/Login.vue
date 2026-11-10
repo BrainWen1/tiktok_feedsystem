@@ -99,6 +99,10 @@ async function handleSubmit() {
       if (data.refresh_token) {
         localStorage.setItem('refresh_token', data.refresh_token)
       }
+      // 私信页需要用它判断消息归属（msg.sender_id === myUserId）
+      if (data.user_id) {
+        localStorage.setItem('user_id', String(data.user_id))
+      }
       localStorage.setItem('user_name', data.user_name || form.user_name)
 
       ElMessage.success('登录成功')
