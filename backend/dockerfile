@@ -1,0 +1,30 @@
+# 第一阶段：编译
+FROM golang:1.26.3-alpine AS builder
+WORKDIR /app
+# 设置国内代理加速依赖下载
+ENV GOPROXY=https://goproxy.cn,direct
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+# 编译出 api 和 worker 两个二进制文件
+RUN CGO_ENABLED=0 GOOS=linux go build -o /app/api ./cmd/main
+RUN CGO_ENABLED=0 GOOS=linux go build -o /app/worker ./cmd/worker
+
+# 第二阶段：运行环境
+FROM alpine:latest
+WORKDIR /app
+# 安装时区数据
+RUN apk add --no-cache tzdata
+ENV TZ=Asia/Shanghai
+# 把编译好的二进制拷过来
+COPY --from=builder /app/api /app/api
+COPY --from=builder /app/worker /app/worker
+# 拷贝配置文件（生产环境建议用挂载或配置中心，这里为了简单直接拷）
+COPY --from=builder /app/configs /app/configs
+COPY --from=builder /app/assets/static /app/assets/static
+
+# 暴露 API 端口
+EXPOSE 8080
+
+# 启动 API 服务
+CMD ["./api"]
