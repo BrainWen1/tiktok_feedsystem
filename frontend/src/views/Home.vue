@@ -1,12 +1,10 @@
 <script setup>
-import { onMounted, reactive, ref } from 'vue'
+import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import request from '../utils/request'
+import { resolveAsset } from '../utils/asset'
 
-// 后端返回的封面/视频地址是相对路径（如 /upload/covers/...），
-// 浏览器需要直连后端资源域名，否则会请求 Vite 服务器导致 404。
-const ASSET_BASE = 'http://127.0.0.1:8080'
 const PAGE_SIZE = 10
 
 const router = useRouter()
@@ -17,14 +15,6 @@ const nextCursor = ref(null)
 const loading = ref(false)
 const loadingMore = ref(false)
 const errorMsg = ref('')
-// vid -> 是否正在请求点赞，防止重复点击
-const pendingLikes = reactive({})
-
-function resolveAsset(url) {
-  if (!url) return ''
-  if (/^https?:\/\//i.test(url)) return url
-  return `${ASSET_BASE}${url.startsWith('/') ? '' : '/'}${url}`
-}
 
 // next_cursor 的字段需要带 cursor. 前缀回传，如 cursor.last_vid
 function cursorToParams(cursor) {
@@ -86,22 +76,9 @@ async function loadMore() {
   }
 }
 
-async function handleLike(video) {
-  const videoId = Number(video.vid)
-  if (video.is_like || pendingLikes[video.vid] || !Number.isInteger(videoId) || videoId <= 0) {
-    return
-  }
-
-  pendingLikes[video.vid] = true
-  try {
-    await request.post('/like/like', { video_id: videoId })
-    video.is_like = true
-    video.likes_cnt = Number(video.likes_cnt || 0) + 1
-  } catch (error) {
-    errorMsg.value = getErrorMessage(error)
-  } finally {
-    delete pendingLikes[video.vid]
-  }
+function openVideo(video) {
+  if (!video.vid) return
+  router.push(`/video/${video.vid}`)
 }
 
 // 私信页在下一步实现，路由就绪后自动跳转
@@ -153,7 +130,13 @@ onMounted(loadFirstPage)
         />
 
         <div v-else class="video-grid">
-          <el-card v-for="video in videos" :key="video.vid" class="video-card" shadow="hover">
+          <el-card
+            v-for="video in videos"
+            :key="video.vid"
+            class="video-card"
+            shadow="hover"
+            @click="openVideo(video)"
+          >
             <el-image
               class="cover"
               :src="resolveAsset(video.cover_url)"
@@ -165,23 +148,19 @@ onMounted(loadFirstPage)
               </template>
             </el-image>
 
-            <h3 class="video-title" :title="video.title">{{ video.title || '无标题' }}</h3>
-            <p class="video-desc" :title="video.desc">{{ video.desc || '暂无描述' }}</p>
-            <div class="author">@{{ video.author_name || '匿名用户' }}</div>
-
-            <div class="toolbar">
-              <span class="stat">点赞 {{ video.likes_cnt || 0 }}</span>
-              <span class="stat">评论 {{ video.comments_cnt || 0 }}</span>
-              <el-button
-                size="small"
-                :type="video.is_like ? 'danger' : 'default'"
-                :plain="!video.is_like"
-                :disabled="video.is_like || !!pendingLikes[video.vid]"
-                :loading="!!pendingLikes[video.vid]"
-                @click="handleLike(video)"
-              >
-                {{ video.is_like ? '已赞' : '点赞' }}
-              </el-button>
+            <div class="card-meta">
+              <span class="author" :title="video.author_name || '匿名用户'">
+                @{{ video.author_name || '匿名用户' }}
+              </span>
+              <span class="like-count">
+                <svg class="heart" viewBox="0 0 24 24" aria-hidden="true">
+                  <path
+                    d="M12 21s-7.5-4.9-9.5-9.2C1 8.3 3.2 4.5 7 4.5c2 0 3.4 1.1 4.3 2.4l.7 1 .7-1c.9-1.3 2.3-2.4 4.3-2.4 3.8 0 6 3.8 4.5 7.3C19.5 16.1 12 21 12 21z"
+                    fill="currentColor"
+                  />
+                </svg>
+                {{ video.likes_cnt || 0 }}
+              </span>
             </div>
           </el-card>
         </div>
@@ -253,6 +232,7 @@ onMounted(loadFirstPage)
 .video-card {
   display: flex;
   flex-direction: column;
+  cursor: pointer;
 }
 
 .cover {
@@ -273,47 +253,34 @@ onMounted(loadFirstPage)
   background: #f0f2f5;
 }
 
-.video-title {
-  margin: 12px 0 6px;
-  font-size: 16px;
-  font-weight: 600;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.video-desc {
-  margin: 0 0 8px;
-  min-height: 20px;
-  color: #606266;
-  font-size: 13px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.card-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 12px;
 }
 
 .author {
-  margin-bottom: 12px;
+  overflow: hidden;
+  color: #606266;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.like-count {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
   color: #909399;
   font-size: 13px;
 }
 
-.toolbar {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-top: auto;
-  padding-top: 12px;
-  border-top: 1px solid #f0f0f0;
-}
-
-.stat {
-  color: #606266;
-  font-size: 13px;
-}
-
-.toolbar .el-button {
-  margin-left: auto;
+.heart {
+  width: 15px;
+  height: 15px;
 }
 
 .load-more {
