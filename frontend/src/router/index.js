@@ -3,6 +3,7 @@ import Login from '../views/Login.vue'
 import Home from '../views/Home.vue'
 import Message from '../views/Message.vue'
 import VideoPlay from '../views/VideoPlay.vue'
+import Publish from '../views/Publish.vue'
 
 const routes = [
   {
@@ -25,6 +26,11 @@ const routes = [
     path: '/message',
     name: 'Message',
     component: Message
+  },
+  {
+    path: '/publish',
+    name: 'Publish',
+    component: Publish
   },
   {
     path: '/:pathMatch(.*)*',

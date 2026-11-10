@@ -81,6 +81,10 @@ function openVideo(video) {
   router.push(`/video/${video.vid}`)
 }
 
+function goPublish() {
+  router.push('/publish')
+}
+
 // 私信页在下一步实现，路由就绪后自动跳转
 function goMessage() {
   if (router.hasRoute('Message')) {
@@ -106,6 +110,7 @@ onMounted(loadFirstPage)
     <header class="navbar">
       <span class="brand">TikTok Feed 演示</span>
       <div class="actions">
+        <el-button size="small" type="primary" @click="goPublish">发布视频</el-button>
         <span class="user">{{ userName }}</span>
         <el-button size="small" @click="goMessage">私信</el-button>
         <el-button size="small" @click="handleLogout">退出登录</el-button>
