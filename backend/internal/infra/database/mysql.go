@@ -4,6 +4,7 @@ package database
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"feedsystem/internal/utils/logger"
@@ -62,6 +63,77 @@ func AutoMigrate(db *gorm.DB, models ...interface{}) {
 	if err != nil {
 		logger.Fatal("failed to auto migrate", logger.Err(err))
 	}
+}
+
+// MigrateNotificationState 完成通知表从“唯一索引去重”到“状态机 + active_key”的数据迁移。
+//
+// AutoMigrate 只负责表结构：它会新增 active_key / status 列和 uk_active 索引，
+// 但既不会回填历史数据，也不会删除模型中已经去掉的 uk_ignore 索引。
+// 因此这里补两步幂等迁移：
+//  1. 为历史 active 记录回填 active_key，让唯一约束覆盖存量数据；
+//  2. 删除旧的 uk_ignore 唯一索引，否则“取消后再点赞/关注”会报 Duplicate entry。
+//
+// 主进程和 worker 会并发启动，两步都按幂等实现。
+func MigrateNotificationState(db *gorm.DB) {
+	if db == nil {
+		return
+	}
+	backfillNotificationActiveKey(db)
+	dropLegacyNotificationUniqueIndex(db)
+}
+
+// backfillNotificationActiveKey 为历史 active 通知补上业务唯一键。
+// 只处理 active_key IS NULL 的 active 记录；同一业务键只回填 id 最大的一条，
+// 避免脏数据里存在重复 active 时触发 uk_active 唯一键冲突。
+func backfillNotificationActiveKey(db *gorm.DB) {
+	var pending int64
+	err := db.Raw(`SELECT COUNT(*) FROM (
+		SELECT 1 FROM notifications WHERE status = 'active' AND active_key IS NULL LIMIT 1
+	) AS pending`).Scan(&pending).Error
+	if err != nil {
+		logger.Fatal("failed to inspect notifications needing active_key backfill", logger.Err(err))
+	}
+	if pending == 0 {
+		return
+	}
+
+	err = db.Exec(`UPDATE notifications n
+		JOIN (
+			SELECT MAX(id) AS id FROM notifications
+			WHERE status = 'active'
+			GROUP BY actor_id, receiver_id, type, target_id
+		) latest ON latest.id = n.id
+		SET n.active_key = CONCAT(n.actor_id, ':', n.receiver_id, ':', n.type, ':', n.target_id)
+		WHERE n.active_key IS NULL`).Error
+	if err != nil {
+		logger.Fatal("failed to backfill notification active_key", logger.Err(err))
+	}
+	logger.Info("notification active_key backfill finished")
+}
+
+// dropLegacyNotificationUniqueIndex 删除通知表历史上用于去重的 uk_ignore 唯一索引。
+// 索引不存在时直接跳过；并发启动时后执行的一方会遇到 Error 1091，同样按已删除处理。
+func dropLegacyNotificationUniqueIndex(db *gorm.DB) {
+	var count int64
+	err := db.Raw(`SELECT COUNT(*) FROM information_schema.statistics
+		WHERE table_schema = DATABASE() AND table_name = ? AND index_name = ?`,
+		"notifications", "uk_ignore").Scan(&count).Error
+	if err != nil {
+		logger.Fatal("failed to inspect legacy index uk_ignore", logger.Err(err))
+	}
+	if count == 0 {
+		return
+	}
+
+	if err := db.Exec("DROP INDEX uk_ignore ON notifications").Error; err != nil {
+		// 1091 = 索引不存在：另一个进程已经删掉了，按幂等成功处理
+		if strings.Contains(err.Error(), "1091") {
+			logger.Info("legacy index uk_ignore already dropped by another process")
+			return
+		}
+		logger.Fatal("failed to drop legacy index uk_ignore", logger.Err(err))
+	}
+	logger.Info("legacy index uk_ignore dropped")
 }
 
 func CloseDB() {

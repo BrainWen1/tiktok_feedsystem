@@ -234,6 +234,23 @@ func (s *SocialService) Unfollow(ctx context.Context, userID, bloggerID uint) er
 		logger.Ctx(ctx).Warn("remove follower relation from cache failed", logger.Uint("blogger_id", bloggerID), logger.Uint("user_id", userID), logger.Err(err))
 	}
 
+	// 异步取消关注通知：保留历史记录，只把最新一条 active 通知置为 cancelled。
+	// 重复取关（deleted=false）时同样执行，覆盖上一次取关通知失败的场景。
+	go func() {
+		nctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+
+		err := s.notificationService.ProcessNotification(nctx, mq.NotificationEvent{
+			EventID:   "",
+			Action:    "unfollow",
+			ActorID:   userID,
+			BloggerID: bloggerID,
+		})
+		if err != nil {
+			logger.Ctx(nctx).Error("cancel follow notification failed", logger.Err(err))
+		}
+	}()
+
 	return nil
 }
 

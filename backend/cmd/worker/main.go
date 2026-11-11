@@ -65,6 +65,8 @@ func run() error {
 		&model.Notification{},
 		&model.Message{},
 	) // 自动迁移数据库表结构
+	// AutoMigrate 不会回填数据、也不会删除模型中已移除的旧索引，这里补通知表状态机迁移
+	database.MigrateNotificationState(db)
 
 	defer database.CloseDB() // 注册关闭数据库连接的延迟调用
 
@@ -89,6 +91,7 @@ func run() error {
 	commentRepo := repo.NewCommentRepo(db)
 	notificationRepo := repo.NewNotificationRepo(db)
 	videoRepo := repo.NewVideoRepo(db)
+	socialRepo := repo.NewSocialRepo(db)
 
 	// 初始化Redis缓存
 	redisCache := cache.NewRedisCache(config.AppConfig.Redis_addr, config.AppConfig.Redis_password, config.AppConfig.Redis_db)
@@ -105,7 +108,7 @@ func run() error {
 	logger.Info("redis connected")
 
 	// 初始化Service
-	notificationService := service.NewNotificationService(redisCache, notificationRepo, videoRepo, commentRepo)
+	notificationService := service.NewNotificationService(redisCache, notificationRepo, videoRepo, commentRepo, likeRepo, socialRepo)
 
 	// 信号监听：SIGINT/SIGTERM 触发优雅退出
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)

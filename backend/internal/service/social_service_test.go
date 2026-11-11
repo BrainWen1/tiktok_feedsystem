@@ -57,6 +57,8 @@ func setupSocialService(t *testing.T) (*SocialService, *gorm.DB, *cache.RedisCac
 		repo.NewNotificationRepo(db),
 		repo.NewVideoRepo(db),
 		repo.NewCommentRepo(db),
+		repo.NewLikeRepo(db),
+		repo.NewSocialRepo(db),
 	)
 	svc := NewSocialService(repo.NewSocialRepo(db), redisCache, userService, notificationService)
 	return svc, db, redisCache, mr

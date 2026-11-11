@@ -86,6 +86,8 @@ func setupLikeService(t *testing.T) (*LikeService, *gorm.DB, *cache.RedisCache, 
 		repo.NewNotificationRepo(db),
 		repo.NewVideoRepo(db),
 		repo.NewCommentRepo(db),
+		repo.NewLikeRepo(db),
+		repo.NewSocialRepo(db),
 	)
 	userService := NewUserService(repo.NewUserRepo(db), redisCache)
 	svc := NewLikeService(repo.NewLikeRepo(db), likeMQ, userService, notificationService, redisCache)

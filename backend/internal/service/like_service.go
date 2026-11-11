@@ -165,6 +165,21 @@ func (s *LikeService) UnlikeVideo(ctx context.Context, userID, vid uint) error {
 		}); syncErr != nil {
 			logger.Ctx(ctx).Error("sync unlike cache after fallback failed", logger.Uint("user_id", userID), logger.Uint("video_id", vid), logger.Err(syncErr))
 		}
+		// 取消点赞落库后，异步把对应通知置为 cancelled（保留历史，不推 SSE）
+		go func() {
+			nctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+			defer cancel()
+
+			err := s.notificationService.ProcessNotification(nctx, mq.NotificationEvent{
+				EventID: "",
+				Action:  "unlike",
+				ActorID: userID,
+				VideoID: vid,
+			})
+			if err != nil {
+				logger.Ctx(nctx).Error("cancel like notification failed", logger.Err(err))
+			}
+		}()
 		return nil
 	}
 
