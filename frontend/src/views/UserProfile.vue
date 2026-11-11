@@ -1,6 +1,7 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { ElMessage } from 'element-plus'
 import request from '../utils/request'
 import { resolveAvatar, normalizeVideoDetail } from '../utils/video'
 import VideoCard from '../components/VideoCard.vue'
@@ -10,12 +11,46 @@ const PAGE_SIZE = 10
 const route = useRoute()
 const router = useRouter()
 
+// 当前登录用户 ID：优先取登录时写入的 user_id，旧会话回退解析 JWT
+function decodeUserId(token) {
+  try {
+    const part = token.split('.')[1]
+    const base64 = part.replace(/-/g, '+').replace(/_/g, '/')
+    const padded = base64 + '='.repeat((4 - (base64.length % 4)) % 4)
+    const bytes = Uint8Array.from(atob(padded), (c) => c.charCodeAt(0))
+    const payload = JSON.parse(new TextDecoder().decode(bytes))
+    return Number(payload.user_id) || 0
+  } catch {
+    return 0
+  }
+}
+
+const myUserId =
+  Number(localStorage.getItem('user_id')) || decodeUserId(localStorage.getItem('token'))
+
 const userId = computed(() => Number(route.params.id) || 0)
+const isSelf = computed(() => myUserId > 0 && userId.value === myUserId)
 const profile = ref(null)
 const loading = ref(false)
 const errorMsg = ref('')
 const counts = reactive({ follow: 0, fans: 0 })
 const activeTab = ref('works')
+
+// 关注关系与交互状态
+const isFollow = ref(false)
+const followLoading = ref(false)
+
+function isLoggedIn() {
+  return Boolean(localStorage.getItem('token'))
+}
+
+// 未登录时统一拦截并引导登录，保留当前页面作为登录后的回跳地址
+function requireLogin() {
+  if (isLoggedIn()) return true
+  ElMessage.warning('请先登录')
+  router.push({ path: '/login', query: { redirect: route.fullPath } })
+  return false
+}
 
 function createTabState() {
   return {
@@ -128,14 +163,21 @@ async function loadProfile() {
   profile.value = null
   counts.follow = 0
   counts.fans = 0
+  isFollow.value = false
   resetTabs()
 
   try {
-    // 资料和统计互不阻塞：任一失败时其余部分仍可展示
-    const [profileResult, countResult] = await Promise.allSettled([
+    // 资料、统计与关注关系互不阻塞：任一失败时其余部分仍可展示
+    const tasks = [
       request.post('/user/find_by_id', { user_id: userId.value }),
       request.get('/social/count', { params: { target_id: userId.value } })
-    ])
+    ]
+    // 自己的主页不展示关注按钮，也无需查询关注关系
+    if (!isSelf.value && isLoggedIn()) {
+      tasks.push(request.get('/social/is_follow', { params: { target_id: userId.value } }))
+    }
+
+    const [profileResult, countResult, followResult] = await Promise.allSettled(tasks)
 
     if (profileResult.status === 'fulfilled') {
       profile.value = profileResult.value.data || null
@@ -149,10 +191,47 @@ async function loadProfile() {
       counts.fans = Number(data.fan_count) || 0
     }
 
+    if (followResult?.status === 'fulfilled') {
+      isFollow.value = Boolean(followResult.value.data?.is_follow)
+    }
+
     if (profile.value) await loadTab(activeTab.value)
   } finally {
     loading.value = false
   }
+}
+
+// 关注 / 取关：成功后同步按钮状态与粉丝数，请求期间禁用按钮防止重复提交
+async function toggleFollow() {
+  if (followLoading.value || isSelf.value || !requireLogin()) return
+
+  const targetId = userId.value
+  followLoading.value = true
+  try {
+    if (isFollow.value) {
+      await request.post('/social/unfollow', { blogger_id: targetId })
+      if (targetId !== userId.value) return
+      isFollow.value = false
+      counts.fans = Math.max(0, counts.fans - 1)
+      ElMessage.success('已取消关注')
+    } else {
+      await request.post('/social/follow', { blogger_id: targetId })
+      if (targetId !== userId.value) return
+      isFollow.value = true
+      counts.fans += 1
+      ElMessage.success('关注成功')
+    }
+  } catch {
+    // 错误提示由 request 拦截器统一处理
+  } finally {
+    followLoading.value = false
+  }
+}
+
+// 跳转私信页，携带目标用户 ID 供私信页自动打开会话
+function goMessage() {
+  if (isSelf.value || !requireLogin()) return
+  router.push({ path: '/message', query: { target_id: String(userId.value) } })
 }
 
 // Tab 首次切换时再加载，避免一次性请求两个列表
@@ -234,6 +313,18 @@ onBeforeUnmount(() => {
               <span class="stat"><strong>{{ counts.follow }}</strong> 关注</span>
               <span class="stat"><strong>{{ counts.fans }}</strong> 粉丝</span>
             </div>
+          </div>
+
+          <!-- 自己的主页不展示关注/私信入口 -->
+          <div v-if="!isSelf" class="profile-actions">
+            <el-button
+              :type="isFollow ? 'default' : 'primary'"
+              :loading="followLoading"
+              @click="toggleFollow"
+            >
+              {{ isFollow ? '已关注' : '关注' }}
+            </el-button>
+            <el-button @click="goMessage">私信</el-button>
           </div>
         </section>
 
@@ -345,6 +436,18 @@ onBeforeUnmount(() => {
 .profile-info {
   flex: 1;
   min-width: 0;
+}
+
+.profile-actions {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  align-self: center;
+}
+
+.profile-actions :deep(.el-button + .el-button) {
+  margin-left: 0;
 }
 
 .profile-name {

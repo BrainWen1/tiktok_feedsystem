@@ -1,10 +1,11 @@
 <script setup>
 import { nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import request from '../utils/request'
 import { useMessageStore } from '../store/message'
 
+const route = useRoute()
 const router = useRouter()
 const messageStore = useMessageStore()
 // SSE 连接由 App.vue 全局维护，这里只消费全局状态
@@ -93,6 +94,43 @@ function backHome() {
 
 // ------------------------- 会话 & 聊天 -------------------------
 
+// 从路由 query 中取目标用户 ID（主页点击“私信”时携带）
+function targetIdFromQuery() {
+  const raw = Array.isArray(route.query.target_id)
+    ? route.query.target_id[0]
+    : route.query.target_id
+  return Number(raw) || 0
+}
+
+// 打开指定用户的会话：已存在则直接选中，从未聊过则先构造会话再拉历史
+async function openTargetSession(targetId) {
+  if (!targetId || targetId === Number(myUserId)) return
+
+  const existing = sessions.value.find((item) => Number(item.target_id) === targetId)
+  if (existing) {
+    await selectSession(existing)
+    return
+  }
+
+  let targetName = `用户${targetId}`
+  try {
+    const res = await request.post('/user/find_by_id', { user_id: targetId })
+    targetName = res.data?.user_name || targetName
+  } catch {
+    // 资料查询失败时使用兜底名称，不影响打开聊天窗口
+  }
+
+  const session = {
+    target_id: targetId,
+    target_name: targetName,
+    content: '',
+    created_at: null,
+    unread_count: 0
+  }
+  sessions.value = [session, ...sessions.value]
+  await selectSession(session)
+}
+
 async function loadSessions() {
   sessionsLoading.value = true
   errorMsg.value = ''
@@ -100,8 +138,12 @@ async function loadSessions() {
     const res = await request.get('/message/sessions', { params: { limit: 50 } })
     sessions.value = Array.isArray(res.data) ? res.data : []
 
-    // 首次进入默认打开第一个会话
-    if (!currentSession.value && sessions.value.length > 0) {
+    const targetId = targetIdFromQuery()
+    if (targetId) {
+      // 从主页跳转进来：优先打开指定用户，而不是默认第一个会话
+      await openTargetSession(targetId)
+    } else if (!currentSession.value && sessions.value.length > 0) {
+      // 首次进入默认打开第一个会话
       selectSession(sessions.value[0])
     }
   } catch (error) {
