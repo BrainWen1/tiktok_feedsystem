@@ -1,8 +1,9 @@
 <script setup>
-import { nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
+import { nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useRoute, useRouter } from 'vue-router'
 import request from '../utils/request'
+import { resolveAvatar } from '../utils/video'
 import { useMessageStore } from '../store/message'
 
 const route = useRoute()
@@ -20,6 +21,10 @@ const sessions = ref([])
 const currentSession = ref(null)
 const messages = ref([])
 const inputContent = ref('')
+
+// 头像缓存：历史消息只带 sender_id，需要按用户查资料补齐头像
+const avatarMap = reactive({})
+const avatarLoading = new Set()
 
 const sessionsLoading = ref(false)
 const historyLoading = ref(false)
@@ -80,6 +85,47 @@ function senderLabel(message) {
   return message.sender_name || `用户${message.sender_id}`
 }
 
+function avatarSrc(userId) {
+  return resolveAvatar(avatarMap[Number(userId)])
+}
+
+function senderInitial(message) {
+  return (senderLabel(message) || '?').slice(0, 1).toUpperCase()
+}
+
+// 按需拉取并缓存用户头像，失败时回退默认头像且不重复请求
+async function loadAvatar(userId) {
+  const id = Number(userId)
+  if (!id || avatarMap[id] !== undefined || avatarLoading.has(id)) return
+
+  avatarLoading.add(id)
+  try {
+    const res = await request.post('/user/find_by_id', { user_id: id })
+    avatarMap[id] = res.data?.avatar_url || ''
+  } catch {
+    avatarMap[id] = ''
+  } finally {
+    avatarLoading.delete(id)
+  }
+}
+
+// 历史消息与 SSE 消息都只带 sender_id，统一批量补齐头像
+function ensureAvatars(list) {
+  const ids = new Set()
+  for (const message of list) {
+    const id = Number(message.sender_id)
+    if (id) ids.add(id)
+  }
+  ids.forEach((id) => loadAvatar(id))
+}
+
+// 点击头像进入对应用户的主页
+function goUserProfile(userId) {
+  const id = Number(userId)
+  if (!id) return
+  router.push(`/user/${id}`)
+}
+
 async function scrollToBottom(smooth = true) {
   await nextTick()
   const el = messageListRef.value
@@ -116,6 +162,7 @@ async function openTargetSession(targetId) {
   try {
     const res = await request.post('/user/find_by_id', { user_id: targetId })
     targetName = res.data?.user_name || targetName
+    avatarMap[targetId] = res.data?.avatar_url || ''
   } catch {
     // 资料查询失败时使用兜底名称，不影响打开聊天窗口
   }
@@ -176,6 +223,7 @@ async function selectSession(session) {
     // 后端返回新 -> 旧，聊天窗口需要旧 -> 新
     const list = res.data?.messages || []
     messages.value = list.slice().reverse()
+    ensureAvatars(messages.value)
     scrollToBottom(false)
   } catch (error) {
     if (currentSession.value?.target_id === targetId) {
@@ -244,6 +292,8 @@ watch(latestMessage, (message) => {
   if (!message) return
 
   const senderId = Number(message.sender_id)
+  loadAvatar(senderId)
+
   const session = sessions.value.find((item) => Number(item.target_id) === senderId)
 
   if (session) {
@@ -273,6 +323,7 @@ onMounted(() => {
   messageStore.setMessagePageActive(true)
   // 进入私信页即清空导航栏的全局未读徽标
   messageStore.clearUnread()
+  loadAvatar(myUserId)
   loadSessions()
 })
 
@@ -359,9 +410,19 @@ onUnmounted(() => {
               class="message-row"
               :class="{ mine: isMine(message) }"
             >
+              <el-avatar
+                class="message-avatar"
+                :size="36"
+                :src="avatarSrc(message.sender_id)"
+                :title="senderLabel(message)"
+                @click="goUserProfile(message.sender_id)"
+              >
+                {{ senderInitial(message) }}
+              </el-avatar>
+
               <div class="bubble-wrap">
                 <div class="bubble-meta">
-                  <span>{{ senderLabel(message) }}</span>
+                  <span class="sender-name">{{ senderLabel(message) }}</span>
                   <span>{{ formatTime(message.created_at) }}</span>
                 </div>
                 <div class="bubble">{{ message.content }}</div>
@@ -567,12 +628,27 @@ onUnmounted(() => {
 
 .message-row {
   display: flex;
+  align-items: flex-start;
   justify-content: flex-start;
+  gap: 10px;
   margin-bottom: 14px;
 }
 
+/* 自己的消息整体右对齐，头像落在右边界 */
 .message-row.mine {
-  justify-content: flex-end;
+  flex-direction: row-reverse;
+}
+
+/* 双方头像都贴靠聊天区左右边界，点击可进入用户主页 */
+.message-avatar {
+  flex: none;
+  color: #fff;
+  background: #409eff;
+  cursor: pointer;
+}
+
+.message-avatar:hover {
+  opacity: 0.85;
 }
 
 .bubble-wrap {
@@ -587,8 +663,14 @@ onUnmounted(() => {
   font-size: 12px;
 }
 
+/* 昵称始终紧挨头像、位于靠画面中心的一侧 */
 .message-row.mine .bubble-meta {
-  justify-content: flex-end;
+  flex-direction: row-reverse;
+}
+
+.sender-name {
+  color: #606266;
+  font-weight: 500;
 }
 
 .bubble {
