@@ -20,6 +20,18 @@ func NewNotificationHandler(notificationService *service.NotificationService) *N
 }
 
 // ListNotifications 获取用户通知列表
+// @Summary      获取通知列表
+// @Description  按 (last_time, last_id) 游标分页获取当前用户的通知列表。data 为对象，其中 data.data 为 dto.ListNotificationsResponse（notifications 通知列表、next_last_time / next_last_id 下一页游标）
+// @Tags         通知模块
+// @Produce      json
+// @Security     Bearer
+// @Param        page_size query int    false "每页数量"
+// @Param        last_time query string false "上一页最后一条通知时间（RFC3339）"
+// @Param        last_id   query int    false "上一页最后一条通知 ID，与 last_time 成对使用"
+// @Success      200 {object} response.Response{data=map[string]interface{}} "获取成功，data 包含 data（通知列表结构）"
+// @Failure      400 {object} response.Response "请求参数错误或获取通知列表失败"
+// @Failure      401 {object} response.Response "未登录或登录已过期"
+// @Router       /notification/list [get]
 func (h *NotificationHandler) ListNotifications(c *gin.Context) {
 	// 获取 userID
 	userID, ok := requireUserID(c)
@@ -47,6 +59,15 @@ func (h *NotificationHandler) ListNotifications(c *gin.Context) {
 }
 
 // GetUnreadCount 获取用户未读通知总数
+// @Summary      获取未读通知数量
+// @Description  获取当前用户的未读通知总数，data 包含 count 字段
+// @Tags         通知模块
+// @Produce      json
+// @Security     Bearer
+// @Success      200 {object} response.Response{data=map[string]interface{}} "获取成功，data 包含 count 字段"
+// @Failure      400 {object} response.Response "获取未读通知总数失败"
+// @Failure      401 {object} response.Response "未登录或登录已过期"
+// @Router       /notification/unread_count [get]
 func (h *NotificationHandler) GetUnreadCount(c *gin.Context) {
 	// 获取 userID
 	userID, ok := requireUserID(c)
@@ -66,6 +87,17 @@ func (h *NotificationHandler) GetUnreadCount(c *gin.Context) {
 }
 
 // MarkAsRead 标记单条通知为已读
+// @Summary      标记单条通知已读
+// @Description  将当前用户的一条通知标记为已读
+// @Tags         通知模块
+// @Accept       json
+// @Produce      json
+// @Security     Bearer
+// @Param        request body dto.MarkAsReadRequest true "标记已读信息"
+// @Success      200 {object} response.Response{data=string} "标记成功"
+// @Failure      400 {object} response.Response "请求参数错误或标记失败"
+// @Failure      401 {object} response.Response "未登录或登录已过期"
+// @Router       /notification/read [post]
 func (h *NotificationHandler) MarkAsRead(c *gin.Context) {
 	// 获取 userID
 	userID, ok := requireUserID(c)
@@ -92,6 +124,15 @@ func (h *NotificationHandler) MarkAsRead(c *gin.Context) {
 }
 
 // MarkAllAsRead 标记全部通知为已读
+// @Summary      标记全部通知已读
+// @Description  将当前用户的所有未读通知标记为已读
+// @Tags         通知模块
+// @Produce      json
+// @Security     Bearer
+// @Success      200 {object} response.Response{data=string} "标记成功"
+// @Failure      400 {object} response.Response "标记全部通知为已读失败"
+// @Failure      401 {object} response.Response "未登录或登录已过期"
+// @Router       /notification/read_all [post]
 func (h *NotificationHandler) MarkAllAsRead(c *gin.Context) {
 	// 获取 userID
 	userID, ok := requireUserID(c)

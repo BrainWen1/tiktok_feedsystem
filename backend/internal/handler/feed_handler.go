@@ -17,6 +17,17 @@ func NewFeedHandler(feedSvc *service.FeedService) *FeedHandler {
 }
 
 // FeedListLatest 获取最新视频列表，按时间倒序
+// @Summary      获取最新视频流
+// @Description  按创建时间倒序返回视频流，使用 (cursor.last_created_at, cursor.last_vid) 复合游标翻页；软鉴权接口，可选携带 Authorization 头以返回点赞/关注状态
+// @Tags         动态流模块
+// @Produce      json
+// @Param        limit                  query int    false "每页数量"
+// @Param        cursor.last_vid        query string false "上一页最后一条视频 ID（游标）"
+// @Param        cursor.last_created_at query string false "上一页最后一条视频创建时间（RFC3339，游标）"
+// @Success      200 {object} response.Response{data=dto.FeedListResp} "获取成功"
+// @Failure      400 {object} response.Response "请求参数错误"
+// @Failure      500 {object} response.Response "服务器内部错误"
+// @Router       /feed/list [get]
 func (h *FeedHandler) FeedListLatest(c *gin.Context) {
 	// 解析请求参数并获取登录用户ID（游客为0）
 	req, loginUserID, ok := bindFeedListQuery(c)
@@ -35,6 +46,19 @@ func (h *FeedHandler) FeedListLatest(c *gin.Context) {
 }
 
 // FeedListByFollowing 获取我关注用户发布的视频
+// @Summary      获取关注博主的视频流
+// @Description  返回当前登录用户所关注博主发布的视频，使用 (cursor.last_created_at, cursor.last_vid) 复合游标翻页
+// @Tags         动态流模块
+// @Produce      json
+// @Security     Bearer
+// @Param        limit                  query int    false "每页数量"
+// @Param        cursor.last_vid        query string false "上一页最后一条视频 ID（游标）"
+// @Param        cursor.last_created_at query string false "上一页最后一条视频创建时间（RFC3339，游标）"
+// @Success      200 {object} response.Response{data=dto.FeedListResp} "获取成功"
+// @Failure      400 {object} response.Response "请求参数错误"
+// @Failure      401 {object} response.Response "未登录或登录已过期"
+// @Failure      500 {object} response.Response "服务器内部错误"
+// @Router       /feed/listByFollowing [get]
 func (h *FeedHandler) FeedListByFollowing(c *gin.Context) {
 	// 解析请求参数并获取登录用户ID（游客为0）
 	req, loginUserID, ok := bindFeedListQuery(c)
@@ -53,6 +77,17 @@ func (h *FeedHandler) FeedListByFollowing(c *gin.Context) {
 }
 
 // FeedListByPopularity 获取热门视频列表
+// @Summary      获取热门视频流
+// @Description  按热度值（popularity）倒序返回视频流，使用 (cursor.last_popularity, cursor.last_vid) 复合游标翻页；软鉴权接口，可选携带 Authorization 头以返回点赞/关注状态
+// @Tags         动态流模块
+// @Produce      json
+// @Param        limit                   query int    false "每页数量"
+// @Param        cursor.last_vid         query string false "上一页最后一条视频 ID（游标）"
+// @Param        cursor.last_popularity  query int    false "上一页最后一条视频的热度值（游标）"
+// @Success      200 {object} response.Response{data=dto.FeedListResp} "获取成功"
+// @Failure      400 {object} response.Response "请求参数错误"
+// @Failure      500 {object} response.Response "服务器内部错误"
+// @Router       /feed/listByPopularity [get]
 func (h *FeedHandler) FeedListByPopularity(c *gin.Context) {
 	// 解析请求参数并获取登录用户ID（游客为0）
 	req, loginUserID, ok := bindFeedListQuery(c)
@@ -71,6 +106,17 @@ func (h *FeedHandler) FeedListByPopularity(c *gin.Context) {
 }
 
 // FeedListLikesCount 按视频点赞总数降序榜单
+// @Summary      获取点赞数榜单视频流
+// @Description  按视频点赞总数降序返回视频流，使用 (cursor.last_likes_count, cursor.last_vid) 复合游标翻页；软鉴权接口，可选携带 Authorization 头以返回点赞/关注状态
+// @Tags         动态流模块
+// @Produce      json
+// @Param        limit                    query int    false "每页数量"
+// @Param        cursor.last_vid          query string false "上一页最后一条视频 ID（游标）"
+// @Param        cursor.last_likes_count  query int    false "上一页最后一条视频的点赞总数（游标）"
+// @Success      200 {object} response.Response{data=dto.FeedListResp} "获取成功"
+// @Failure      400 {object} response.Response "请求参数错误"
+// @Failure      500 {object} response.Response "服务器内部错误"
+// @Router       /feed/listByLikesCount [get]
 func (h *FeedHandler) FeedListLikesCount(c *gin.Context) {
 	// 解析请求参数并获取登录用户ID（游客为0）
 	req, loginUserID, ok := bindFeedListQuery(c)
@@ -89,6 +135,18 @@ func (h *FeedHandler) FeedListLikesCount(c *gin.Context) {
 }
 
 // FeedListByTag 根据标签筛选视频
+// @Summary      按标签获取视频流
+// @Description  根据标签筛选视频，按创建时间倒序返回，使用 (cursor.last_created_at, cursor.last_vid) 复合游标翻页；软鉴权接口，可选携带 Authorization 头以返回点赞/关注状态
+// @Tags         动态流模块
+// @Produce      json
+// @Param        tag                    query string true  "标签名称"
+// @Param        limit                  query int    false "每页数量"
+// @Param        cursor.last_vid        query string false "上一页最后一条视频 ID（游标）"
+// @Param        cursor.last_created_at query string false "上一页最后一条视频创建时间（RFC3339，游标）"
+// @Success      200 {object} response.Response{data=dto.FeedListResp} "获取成功"
+// @Failure      400 {object} response.Response "请求参数错误"
+// @Failure      500 {object} response.Response "服务器内部错误"
+// @Router       /feed/listByTag [get]
 func (h *FeedHandler) FeedListByTag(c *gin.Context) {
 	// 解析请求参数并获取登录用户ID（游客为0）
 	req, loginUserID, ok := bindFeedListQuery(c)

@@ -28,6 +28,14 @@ func NewSSEHandler(redisCache *cache.RedisCache, hub *infra.Hub) *SSEHandler {
 }
 
 // SSE 处理函数，前端通过 /sse?ticket=xxx 连接，用于创建一个 SSE 连接，接收实时消息
+// @Summary      建立 SSE 实时消息连接
+// @Description  使用 POST /sse/ticket 获取的一次性 ticket 建立 SSE 长连接，持续接收实时私信。服务端返回 text/event-stream：event 为 message 时 data 为消息内容，event 为 heartbeat 时 data 为 ping（每 15 秒一次）；连接建立后不返回 JSON，客户端断开即结束。ticket 30 秒内有效且仅可使用一次
+// @Tags         私信模块
+// @Produce      text/event-stream
+// @Param        ticket query string true "一次性连接票据，由 POST /sse/ticket 获取"
+// @Success      200 {string} string "SSE 事件流（event: message / event: heartbeat）"
+// @Failure      400 {object} response.Response "缺少 ticket、ticket 无效或已过期"
+// @Router       /sse [get]
 func (h *SSEHandler) SSE(c *gin.Context) {
 	// 从 query 参数获取 ticket
 	ticket := c.Query("ticket")
@@ -99,6 +107,15 @@ func (h *SSEHandler) SSE(c *gin.Context) {
 }
 
 // GetSSETicket 处理函数，前端调用 /sse/ticket 获取一个临时 ticket，用于 SSE 连接鉴权
+// @Summary      获取 SSE 连接票据
+// @Description  为当前登录用户签发一次性 SSE 连接票据，data 包含 ticket 字段；ticket 30 秒内有效且仅可使用一次，用于浏览器 EventSource 无法携带 Authorization 头时的鉴权
+// @Tags         私信模块
+// @Produce      json
+// @Security     Bearer
+// @Success      200 {object} response.Response{data=map[string]interface{}} "获取成功，data 包含 ticket 字段"
+// @Failure      401 {object} response.Response "未登录或登录已过期"
+// @Failure      500 {object} response.Response "服务器内部错误"
+// @Router       /sse/ticket [post]
 func (h *SSEHandler) GetSSETicket(c *gin.Context) {
 	// 从中间件上下文拿到 userId
 	userID, ok := requireUserID(c)

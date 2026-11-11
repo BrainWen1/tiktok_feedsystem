@@ -9,6 +9,1671 @@
     },
     "basePath": "/",
     "paths": {
+        "/comment/delete": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "description": "当前登录用户删除自己发布的评论",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "评论模块"
+                ],
+                "summary": "删除评论",
+                "parameters": [
+                    {
+                        "description": "删除评论信息",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/dto.DeleteCommentRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "评论删除成功",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/response.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "string"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "请求参数错误",
+                        "schema": {
+                            "$ref": "#/definitions/response.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "未登录或登录已过期",
+                        "schema": {
+                            "$ref": "#/definitions/response.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "服务器内部错误",
+                        "schema": {
+                            "$ref": "#/definitions/response.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/comment/list": {
+            "get": {
+                "description": "按 (last_time, last_id) 游标分页获取指定视频的评论列表；软鉴权接口，可选携带 Authorization 头",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "评论模块"
+                ],
+                "summary": "获取视频评论列表",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "视频 ID",
+                        "name": "video_id",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "上一页最后一条评论的 Unix 毫秒时间戳（第一页不传）",
+                        "name": "last_time",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "上一页最后一条评论 ID，与 last_time 成对使用",
+                        "name": "last_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "每页数量，范围 5-50",
+                        "name": "page_size",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "获取成功",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/response.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/dto.ListCommentsResponse"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "请求参数错误",
+                        "schema": {
+                            "$ref": "#/definitions/response.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "服务器内部错误",
+                        "schema": {
+                            "$ref": "#/definitions/response.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/comment/publish": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "description": "当前登录用户对指定视频发布评论，parent_id 非 0 时表示回复该条评论",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "评论模块"
+                ],
+                "summary": "发布评论",
+                "parameters": [
+                    {
+                        "description": "评论信息",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/dto.PublishCommentRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "评论发布成功",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/response.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "string"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "请求参数错误",
+                        "schema": {
+                            "$ref": "#/definitions/response.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "未登录或登录已过期",
+                        "schema": {
+                            "$ref": "#/definitions/response.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "服务器内部错误",
+                        "schema": {
+                            "$ref": "#/definitions/response.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/feed/list": {
+            "get": {
+                "description": "按创建时间倒序返回视频流，使用 (cursor.last_created_at, cursor.last_vid) 复合游标翻页；软鉴权接口，可选携带 Authorization 头以返回点赞/关注状态",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "动态流模块"
+                ],
+                "summary": "获取最新视频流",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "每页数量",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "上一页最后一条视频 ID（游标）",
+                        "name": "cursor.last_vid",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "上一页最后一条视频创建时间（RFC3339，游标）",
+                        "name": "cursor.last_created_at",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "获取成功",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/response.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/dto.FeedListResp"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "请求参数错误",
+                        "schema": {
+                            "$ref": "#/definitions/response.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "服务器内部错误",
+                        "schema": {
+                            "$ref": "#/definitions/response.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/feed/listByFollowing": {
+            "get": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "description": "返回当前登录用户所关注博主发布的视频，使用 (cursor.last_created_at, cursor.last_vid) 复合游标翻页",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "动态流模块"
+                ],
+                "summary": "获取关注博主的视频流",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "每页数量",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "上一页最后一条视频 ID（游标）",
+                        "name": "cursor.last_vid",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "上一页最后一条视频创建时间（RFC3339，游标）",
+                        "name": "cursor.last_created_at",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "获取成功",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/response.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/dto.FeedListResp"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "请求参数错误",
+                        "schema": {
+                            "$ref": "#/definitions/response.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "未登录或登录已过期",
+                        "schema": {
+                            "$ref": "#/definitions/response.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "服务器内部错误",
+                        "schema": {
+                            "$ref": "#/definitions/response.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/feed/listByLikesCount": {
+            "get": {
+                "description": "按视频点赞总数降序返回视频流，使用 (cursor.last_likes_count, cursor.last_vid) 复合游标翻页；软鉴权接口，可选携带 Authorization 头以返回点赞/关注状态",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "动态流模块"
+                ],
+                "summary": "获取点赞数榜单视频流",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "每页数量",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "上一页最后一条视频 ID（游标）",
+                        "name": "cursor.last_vid",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "上一页最后一条视频的点赞总数（游标）",
+                        "name": "cursor.last_likes_count",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "获取成功",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/response.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/dto.FeedListResp"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "请求参数错误",
+                        "schema": {
+                            "$ref": "#/definitions/response.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "服务器内部错误",
+                        "schema": {
+                            "$ref": "#/definitions/response.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/feed/listByPopularity": {
+            "get": {
+                "description": "按热度值（popularity）倒序返回视频流，使用 (cursor.last_popularity, cursor.last_vid) 复合游标翻页；软鉴权接口，可选携带 Authorization 头以返回点赞/关注状态",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "动态流模块"
+                ],
+                "summary": "获取热门视频流",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "每页数量",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "上一页最后一条视频 ID（游标）",
+                        "name": "cursor.last_vid",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "上一页最后一条视频的热度值（游标）",
+                        "name": "cursor.last_popularity",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "获取成功",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/response.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/dto.FeedListResp"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "请求参数错误",
+                        "schema": {
+                            "$ref": "#/definitions/response.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "服务器内部错误",
+                        "schema": {
+                            "$ref": "#/definitions/response.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/feed/listByTag": {
+            "get": {
+                "description": "根据标签筛选视频，按创建时间倒序返回，使用 (cursor.last_created_at, cursor.last_vid) 复合游标翻页；软鉴权接口，可选携带 Authorization 头以返回点赞/关注状态",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "动态流模块"
+                ],
+                "summary": "按标签获取视频流",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "标签名称",
+                        "name": "tag",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "每页数量",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "上一页最后一条视频 ID（游标）",
+                        "name": "cursor.last_vid",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "上一页最后一条视频创建时间（RFC3339，游标）",
+                        "name": "cursor.last_created_at",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "获取成功",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/response.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/dto.FeedListResp"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "请求参数错误",
+                        "schema": {
+                            "$ref": "#/definitions/response.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "服务器内部错误",
+                        "schema": {
+                            "$ref": "#/definitions/response.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/like/is_liked": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "description": "查询当前登录用户是否点赞了指定视频，data 为布尔值",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "点赞模块"
+                ],
+                "summary": "查询是否已点赞",
+                "parameters": [
+                    {
+                        "description": "查询信息",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/dto.LikeRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "查询成功",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/response.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "boolean"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "请求参数错误或查询失败",
+                        "schema": {
+                            "$ref": "#/definitions/response.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "未登录或登录已过期",
+                        "schema": {
+                            "$ref": "#/definitions/response.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/like/like": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "description": "当前登录用户对指定视频点赞，重复点赞按幂等处理",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "点赞模块"
+                ],
+                "summary": "点赞视频",
+                "parameters": [
+                    {
+                        "description": "点赞信息",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/dto.LikeRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "点赞成功",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/response.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "string"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "请求参数错误或点赞失败",
+                        "schema": {
+                            "$ref": "#/definitions/response.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "未登录或登录已过期",
+                        "schema": {
+                            "$ref": "#/definitions/response.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/like/list_liked": {
+            "post": {
+                "description": "分页列出指定用户点赞过的视频，使用 (cursor.last_vid, cursor.last_created_at) 复合游标翻页；软鉴权接口，可选携带 Authorization 头以返回当前用户的点赞状态",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "点赞模块"
+                ],
+                "summary": "获取用户点赞过的视频",
+                "parameters": [
+                    {
+                        "description": "查询参数，user_id 必填",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/dto.ListLikedVideosRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "获取成功",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/response.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/dto.VideoListResponse"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "请求参数错误或获取失败",
+                        "schema": {
+                            "$ref": "#/definitions/response.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/like/unlike": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "description": "当前登录用户取消对指定视频的点赞，未点赞时按幂等处理",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "点赞模块"
+                ],
+                "summary": "取消点赞视频",
+                "parameters": [
+                    {
+                        "description": "取消点赞信息",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/dto.LikeRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "取消点赞成功",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/response.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "string"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "请求参数错误或取消点赞失败",
+                        "schema": {
+                            "$ref": "#/definitions/response.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "未登录或登录已过期",
+                        "schema": {
+                            "$ref": "#/definitions/response.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/message/history": {
+            "get": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "description": "按消息 ID 游标分页获取当前用户与目标用户的聊天记录，结果按时间从新到旧排列",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "私信模块"
+                ],
+                "summary": "获取聊天历史",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "对方用户 ID",
+                        "name": "target_id",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "游标，上一页最老一条消息的 ID（第一页传 0）",
+                        "name": "last_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "每页条数，默认 20",
+                        "name": "page_size",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "获取成功",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/response.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/dto.GetHistoryResponse"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "参数错误或获取聊天历史失败",
+                        "schema": {
+                            "$ref": "#/definitions/response.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "未登录或登录已过期",
+                        "schema": {
+                            "$ref": "#/definitions/response.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/message/send": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "description": "当前登录用户向指定用户发送一条私信，接收方在线时通过 SSE 实时推送",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "私信模块"
+                ],
+                "summary": "发送私信",
+                "parameters": [
+                    {
+                        "description": "消息内容",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/dto.SendMessageRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "发送成功",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/response.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "string"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "参数错误或发送消息失败",
+                        "schema": {
+                            "$ref": "#/definitions/response.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "未登录或登录已过期",
+                        "schema": {
+                            "$ref": "#/definitions/response.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/message/sessions": {
+            "get": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "description": "获取当前用户的私信会话列表，包含对方信息、最新一条消息内容与未读消息数",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "私信模块"
+                ],
+                "summary": "获取会话列表",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "拉取数量，默认 20",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "获取成功",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/response.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "array",
+                                            "items": {
+                                                "$ref": "#/definitions/dto.SessionDetail"
+                                            }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "参数错误或获取会话列表失败",
+                        "schema": {
+                            "$ref": "#/definitions/response.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "未登录或登录已过期",
+                        "schema": {
+                            "$ref": "#/definitions/response.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/notification/list": {
+            "get": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "description": "按 (last_time, last_id) 游标分页获取当前用户的通知列表。data 为对象，其中 data.data 为 dto.ListNotificationsResponse（notifications 通知列表、next_last_time / next_last_id 下一页游标）",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "通知模块"
+                ],
+                "summary": "获取通知列表",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "每页数量",
+                        "name": "page_size",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "上一页最后一条通知时间（RFC3339）",
+                        "name": "last_time",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "上一页最后一条通知 ID，与 last_time 成对使用",
+                        "name": "last_id",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "获取成功，data 包含 data（通知列表结构）",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/response.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "object",
+                                            "additionalProperties": true
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "请求参数错误或获取通知列表失败",
+                        "schema": {
+                            "$ref": "#/definitions/response.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "未登录或登录已过期",
+                        "schema": {
+                            "$ref": "#/definitions/response.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/notification/read": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "description": "将当前用户的一条通知标记为已读",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "通知模块"
+                ],
+                "summary": "标记单条通知已读",
+                "parameters": [
+                    {
+                        "description": "标记已读信息",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/dto.MarkAsReadRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "标记成功",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/response.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "string"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "请求参数错误或标记失败",
+                        "schema": {
+                            "$ref": "#/definitions/response.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "未登录或登录已过期",
+                        "schema": {
+                            "$ref": "#/definitions/response.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/notification/read_all": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "description": "将当前用户的所有未读通知标记为已读",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "通知模块"
+                ],
+                "summary": "标记全部通知已读",
+                "responses": {
+                    "200": {
+                        "description": "标记成功",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/response.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "string"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "标记全部通知为已读失败",
+                        "schema": {
+                            "$ref": "#/definitions/response.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "未登录或登录已过期",
+                        "schema": {
+                            "$ref": "#/definitions/response.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/notification/unread_count": {
+            "get": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "description": "获取当前用户的未读通知总数，data 包含 count 字段",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "通知模块"
+                ],
+                "summary": "获取未读通知数量",
+                "responses": {
+                    "200": {
+                        "description": "获取成功，data 包含 count 字段",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/response.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "object",
+                                            "additionalProperties": true
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "获取未读通知总数失败",
+                        "schema": {
+                            "$ref": "#/definitions/response.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "未登录或登录已过期",
+                        "schema": {
+                            "$ref": "#/definitions/response.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/social/bloggers": {
+            "get": {
+                "description": "分页获取指定用户关注的博主列表，使用 (cursor.last_uid, cursor.last_created_at) 复合游标翻页；软鉴权接口，可选携带 Authorization 头以返回关注关系",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "社交模块"
+                ],
+                "summary": "获取用户关注列表",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "目标用户 ID",
+                        "name": "uid",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "每页数量，范围 10-50",
+                        "name": "page_size",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "上一页最后一个用户 ID（游标）",
+                        "name": "cursor.last_uid",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "上一页最后一条关注记录创建时间（RFC3339，游标）",
+                        "name": "cursor.last_created_at",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "获取成功，data 包含 bloggers（用户列表）、total、next_cursor（有下一页时返回）",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/response.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "object",
+                                            "additionalProperties": true
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "请求参数错误或获取关注列表失败",
+                        "schema": {
+                            "$ref": "#/definitions/response.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/social/count": {
+            "get": {
+                "description": "获取指定用户的关注数与粉丝数，data 包含 follow_count（关注数）与 fan_count（粉丝数）",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "社交模块"
+                ],
+                "summary": "获取关注与粉丝数量",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "目标用户 ID",
+                        "name": "target_id",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "获取成功，data 包含 follow_count、fan_count 字段",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/response.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "object",
+                                            "additionalProperties": true
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "请求参数错误或获取关注数量失败",
+                        "schema": {
+                            "$ref": "#/definitions/response.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/social/follow": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "description": "当前登录用户关注指定博主，重复关注按幂等处理",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "社交模块"
+                ],
+                "summary": "关注博主",
+                "parameters": [
+                    {
+                        "description": "关注信息",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/dto.FollowRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "关注成功",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/response.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "string"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "请求参数错误或关注失败",
+                        "schema": {
+                            "$ref": "#/definitions/response.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "未登录或登录已过期",
+                        "schema": {
+                            "$ref": "#/definitions/response.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/social/followers": {
+            "get": {
+                "description": "分页获取指定用户的粉丝列表，使用 (cursor.last_uid, cursor.last_created_at) 复合游标翻页；软鉴权接口，可选携带 Authorization 头以返回关注关系",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "社交模块"
+                ],
+                "summary": "获取用户粉丝列表",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "目标用户 ID",
+                        "name": "uid",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "每页数量，范围 10-50",
+                        "name": "page_size",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "上一页最后一个用户 ID（游标）",
+                        "name": "cursor.last_uid",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "上一页最后一条关注记录创建时间（RFC3339，游标）",
+                        "name": "cursor.last_created_at",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "获取成功，data 包含 followers（用户列表）、total、next_cursor（有下一页时返回）",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/response.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "object",
+                                            "additionalProperties": true
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "请求参数错误或获取粉丝列表失败",
+                        "schema": {
+                            "$ref": "#/definitions/response.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/social/is_follow": {
+            "get": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "description": "查询当前登录用户与目标用户的关注关系，data 包含 is_follow（我是否关注对方）与 is_fan（对方是否是我的粉丝）",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "社交模块"
+                ],
+                "summary": "查询关注关系",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "目标用户 ID",
+                        "name": "target_id",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "查询成功，data 包含 is_follow、is_fan 字段",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/response.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "object",
+                                            "additionalProperties": true
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "请求参数错误或获取关注关系失败",
+                        "schema": {
+                            "$ref": "#/definitions/response.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "未登录或登录已过期",
+                        "schema": {
+                            "$ref": "#/definitions/response.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/social/unfollow": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "description": "当前登录用户取消关注指定博主，未关注时按幂等处理",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "社交模块"
+                ],
+                "summary": "取消关注博主",
+                "parameters": [
+                    {
+                        "description": "取消关注信息",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/dto.UnfollowRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "取消关注成功",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/response.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "string"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "请求参数错误或取消关注失败",
+                        "schema": {
+                            "$ref": "#/definitions/response.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "未登录或登录已过期",
+                        "schema": {
+                            "$ref": "#/definitions/response.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/sse": {
+            "get": {
+                "description": "使用 POST /sse/ticket 获取的一次性 ticket 建立 SSE 长连接，持续接收实时私信。服务端返回 text/event-stream：event 为 message 时 data 为消息内容，event 为 heartbeat 时 data 为 ping（每 15 秒一次）；连接建立后不返回 JSON，客户端断开即结束。ticket 30 秒内有效且仅可使用一次",
+                "produces": [
+                    "text/event-stream"
+                ],
+                "tags": [
+                    "私信模块"
+                ],
+                "summary": "建立 SSE 实时消息连接",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "一次性连接票据，由 POST /sse/ticket 获取",
+                        "name": "ticket",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "SSE 事件流（event: message / event: heartbeat）",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "400": {
+                        "description": "缺少 ticket、ticket 无效或已过期",
+                        "schema": {
+                            "$ref": "#/definitions/response.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/sse/ticket": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "description": "为当前登录用户签发一次性 SSE 连接票据，data 包含 ticket 字段；ticket 30 秒内有效且仅可使用一次，用于浏览器 EventSource 无法携带 Authorization 头时的鉴权",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "私信模块"
+                ],
+                "summary": "获取 SSE 连接票据",
+                "responses": {
+                    "200": {
+                        "description": "获取成功，data 包含 ticket 字段",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/response.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "object",
+                                            "additionalProperties": true
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "401": {
+                        "description": "未登录或登录已过期",
+                        "schema": {
+                            "$ref": "#/definitions/response.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "服务器内部错误",
+                        "schema": {
+                            "$ref": "#/definitions/response.Response"
+                        }
+                    }
+                }
+            }
+        },
         "/user/change_password": {
             "post": {
                 "security": [
@@ -34,7 +1699,7 @@
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/feedsystem_internal_dto.ChangePasswordRequest"
+                            "$ref": "#/definitions/dto.ChangePasswordRequest"
                         }
                     }
                 ],
@@ -44,7 +1709,7 @@
                         "schema": {
                             "allOf": [
                                 {
-                                    "$ref": "#/definitions/feedsystem_internal_utils_response.Response"
+                                    "$ref": "#/definitions/response.Response"
                                 },
                                 {
                                     "type": "object",
@@ -61,19 +1726,19 @@
                     "400": {
                         "description": "参数错误、旧密码错误或新密码不符合要求",
                         "schema": {
-                            "$ref": "#/definitions/feedsystem_internal_utils_response.Response"
+                            "$ref": "#/definitions/response.Response"
                         }
                     },
                     "401": {
                         "description": "未登录或登录已过期",
                         "schema": {
-                            "$ref": "#/definitions/feedsystem_internal_utils_response.Response"
+                            "$ref": "#/definitions/response.Response"
                         }
                     },
                     "500": {
                         "description": "服务器内部错误",
                         "schema": {
-                            "$ref": "#/definitions/feedsystem_internal_utils_response.Response"
+                            "$ref": "#/definitions/response.Response"
                         }
                     }
                 }
@@ -99,7 +1764,7 @@
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/feedsystem_internal_dto.FindByIDRequest"
+                            "$ref": "#/definitions/dto.FindByIDRequest"
                         }
                     }
                 ],
@@ -109,13 +1774,13 @@
                         "schema": {
                             "allOf": [
                                 {
-                                    "$ref": "#/definitions/feedsystem_internal_utils_response.Response"
+                                    "$ref": "#/definitions/response.Response"
                                 },
                                 {
                                     "type": "object",
                                     "properties": {
                                         "data": {
-                                            "$ref": "#/definitions/feedsystem_internal_dto.ProfileResponse"
+                                            "$ref": "#/definitions/dto.ProfileResponse"
                                         }
                                     }
                                 }
@@ -125,7 +1790,7 @@
                     "400": {
                         "description": "参数错误或用户不存在",
                         "schema": {
-                            "$ref": "#/definitions/feedsystem_internal_utils_response.Response"
+                            "$ref": "#/definitions/response.Response"
                         }
                     }
                 }
@@ -151,7 +1816,7 @@
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/feedsystem_internal_dto.FindByUsernameRequest"
+                            "$ref": "#/definitions/dto.FindByUsernameRequest"
                         }
                     }
                 ],
@@ -161,13 +1826,13 @@
                         "schema": {
                             "allOf": [
                                 {
-                                    "$ref": "#/definitions/feedsystem_internal_utils_response.Response"
+                                    "$ref": "#/definitions/response.Response"
                                 },
                                 {
                                     "type": "object",
                                     "properties": {
                                         "data": {
-                                            "$ref": "#/definitions/feedsystem_internal_dto.ProfileResponse"
+                                            "$ref": "#/definitions/dto.ProfileResponse"
                                         }
                                     }
                                 }
@@ -177,7 +1842,7 @@
                     "400": {
                         "description": "参数错误或用户不存在",
                         "schema": {
-                            "$ref": "#/definitions/feedsystem_internal_utils_response.Response"
+                            "$ref": "#/definitions/response.Response"
                         }
                     }
                 }
@@ -203,7 +1868,7 @@
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/feedsystem_internal_dto.LoginRequest"
+                            "$ref": "#/definitions/dto.LoginRequest"
                         }
                     }
                 ],
@@ -213,13 +1878,13 @@
                         "schema": {
                             "allOf": [
                                 {
-                                    "$ref": "#/definitions/feedsystem_internal_utils_response.Response"
+                                    "$ref": "#/definitions/response.Response"
                                 },
                                 {
                                     "type": "object",
                                     "properties": {
                                         "data": {
-                                            "$ref": "#/definitions/feedsystem_internal_dto.LoginResponse"
+                                            "$ref": "#/definitions/dto.LoginResponse"
                                         }
                                     }
                                 }
@@ -229,19 +1894,19 @@
                     "400": {
                         "description": "参数错误",
                         "schema": {
-                            "$ref": "#/definitions/feedsystem_internal_utils_response.Response"
+                            "$ref": "#/definitions/response.Response"
                         }
                     },
                     "401": {
                         "description": "用户名或密码错误",
                         "schema": {
-                            "$ref": "#/definitions/feedsystem_internal_utils_response.Response"
+                            "$ref": "#/definitions/response.Response"
                         }
                     },
                     "500": {
                         "description": "服务器内部错误",
                         "schema": {
-                            "$ref": "#/definitions/feedsystem_internal_utils_response.Response"
+                            "$ref": "#/definitions/response.Response"
                         }
                     }
                 }
@@ -272,7 +1937,7 @@
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/feedsystem_internal_dto.LogoutRequest"
+                            "$ref": "#/definitions/dto.LogoutRequest"
                         }
                     }
                 ],
@@ -282,7 +1947,7 @@
                         "schema": {
                             "allOf": [
                                 {
-                                    "$ref": "#/definitions/feedsystem_internal_utils_response.Response"
+                                    "$ref": "#/definitions/response.Response"
                                 },
                                 {
                                     "type": "object",
@@ -299,19 +1964,19 @@
                     "400": {
                         "description": "参数错误",
                         "schema": {
-                            "$ref": "#/definitions/feedsystem_internal_utils_response.Response"
+                            "$ref": "#/definitions/response.Response"
                         }
                     },
                     "401": {
                         "description": "未登录或登录已过期",
                         "schema": {
-                            "$ref": "#/definitions/feedsystem_internal_utils_response.Response"
+                            "$ref": "#/definitions/response.Response"
                         }
                     },
                     "500": {
                         "description": "服务器内部错误",
                         "schema": {
-                            "$ref": "#/definitions/feedsystem_internal_utils_response.Response"
+                            "$ref": "#/definitions/response.Response"
                         }
                     }
                 }
@@ -341,13 +2006,13 @@
                         "schema": {
                             "allOf": [
                                 {
-                                    "$ref": "#/definitions/feedsystem_internal_utils_response.Response"
+                                    "$ref": "#/definitions/response.Response"
                                 },
                                 {
                                     "type": "object",
                                     "properties": {
                                         "data": {
-                                            "$ref": "#/definitions/feedsystem_internal_dto.ProfileResponse"
+                                            "$ref": "#/definitions/dto.ProfileResponse"
                                         }
                                     }
                                 }
@@ -357,13 +2022,13 @@
                     "401": {
                         "description": "未登录或登录已过期",
                         "schema": {
-                            "$ref": "#/definitions/feedsystem_internal_utils_response.Response"
+                            "$ref": "#/definitions/response.Response"
                         }
                     },
                     "500": {
                         "description": "服务器内部错误",
                         "schema": {
-                            "$ref": "#/definitions/feedsystem_internal_utils_response.Response"
+                            "$ref": "#/definitions/response.Response"
                         }
                     }
                 }
@@ -392,7 +2057,7 @@
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/feedsystem_internal_dto.UpdateProfileRequest"
+                            "$ref": "#/definitions/dto.UpdateProfileRequest"
                         }
                     }
                 ],
@@ -402,13 +2067,13 @@
                         "schema": {
                             "allOf": [
                                 {
-                                    "$ref": "#/definitions/feedsystem_internal_utils_response.Response"
+                                    "$ref": "#/definitions/response.Response"
                                 },
                                 {
                                     "type": "object",
                                     "properties": {
                                         "data": {
-                                            "$ref": "#/definitions/feedsystem_internal_dto.ProfileResponse"
+                                            "$ref": "#/definitions/dto.ProfileResponse"
                                         }
                                     }
                                 }
@@ -418,19 +2083,19 @@
                     "400": {
                         "description": "参数错误或用户名已存在",
                         "schema": {
-                            "$ref": "#/definitions/feedsystem_internal_utils_response.Response"
+                            "$ref": "#/definitions/response.Response"
                         }
                     },
                     "401": {
                         "description": "未登录或登录已过期",
                         "schema": {
-                            "$ref": "#/definitions/feedsystem_internal_utils_response.Response"
+                            "$ref": "#/definitions/response.Response"
                         }
                     },
                     "500": {
                         "description": "服务器内部错误",
                         "schema": {
-                            "$ref": "#/definitions/feedsystem_internal_utils_response.Response"
+                            "$ref": "#/definitions/response.Response"
                         }
                     }
                 }
@@ -456,7 +2121,7 @@
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/feedsystem_internal_dto.RefreshRequest"
+                            "$ref": "#/definitions/dto.RefreshRequest"
                         }
                     }
                 ],
@@ -466,7 +2131,7 @@
                         "schema": {
                             "allOf": [
                                 {
-                                    "$ref": "#/definitions/feedsystem_internal_utils_response.Response"
+                                    "$ref": "#/definitions/response.Response"
                                 },
                                 {
                                     "type": "object",
@@ -483,19 +2148,19 @@
                     "400": {
                         "description": "参数错误",
                         "schema": {
-                            "$ref": "#/definitions/feedsystem_internal_utils_response.Response"
+                            "$ref": "#/definitions/response.Response"
                         }
                     },
                     "401": {
                         "description": "refresh token 无效或已过期",
                         "schema": {
-                            "$ref": "#/definitions/feedsystem_internal_utils_response.Response"
+                            "$ref": "#/definitions/response.Response"
                         }
                     },
                     "500": {
                         "description": "服务器内部错误",
                         "schema": {
-                            "$ref": "#/definitions/feedsystem_internal_utils_response.Response"
+                            "$ref": "#/definitions/response.Response"
                         }
                     }
                 }
@@ -521,7 +2186,7 @@
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/feedsystem_internal_dto.RegisterRequest"
+                            "$ref": "#/definitions/dto.RegisterRequest"
                         }
                     }
                 ],
@@ -531,7 +2196,7 @@
                         "schema": {
                             "allOf": [
                                 {
-                                    "$ref": "#/definitions/feedsystem_internal_utils_response.Response"
+                                    "$ref": "#/definitions/response.Response"
                                 },
                                 {
                                     "type": "object",
@@ -548,13 +2213,13 @@
                     "400": {
                         "description": "参数错误或用户名已存在",
                         "schema": {
-                            "$ref": "#/definitions/feedsystem_internal_utils_response.Response"
+                            "$ref": "#/definitions/response.Response"
                         }
                     },
                     "500": {
                         "description": "服务器内部错误",
                         "schema": {
-                            "$ref": "#/definitions/feedsystem_internal_utils_response.Response"
+                            "$ref": "#/definitions/response.Response"
                         }
                     }
                 }
@@ -593,7 +2258,7 @@
                         "schema": {
                             "allOf": [
                                 {
-                                    "$ref": "#/definitions/feedsystem_internal_utils_response.Response"
+                                    "$ref": "#/definitions/response.Response"
                                 },
                                 {
                                     "type": "object",
@@ -610,19 +2275,684 @@
                     "400": {
                         "description": "文件参数错误、大小不符合要求或格式不支持",
                         "schema": {
-                            "$ref": "#/definitions/feedsystem_internal_utils_response.Response"
+                            "$ref": "#/definitions/response.Response"
                         }
                     },
                     "401": {
                         "description": "未登录或登录已过期",
                         "schema": {
-                            "$ref": "#/definitions/feedsystem_internal_utils_response.Response"
+                            "$ref": "#/definitions/response.Response"
                         }
                     },
                     "500": {
                         "description": "服务器内部错误",
                         "schema": {
-                            "$ref": "#/definitions/feedsystem_internal_utils_response.Response"
+                            "$ref": "#/definitions/response.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/video/chunk/cancel": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "description": "取消上传并立即清理已上传分片目录与 Redis 会话，data 固定为 null",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "视频模块"
+                ],
+                "summary": "取消分片上传",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "分片上传会话 ID",
+                        "name": "upload_id",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "取消成功，data 为 null",
+                        "schema": {
+                            "$ref": "#/definitions/response.Response"
+                        }
+                    },
+                    "400": {
+                        "description": "upload_id 为空或会话不存在/过期",
+                        "schema": {
+                            "$ref": "#/definitions/response.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "未登录或登录已过期",
+                        "schema": {
+                            "$ref": "#/definitions/response.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "服务器内部错误",
+                        "schema": {
+                            "$ref": "#/definitions/response.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/video/chunk/create": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "description": "根据文件名与文件大小创建（或恢复）分片上传会话，返回 upload_id、分片大小与总分片数，用于后续分片上传与断点续传",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "视频模块"
+                ],
+                "summary": "创建分片上传会话",
+                "parameters": [
+                    {
+                        "description": "创建会话参数",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handler.CreateSessionReq"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "创建成功，data 包含 upload_id、chunk_size、total_chunks、expire_at 字段",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/response.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "object",
+                                            "additionalProperties": true
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "请求参数错误或上传参数不合法",
+                        "schema": {
+                            "$ref": "#/definitions/response.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "未登录或登录已过期",
+                        "schema": {
+                            "$ref": "#/definitions/response.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "服务器内部错误",
+                        "schema": {
+                            "$ref": "#/definitions/response.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/video/chunk/merge": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "description": "校验并合并全部分片生成成品视频，返回可直接用于发布接口的视频访问路径；分片未全部上传完成时返回 400",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "视频模块"
+                ],
+                "summary": "合并分片",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "分片上传会话 ID",
+                        "name": "upload_id",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "合并成功，data 包含 video_url 字段",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/response.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "object",
+                                            "additionalProperties": true
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "upload_id 为空、会话不存在/过期、分片未传完或文件校验失败",
+                        "schema": {
+                            "$ref": "#/definitions/response.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "未登录或登录已过期",
+                        "schema": {
+                            "$ref": "#/definitions/response.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "服务器内部错误",
+                        "schema": {
+                            "$ref": "#/definitions/response.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/video/chunk/status": {
+            "get": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "description": "查询会话已上传的分片列表，前端据此只补传缺失分片，实现断点续传",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "视频模块"
+                ],
+                "summary": "查询分片上传状态",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "分片上传会话 ID",
+                        "name": "upload_id",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "查询成功，data 包含 upload_id、total_chunks、chunk_size、uploaded、expire_at 字段",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/response.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "object",
+                                            "additionalProperties": true
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "upload_id 为空或会话不存在/过期",
+                        "schema": {
+                            "$ref": "#/definitions/response.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "未登录或登录已过期",
+                        "schema": {
+                            "$ref": "#/definitions/response.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "服务器内部错误",
+                        "schema": {
+                            "$ref": "#/definitions/response.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/video/chunk/upload": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "description": "请求体直接为分片二进制内容（application/octet-stream），upload_id 与分片序号通过 query 传入；单个分片大小受服务端限制",
+                "consumes": [
+                    "application/octet-stream"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "视频模块"
+                ],
+                "summary": "上传单个分片",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "分片上传会话 ID",
+                        "name": "upload_id",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "分片序号，从 0 开始",
+                        "name": "index",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "description": "分片二进制内容",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "上传成功，data 包含 uploaded（已上传分片序号列表）与 received（本次分片序号）",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/response.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "object",
+                                            "additionalProperties": true
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "分片参数不合法、会话不存在、分片缺失或校验失败",
+                        "schema": {
+                            "$ref": "#/definitions/response.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "未登录或登录已过期",
+                        "schema": {
+                            "$ref": "#/definitions/response.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "服务器内部错误",
+                        "schema": {
+                            "$ref": "#/definitions/response.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/video/list": {
+            "get": {
+                "description": "按作者 ID 分页获取视频列表，使用 (cursor.last_created_at, cursor.last_vid) 复合游标翻页；软鉴权接口，可选携带 Authorization 头以返回点赞状态",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "视频模块"
+                ],
+                "summary": "获取指定作者的视频列表",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "作者用户 ID",
+                        "name": "author_id",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "每页数量",
+                        "name": "page_size",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "上一页最后一条视频 ID（游标）",
+                        "name": "cursor.last_vid",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "上一页最后一条视频创建时间（RFC3339，游标）",
+                        "name": "cursor.last_created_at",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "获取成功",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/response.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/dto.VideoListResponse"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "请求参数错误",
+                        "schema": {
+                            "$ref": "#/definitions/response.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "服务器内部错误",
+                        "schema": {
+                            "$ref": "#/definitions/response.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/video/publish": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "description": "使用已上传的视频地址与封面地址创建视频记录，可同时提交标签列表",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "视频模块"
+                ],
+                "summary": "发布视频",
+                "parameters": [
+                    {
+                        "description": "发布视频信息",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/dto.PublishVideoRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "发布成功",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/response.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/dto.PublishVideoResponse"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "请求参数错误",
+                        "schema": {
+                            "$ref": "#/definitions/response.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "未登录或登录已过期",
+                        "schema": {
+                            "$ref": "#/definitions/response.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "服务器内部错误",
+                        "schema": {
+                            "$ref": "#/definitions/response.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/video/upload_cover": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "description": "上传视频封面图片（multipart/form-data，字段名 file），成功后返回可直接用于发布接口的封面地址；仅支持 jpg/jpeg/png/webp",
+                "consumes": [
+                    "multipart/form-data"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "视频模块"
+                ],
+                "summary": "上传视频封面",
+                "parameters": [
+                    {
+                        "type": "file",
+                        "description": "封面图片（jpg/jpeg/png/webp）",
+                        "name": "file",
+                        "in": "formData",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "上传成功，data 包含 cover_url 字段",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/response.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "object",
+                                            "additionalProperties": true
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "文件参数错误、大小不符合要求或格式不合法",
+                        "schema": {
+                            "$ref": "#/definitions/response.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "未登录或登录已过期",
+                        "schema": {
+                            "$ref": "#/definitions/response.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "服务器内部错误",
+                        "schema": {
+                            "$ref": "#/definitions/response.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/video/upload_video": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "description": "上传视频原始文件（multipart/form-data，字段名 file），成功后返回可直接用于发布接口的访问地址；仅支持 mp4/avi/mov/mkv，单文件约 100MB 以内",
+                "consumes": [
+                    "multipart/form-data"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "视频模块"
+                ],
+                "summary": "上传视频文件",
+                "parameters": [
+                    {
+                        "type": "file",
+                        "description": "视频文件（mp4/avi/mov/mkv）",
+                        "name": "file",
+                        "in": "formData",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "上传成功，data 包含 video_url 字段",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/response.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "object",
+                                            "additionalProperties": true
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "文件参数错误、大小不符合要求或格式不合法",
+                        "schema": {
+                            "$ref": "#/definitions/response.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "未登录或登录已过期",
+                        "schema": {
+                            "$ref": "#/definitions/response.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "服务器内部错误",
+                        "schema": {
+                            "$ref": "#/definitions/response.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/video/{id}": {
+            "get": {
+                "description": "根据视频 ID 获取详情；软鉴权接口，可选携带 Authorization 头，携带时返回当前用户的真实点赞状态，游客 is_liked 恒为 false",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "视频模块"
+                ],
+                "summary": "获取视频详情",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "视频 ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "获取成功",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/response.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/dto.VideoDetailResponse"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "视频ID不合法或视频不存在",
+                        "schema": {
+                            "$ref": "#/definitions/response.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "服务器内部错误",
+                        "schema": {
+                            "$ref": "#/definitions/response.Response"
                         }
                     }
                 }
@@ -630,7 +2960,21 @@
         }
     },
     "definitions": {
-        "feedsystem_internal_dto.ChangePasswordRequest": {
+        "dto.AuthorBrief": {
+            "type": "object",
+            "properties": {
+                "avatar_url": {
+                    "type": "string"
+                },
+                "user_id": {
+                    "type": "integer"
+                },
+                "user_name": {
+                    "type": "string"
+                }
+            }
+        },
+        "dto.ChangePasswordRequest": {
             "type": "object",
             "properties": {
                 "confirm_password": {
@@ -645,7 +2989,103 @@
                 }
             }
         },
-        "feedsystem_internal_dto.FindByIDRequest": {
+        "dto.DeleteCommentRequest": {
+            "type": "object",
+            "properties": {
+                "comment_id": {
+                    "type": "integer"
+                }
+            }
+        },
+        "dto.FeedCursor": {
+            "type": "object",
+            "properties": {
+                "last_created_at": {
+                    "type": "string"
+                },
+                "last_likes_count": {
+                    "type": "integer"
+                },
+                "last_popularity": {
+                    "type": "integer"
+                },
+                "last_uid": {
+                    "description": "关注/粉丝列表使用，与 last_vid 语义一致，均为业务主键",
+                    "type": "string"
+                },
+                "last_vid": {
+                    "type": "string"
+                }
+            }
+        },
+        "dto.FeedItemResp": {
+            "type": "object",
+            "properties": {
+                "author_name": {
+                    "type": "string"
+                },
+                "author_uid": {
+                    "type": "integer"
+                },
+                "avatar_url": {
+                    "type": "string"
+                },
+                "comments_cnt": {
+                    "description": "评论总数",
+                    "type": "integer"
+                },
+                "cover_url": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "description": "视频创建时间戳",
+                    "type": "string"
+                },
+                "desc": {
+                    "type": "string"
+                },
+                "is_follow": {
+                    "description": "当前登录用户是否关注作者",
+                    "type": "boolean"
+                },
+                "is_like": {
+                    "description": "当前登录用户是否点赞该视频",
+                    "type": "boolean"
+                },
+                "likes_cnt": {
+                    "description": "点赞总数，优先取缓存中的实时展示值",
+                    "type": "integer"
+                },
+                "popularity": {
+                    "description": "热度值，越大越热",
+                    "type": "integer"
+                },
+                "title": {
+                    "type": "string"
+                },
+                "vid": {
+                    "type": "string"
+                },
+                "video_url": {
+                    "type": "string"
+                }
+            }
+        },
+        "dto.FeedListResp": {
+            "type": "object",
+            "properties": {
+                "list": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/dto.FeedItemResp"
+                    }
+                },
+                "next_cursor": {
+                    "$ref": "#/definitions/dto.FeedCursor"
+                }
+            }
+        },
+        "dto.FindByIDRequest": {
             "type": "object",
             "properties": {
                 "user_id": {
@@ -653,7 +3093,7 @@
                 }
             }
         },
-        "feedsystem_internal_dto.FindByUsernameRequest": {
+        "dto.FindByUsernameRequest": {
             "type": "object",
             "properties": {
                 "user_name": {
@@ -661,7 +3101,102 @@
                 }
             }
         },
-        "feedsystem_internal_dto.LoginRequest": {
+        "dto.FollowRequest": {
+            "type": "object",
+            "required": [
+                "blogger_id"
+            ],
+            "properties": {
+                "blogger_id": {
+                    "type": "integer"
+                }
+            }
+        },
+        "dto.GetHistoryResponse": {
+            "type": "object",
+            "properties": {
+                "has_more": {
+                    "description": "是否还有更早的消息",
+                    "type": "boolean"
+                },
+                "messages": {
+                    "description": "新 -\u003e 旧",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/model.Message"
+                    }
+                },
+                "next_last_id": {
+                    "description": "供前端请求下一页的游标",
+                    "type": "integer"
+                }
+            }
+        },
+        "dto.LikeRequest": {
+            "type": "object",
+            "required": [
+                "video_id"
+            ],
+            "properties": {
+                "video_id": {
+                    "type": "integer"
+                }
+            }
+        },
+        "dto.ListCommentsResponse": {
+            "type": "object",
+            "properties": {
+                "comments": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/model.Comment"
+                    }
+                },
+                "has_more": {
+                    "description": "是否还有更多评论",
+                    "type": "boolean"
+                },
+                "last_id": {
+                    "type": "integer"
+                },
+                "last_time": {
+                    "description": "给前端下一轮请求的游标（Unix毫秒）",
+                    "type": "integer"
+                },
+                "total": {
+                    "description": "视频评论总数量，来自Redis计数器",
+                    "type": "integer"
+                }
+            }
+        },
+        "dto.ListLikedVideosRequest": {
+            "type": "object",
+            "required": [
+                "page_size",
+                "user_id"
+            ],
+            "properties": {
+                "cursor": {
+                    "$ref": "#/definitions/dto.FeedCursor"
+                },
+                "page_num": {
+                    "type": "integer",
+                    "maximum": 100000,
+                    "minimum": 1
+                },
+                "page_size": {
+                    "type": "integer",
+                    "maximum": 30,
+                    "minimum": 1
+                },
+                "user_id": {
+                    "type": "integer",
+                    "maximum": 4294967295,
+                    "minimum": 1
+                }
+            }
+        },
+        "dto.LoginRequest": {
             "type": "object",
             "properties": {
                 "password": {
@@ -672,7 +3207,7 @@
                 }
             }
         },
-        "feedsystem_internal_dto.LoginResponse": {
+        "dto.LoginResponse": {
             "type": "object",
             "properties": {
                 "refresh_token": {
@@ -689,7 +3224,7 @@
                 }
             }
         },
-        "feedsystem_internal_dto.LogoutRequest": {
+        "dto.LogoutRequest": {
             "type": "object",
             "properties": {
                 "refresh_token": {
@@ -698,7 +3233,18 @@
                 }
             }
         },
-        "feedsystem_internal_dto.ProfileResponse": {
+        "dto.MarkAsReadRequest": {
+            "type": "object",
+            "required": [
+                "notification_id"
+            ],
+            "properties": {
+                "notification_id": {
+                    "type": "integer"
+                }
+            }
+        },
+        "dto.ProfileResponse": {
             "type": "object",
             "properties": {
                 "avatar_url": {
@@ -715,7 +3261,53 @@
                 }
             }
         },
-        "feedsystem_internal_dto.RefreshRequest": {
+        "dto.PublishCommentRequest": {
+            "type": "object",
+            "properties": {
+                "content": {
+                    "type": "string"
+                },
+                "parent_id": {
+                    "type": "integer"
+                },
+                "video_id": {
+                    "type": "integer"
+                }
+            }
+        },
+        "dto.PublishVideoRequest": {
+            "type": "object",
+            "properties": {
+                "cover_url": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "tags": {
+                    "description": "标签，写入 video_tag 关联表",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "title": {
+                    "type": "string"
+                },
+                "video_url": {
+                    "type": "string"
+                }
+            }
+        },
+        "dto.PublishVideoResponse": {
+            "type": "object",
+            "properties": {
+                "video_id": {
+                    "type": "integer"
+                }
+            }
+        },
+        "dto.RefreshRequest": {
             "type": "object",
             "properties": {
                 "old_access_token": {
@@ -726,7 +3318,7 @@
                 }
             }
         },
-        "feedsystem_internal_dto.RegisterRequest": {
+        "dto.RegisterRequest": {
             "type": "object",
             "properties": {
                 "password": {
@@ -737,7 +3329,58 @@
                 }
             }
         },
-        "feedsystem_internal_dto.UpdateProfileRequest": {
+        "dto.SendMessageRequest": {
+            "type": "object",
+            "required": [
+                "content",
+                "receiver_id"
+            ],
+            "properties": {
+                "content": {
+                    "type": "string"
+                },
+                "receiver_id": {
+                    "type": "integer"
+                }
+            }
+        },
+        "dto.SessionDetail": {
+            "type": "object",
+            "properties": {
+                "content": {
+                    "description": "最新消息内容",
+                    "type": "string"
+                },
+                "created_at": {
+                    "description": "最新消息时间",
+                    "type": "integer"
+                },
+                "target_id": {
+                    "description": "对方的 userID",
+                    "type": "integer"
+                },
+                "target_name": {
+                    "description": "对方的用户名",
+                    "type": "string"
+                },
+                "unread_count": {
+                    "description": "未读消息数",
+                    "type": "integer"
+                }
+            }
+        },
+        "dto.UnfollowRequest": {
+            "type": "object",
+            "required": [
+                "blogger_id"
+            ],
+            "properties": {
+                "blogger_id": {
+                    "type": "integer"
+                }
+            }
+        },
+        "dto.UpdateProfileRequest": {
             "type": "object",
             "properties": {
                 "avatar_url": {
@@ -752,7 +3395,138 @@
                 }
             }
         },
-        "feedsystem_internal_utils_response.Response": {
+        "dto.VideoDetailResponse": {
+            "type": "object",
+            "properties": {
+                "author": {
+                    "$ref": "#/definitions/dto.AuthorBrief"
+                },
+                "cover_url": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "is_liked": {
+                    "description": "软鉴权：游客永远false，登录用户才会算出真实状态",
+                    "type": "boolean"
+                },
+                "like_count": {
+                    "type": "integer"
+                },
+                "title": {
+                    "type": "string"
+                },
+                "video_id": {
+                    "type": "integer"
+                },
+                "video_url": {
+                    "type": "string"
+                }
+            }
+        },
+        "dto.VideoListResponse": {
+            "type": "object",
+            "properties": {
+                "next_cursor": {
+                    "description": "复合游标，为空表示没有下一页",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/dto.FeedCursor"
+                        }
+                    ]
+                },
+                "total": {
+                    "type": "integer"
+                },
+                "videos": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/dto.VideoDetailResponse"
+                    }
+                }
+            }
+        },
+        "handler.CreateSessionReq": {
+            "type": "object",
+            "required": [
+                "file_size",
+                "filename"
+            ],
+            "properties": {
+                "file_hash": {
+                    "description": "可选，提供时合并后强制校验",
+                    "type": "string"
+                },
+                "file_size": {
+                    "type": "integer"
+                },
+                "filename": {
+                    "type": "string"
+                }
+            }
+        },
+        "model.Comment": {
+            "type": "object",
+            "properties": {
+                "content": {
+                    "description": "评论内容",
+                    "type": "string"
+                },
+                "created_at": {
+                    "description": "创建时间，复合索引用于按视频ID和创建时间排序",
+                    "type": "string"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "parent_id": {
+                    "description": "父评论ID，0表示顶级评论",
+                    "type": "integer"
+                },
+                "user_id": {
+                    "description": "关联用户ID",
+                    "type": "integer"
+                },
+                "user_name": {
+                    "description": "冗余关联用户名",
+                    "type": "string"
+                },
+                "video_id": {
+                    "description": "关联视频ID",
+                    "type": "integer"
+                }
+            }
+        },
+        "model.Message": {
+            "type": "object",
+            "properties": {
+                "content": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "id": {
+                    "description": "在主键 ID 上追加一个联合索引，优先级为 2",
+                    "type": "integer"
+                },
+                "is_read": {
+                    "type": "boolean"
+                },
+                "receiver_id": {
+                    "type": "integer"
+                },
+                "sender_id": {
+                    "description": "SenderID 和 ReceiverID 之间有两个联合索引，分别是 idx_sender_receiver 和 idx_receiver_sender\n分别用于加速查询 “用户发送给别人的消息” 和 “用户接受到别人的消息”",
+                    "type": "integer"
+                },
+                "sender_name": {
+                    "type": "string"
+                }
+            }
+        },
+        "response.Response": {
             "type": "object",
             "properties": {
                 "code": {

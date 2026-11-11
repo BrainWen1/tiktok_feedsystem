@@ -18,6 +18,17 @@ func NewMessageHandler(messageService *service.MessageService) *MessageHandler {
 }
 
 // SendMessage 发送消息
+// @Summary      发送私信
+// @Description  当前登录用户向指定用户发送一条私信，接收方在线时通过 SSE 实时推送
+// @Tags         私信模块
+// @Accept       json
+// @Produce      json
+// @Security     Bearer
+// @Param        request body dto.SendMessageRequest true "消息内容"
+// @Success      200 {object} response.Response{data=string} "发送成功"
+// @Failure      400 {object} response.Response "参数错误或发送消息失败"
+// @Failure      401 {object} response.Response "未登录或登录已过期"
+// @Router       /message/send [post]
 func (h *MessageHandler) SendMessage(c *gin.Context) {
 	// 获取 senderID 和 senderName
 	senderID, senderName, err := getUserFromCtx(c)
@@ -46,6 +57,18 @@ func (h *MessageHandler) SendMessage(c *gin.Context) {
 }
 
 // GetHistory 获取聊天历史
+// @Summary      获取聊天历史
+// @Description  按消息 ID 游标分页获取当前用户与目标用户的聊天记录，结果按时间从新到旧排列
+// @Tags         私信模块
+// @Produce      json
+// @Security     Bearer
+// @Param        target_id query int true  "对方用户 ID"
+// @Param        last_id   query int false "游标，上一页最老一条消息的 ID（第一页传 0）"
+// @Param        page_size query int false "每页条数，默认 20"
+// @Success      200 {object} response.Response{data=dto.GetHistoryResponse} "获取成功"
+// @Failure      400 {object} response.Response "参数错误或获取聊天历史失败"
+// @Failure      401 {object} response.Response "未登录或登录已过期"
+// @Router       /message/history [get]
 func (h *MessageHandler) GetHistory(c *gin.Context) {
 	// 获取目标用户的 userID
 	userID, ok := requireUserID(c)
@@ -73,6 +96,16 @@ func (h *MessageHandler) GetHistory(c *gin.Context) {
 }
 
 // ListSessions 获取会话列表
+// @Summary      获取会话列表
+// @Description  获取当前用户的私信会话列表，包含对方信息、最新一条消息内容与未读消息数
+// @Tags         私信模块
+// @Produce      json
+// @Security     Bearer
+// @Param        limit query int false "拉取数量，默认 20"
+// @Success      200 {object} response.Response{data=[]dto.SessionDetail} "获取成功"
+// @Failure      400 {object} response.Response "参数错误或获取会话列表失败"
+// @Failure      401 {object} response.Response "未登录或登录已过期"
+// @Router       /message/sessions [get]
 func (h *MessageHandler) ListSessions(c *gin.Context) {
 	// 获取 userID
 	userID, ok := requireUserID(c)

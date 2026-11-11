@@ -1,6 +1,15 @@
 basePath: /
 definitions:
-  feedsystem_internal_dto.ChangePasswordRequest:
+  dto.AuthorBrief:
+    properties:
+      avatar_url:
+        type: string
+      user_id:
+        type: integer
+      user_name:
+        type: string
+    type: object
+  dto.ChangePasswordRequest:
     properties:
       confirm_password:
         description: 确认新密码
@@ -10,24 +19,155 @@ definitions:
       old_password:
         type: string
     type: object
-  feedsystem_internal_dto.FindByIDRequest:
+  dto.DeleteCommentRequest:
+    properties:
+      comment_id:
+        type: integer
+    type: object
+  dto.FeedCursor:
+    properties:
+      last_created_at:
+        type: string
+      last_likes_count:
+        type: integer
+      last_popularity:
+        type: integer
+      last_uid:
+        description: 关注/粉丝列表使用，与 last_vid 语义一致，均为业务主键
+        type: string
+      last_vid:
+        type: string
+    type: object
+  dto.FeedItemResp:
+    properties:
+      author_name:
+        type: string
+      author_uid:
+        type: integer
+      avatar_url:
+        type: string
+      comments_cnt:
+        description: 评论总数
+        type: integer
+      cover_url:
+        type: string
+      created_at:
+        description: 视频创建时间戳
+        type: string
+      desc:
+        type: string
+      is_follow:
+        description: 当前登录用户是否关注作者
+        type: boolean
+      is_like:
+        description: 当前登录用户是否点赞该视频
+        type: boolean
+      likes_cnt:
+        description: 点赞总数，优先取缓存中的实时展示值
+        type: integer
+      popularity:
+        description: 热度值，越大越热
+        type: integer
+      title:
+        type: string
+      vid:
+        type: string
+      video_url:
+        type: string
+    type: object
+  dto.FeedListResp:
+    properties:
+      list:
+        items:
+          $ref: '#/definitions/dto.FeedItemResp'
+        type: array
+      next_cursor:
+        $ref: '#/definitions/dto.FeedCursor'
+    type: object
+  dto.FindByIDRequest:
     properties:
       user_id:
         type: integer
     type: object
-  feedsystem_internal_dto.FindByUsernameRequest:
+  dto.FindByUsernameRequest:
     properties:
       user_name:
         type: string
     type: object
-  feedsystem_internal_dto.LoginRequest:
+  dto.FollowRequest:
+    properties:
+      blogger_id:
+        type: integer
+    required:
+    - blogger_id
+    type: object
+  dto.GetHistoryResponse:
+    properties:
+      has_more:
+        description: 是否还有更早的消息
+        type: boolean
+      messages:
+        description: 新 -> 旧
+        items:
+          $ref: '#/definitions/model.Message'
+        type: array
+      next_last_id:
+        description: 供前端请求下一页的游标
+        type: integer
+    type: object
+  dto.LikeRequest:
+    properties:
+      video_id:
+        type: integer
+    required:
+    - video_id
+    type: object
+  dto.ListCommentsResponse:
+    properties:
+      comments:
+        items:
+          $ref: '#/definitions/model.Comment'
+        type: array
+      has_more:
+        description: 是否还有更多评论
+        type: boolean
+      last_id:
+        type: integer
+      last_time:
+        description: 给前端下一轮请求的游标（Unix毫秒）
+        type: integer
+      total:
+        description: 视频评论总数量，来自Redis计数器
+        type: integer
+    type: object
+  dto.ListLikedVideosRequest:
+    properties:
+      cursor:
+        $ref: '#/definitions/dto.FeedCursor'
+      page_num:
+        maximum: 100000
+        minimum: 1
+        type: integer
+      page_size:
+        maximum: 30
+        minimum: 1
+        type: integer
+      user_id:
+        maximum: 4294967295
+        minimum: 1
+        type: integer
+    required:
+    - page_size
+    - user_id
+    type: object
+  dto.LoginRequest:
     properties:
       password:
         type: string
       user_name:
         type: string
     type: object
-  feedsystem_internal_dto.LoginResponse:
+  dto.LoginResponse:
     properties:
       refresh_token:
         type: string
@@ -38,13 +178,20 @@ definitions:
       user_name:
         type: string
     type: object
-  feedsystem_internal_dto.LogoutRequest:
+  dto.LogoutRequest:
     properties:
       refresh_token:
         description: 为了适应前期的简单设计，登出时也需要传入refreshToken，方便在Redis中删除对应的refreshToken
         type: string
     type: object
-  feedsystem_internal_dto.ProfileResponse:
+  dto.MarkAsReadRequest:
+    properties:
+      notification_id:
+        type: integer
+    required:
+    - notification_id
+    type: object
+  dto.ProfileResponse:
     properties:
       avatar_url:
         type: string
@@ -55,21 +202,86 @@ definitions:
       user_name:
         type: string
     type: object
-  feedsystem_internal_dto.RefreshRequest:
+  dto.PublishCommentRequest:
+    properties:
+      content:
+        type: string
+      parent_id:
+        type: integer
+      video_id:
+        type: integer
+    type: object
+  dto.PublishVideoRequest:
+    properties:
+      cover_url:
+        type: string
+      description:
+        type: string
+      tags:
+        description: 标签，写入 video_tag 关联表
+        items:
+          type: string
+        type: array
+      title:
+        type: string
+      video_url:
+        type: string
+    type: object
+  dto.PublishVideoResponse:
+    properties:
+      video_id:
+        type: integer
+    type: object
+  dto.RefreshRequest:
     properties:
       old_access_token:
         type: string
       refresh_token:
         type: string
     type: object
-  feedsystem_internal_dto.RegisterRequest:
+  dto.RegisterRequest:
     properties:
       password:
         type: string
       user_name:
         type: string
     type: object
-  feedsystem_internal_dto.UpdateProfileRequest:
+  dto.SendMessageRequest:
+    properties:
+      content:
+        type: string
+      receiver_id:
+        type: integer
+    required:
+    - content
+    - receiver_id
+    type: object
+  dto.SessionDetail:
+    properties:
+      content:
+        description: 最新消息内容
+        type: string
+      created_at:
+        description: 最新消息时间
+        type: integer
+      target_id:
+        description: 对方的 userID
+        type: integer
+      target_name:
+        description: 对方的用户名
+        type: string
+      unread_count:
+        description: 未读消息数
+        type: integer
+    type: object
+  dto.UnfollowRequest:
+    properties:
+      blogger_id:
+        type: integer
+    required:
+    - blogger_id
+    type: object
+  dto.UpdateProfileRequest:
     properties:
       avatar_url:
         type: string
@@ -79,7 +291,97 @@ definitions:
         description: 使用指针类型，这样可以区分字段是未传入还是传入了空值
         type: string
     type: object
-  feedsystem_internal_utils_response.Response:
+  dto.VideoDetailResponse:
+    properties:
+      author:
+        $ref: '#/definitions/dto.AuthorBrief'
+      cover_url:
+        type: string
+      description:
+        type: string
+      is_liked:
+        description: 软鉴权：游客永远false，登录用户才会算出真实状态
+        type: boolean
+      like_count:
+        type: integer
+      title:
+        type: string
+      video_id:
+        type: integer
+      video_url:
+        type: string
+    type: object
+  dto.VideoListResponse:
+    properties:
+      next_cursor:
+        allOf:
+        - $ref: '#/definitions/dto.FeedCursor'
+        description: 复合游标，为空表示没有下一页
+      total:
+        type: integer
+      videos:
+        items:
+          $ref: '#/definitions/dto.VideoDetailResponse'
+        type: array
+    type: object
+  handler.CreateSessionReq:
+    properties:
+      file_hash:
+        description: 可选，提供时合并后强制校验
+        type: string
+      file_size:
+        type: integer
+      filename:
+        type: string
+    required:
+    - file_size
+    - filename
+    type: object
+  model.Comment:
+    properties:
+      content:
+        description: 评论内容
+        type: string
+      created_at:
+        description: 创建时间，复合索引用于按视频ID和创建时间排序
+        type: string
+      id:
+        type: integer
+      parent_id:
+        description: 父评论ID，0表示顶级评论
+        type: integer
+      user_id:
+        description: 关联用户ID
+        type: integer
+      user_name:
+        description: 冗余关联用户名
+        type: string
+      video_id:
+        description: 关联视频ID
+        type: integer
+    type: object
+  model.Message:
+    properties:
+      content:
+        type: string
+      created_at:
+        type: string
+      id:
+        description: 在主键 ID 上追加一个联合索引，优先级为 2
+        type: integer
+      is_read:
+        type: boolean
+      receiver_id:
+        type: integer
+      sender_id:
+        description: |-
+          SenderID 和 ReceiverID 之间有两个联合索引，分别是 idx_sender_receiver 和 idx_receiver_sender
+          分别用于加速查询 “用户发送给别人的消息” 和 “用户接受到别人的消息”
+        type: integer
+      sender_name:
+        type: string
+    type: object
+  response.Response:
     properties:
       code:
         description: 状态码
@@ -97,6 +399,1018 @@ info:
   title: TikTok Feed System API
   version: "1.0"
 paths:
+  /comment/delete:
+    post:
+      consumes:
+      - application/json
+      description: 当前登录用户删除自己发布的评论
+      parameters:
+      - description: 删除评论信息
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.DeleteCommentRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 评论删除成功
+          schema:
+            allOf:
+            - $ref: '#/definitions/response.Response'
+            - properties:
+                data:
+                  type: string
+              type: object
+        "400":
+          description: 请求参数错误
+          schema:
+            $ref: '#/definitions/response.Response'
+        "401":
+          description: 未登录或登录已过期
+          schema:
+            $ref: '#/definitions/response.Response'
+        "500":
+          description: 服务器内部错误
+          schema:
+            $ref: '#/definitions/response.Response'
+      security:
+      - Bearer: []
+      summary: 删除评论
+      tags:
+      - 评论模块
+  /comment/list:
+    get:
+      description: 按 (last_time, last_id) 游标分页获取指定视频的评论列表；软鉴权接口，可选携带 Authorization
+        头
+      parameters:
+      - description: 视频 ID
+        in: query
+        name: video_id
+        required: true
+        type: integer
+      - description: 上一页最后一条评论的 Unix 毫秒时间戳（第一页不传）
+        in: query
+        name: last_time
+        type: integer
+      - description: 上一页最后一条评论 ID，与 last_time 成对使用
+        in: query
+        name: last_id
+        type: integer
+      - description: 每页数量，范围 5-50
+        in: query
+        name: page_size
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 获取成功
+          schema:
+            allOf:
+            - $ref: '#/definitions/response.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/dto.ListCommentsResponse'
+              type: object
+        "400":
+          description: 请求参数错误
+          schema:
+            $ref: '#/definitions/response.Response'
+        "500":
+          description: 服务器内部错误
+          schema:
+            $ref: '#/definitions/response.Response'
+      summary: 获取视频评论列表
+      tags:
+      - 评论模块
+  /comment/publish:
+    post:
+      consumes:
+      - application/json
+      description: 当前登录用户对指定视频发布评论，parent_id 非 0 时表示回复该条评论
+      parameters:
+      - description: 评论信息
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.PublishCommentRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 评论发布成功
+          schema:
+            allOf:
+            - $ref: '#/definitions/response.Response'
+            - properties:
+                data:
+                  type: string
+              type: object
+        "400":
+          description: 请求参数错误
+          schema:
+            $ref: '#/definitions/response.Response'
+        "401":
+          description: 未登录或登录已过期
+          schema:
+            $ref: '#/definitions/response.Response'
+        "500":
+          description: 服务器内部错误
+          schema:
+            $ref: '#/definitions/response.Response'
+      security:
+      - Bearer: []
+      summary: 发布评论
+      tags:
+      - 评论模块
+  /feed/list:
+    get:
+      description: 按创建时间倒序返回视频流，使用 (cursor.last_created_at, cursor.last_vid) 复合游标翻页；软鉴权接口，可选携带
+        Authorization 头以返回点赞/关注状态
+      parameters:
+      - description: 每页数量
+        in: query
+        name: limit
+        type: integer
+      - description: 上一页最后一条视频 ID（游标）
+        in: query
+        name: cursor.last_vid
+        type: string
+      - description: 上一页最后一条视频创建时间（RFC3339，游标）
+        in: query
+        name: cursor.last_created_at
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 获取成功
+          schema:
+            allOf:
+            - $ref: '#/definitions/response.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/dto.FeedListResp'
+              type: object
+        "400":
+          description: 请求参数错误
+          schema:
+            $ref: '#/definitions/response.Response'
+        "500":
+          description: 服务器内部错误
+          schema:
+            $ref: '#/definitions/response.Response'
+      summary: 获取最新视频流
+      tags:
+      - 动态流模块
+  /feed/listByFollowing:
+    get:
+      description: 返回当前登录用户所关注博主发布的视频，使用 (cursor.last_created_at, cursor.last_vid)
+        复合游标翻页
+      parameters:
+      - description: 每页数量
+        in: query
+        name: limit
+        type: integer
+      - description: 上一页最后一条视频 ID（游标）
+        in: query
+        name: cursor.last_vid
+        type: string
+      - description: 上一页最后一条视频创建时间（RFC3339，游标）
+        in: query
+        name: cursor.last_created_at
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 获取成功
+          schema:
+            allOf:
+            - $ref: '#/definitions/response.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/dto.FeedListResp'
+              type: object
+        "400":
+          description: 请求参数错误
+          schema:
+            $ref: '#/definitions/response.Response'
+        "401":
+          description: 未登录或登录已过期
+          schema:
+            $ref: '#/definitions/response.Response'
+        "500":
+          description: 服务器内部错误
+          schema:
+            $ref: '#/definitions/response.Response'
+      security:
+      - Bearer: []
+      summary: 获取关注博主的视频流
+      tags:
+      - 动态流模块
+  /feed/listByLikesCount:
+    get:
+      description: 按视频点赞总数降序返回视频流，使用 (cursor.last_likes_count, cursor.last_vid) 复合游标翻页；软鉴权接口，可选携带
+        Authorization 头以返回点赞/关注状态
+      parameters:
+      - description: 每页数量
+        in: query
+        name: limit
+        type: integer
+      - description: 上一页最后一条视频 ID（游标）
+        in: query
+        name: cursor.last_vid
+        type: string
+      - description: 上一页最后一条视频的点赞总数（游标）
+        in: query
+        name: cursor.last_likes_count
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 获取成功
+          schema:
+            allOf:
+            - $ref: '#/definitions/response.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/dto.FeedListResp'
+              type: object
+        "400":
+          description: 请求参数错误
+          schema:
+            $ref: '#/definitions/response.Response'
+        "500":
+          description: 服务器内部错误
+          schema:
+            $ref: '#/definitions/response.Response'
+      summary: 获取点赞数榜单视频流
+      tags:
+      - 动态流模块
+  /feed/listByPopularity:
+    get:
+      description: 按热度值（popularity）倒序返回视频流，使用 (cursor.last_popularity, cursor.last_vid)
+        复合游标翻页；软鉴权接口，可选携带 Authorization 头以返回点赞/关注状态
+      parameters:
+      - description: 每页数量
+        in: query
+        name: limit
+        type: integer
+      - description: 上一页最后一条视频 ID（游标）
+        in: query
+        name: cursor.last_vid
+        type: string
+      - description: 上一页最后一条视频的热度值（游标）
+        in: query
+        name: cursor.last_popularity
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 获取成功
+          schema:
+            allOf:
+            - $ref: '#/definitions/response.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/dto.FeedListResp'
+              type: object
+        "400":
+          description: 请求参数错误
+          schema:
+            $ref: '#/definitions/response.Response'
+        "500":
+          description: 服务器内部错误
+          schema:
+            $ref: '#/definitions/response.Response'
+      summary: 获取热门视频流
+      tags:
+      - 动态流模块
+  /feed/listByTag:
+    get:
+      description: 根据标签筛选视频，按创建时间倒序返回，使用 (cursor.last_created_at, cursor.last_vid)
+        复合游标翻页；软鉴权接口，可选携带 Authorization 头以返回点赞/关注状态
+      parameters:
+      - description: 标签名称
+        in: query
+        name: tag
+        required: true
+        type: string
+      - description: 每页数量
+        in: query
+        name: limit
+        type: integer
+      - description: 上一页最后一条视频 ID（游标）
+        in: query
+        name: cursor.last_vid
+        type: string
+      - description: 上一页最后一条视频创建时间（RFC3339，游标）
+        in: query
+        name: cursor.last_created_at
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 获取成功
+          schema:
+            allOf:
+            - $ref: '#/definitions/response.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/dto.FeedListResp'
+              type: object
+        "400":
+          description: 请求参数错误
+          schema:
+            $ref: '#/definitions/response.Response'
+        "500":
+          description: 服务器内部错误
+          schema:
+            $ref: '#/definitions/response.Response'
+      summary: 按标签获取视频流
+      tags:
+      - 动态流模块
+  /like/is_liked:
+    post:
+      consumes:
+      - application/json
+      description: 查询当前登录用户是否点赞了指定视频，data 为布尔值
+      parameters:
+      - description: 查询信息
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.LikeRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 查询成功
+          schema:
+            allOf:
+            - $ref: '#/definitions/response.Response'
+            - properties:
+                data:
+                  type: boolean
+              type: object
+        "400":
+          description: 请求参数错误或查询失败
+          schema:
+            $ref: '#/definitions/response.Response'
+        "401":
+          description: 未登录或登录已过期
+          schema:
+            $ref: '#/definitions/response.Response'
+      security:
+      - Bearer: []
+      summary: 查询是否已点赞
+      tags:
+      - 点赞模块
+  /like/like:
+    post:
+      consumes:
+      - application/json
+      description: 当前登录用户对指定视频点赞，重复点赞按幂等处理
+      parameters:
+      - description: 点赞信息
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.LikeRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 点赞成功
+          schema:
+            allOf:
+            - $ref: '#/definitions/response.Response'
+            - properties:
+                data:
+                  type: string
+              type: object
+        "400":
+          description: 请求参数错误或点赞失败
+          schema:
+            $ref: '#/definitions/response.Response'
+        "401":
+          description: 未登录或登录已过期
+          schema:
+            $ref: '#/definitions/response.Response'
+      security:
+      - Bearer: []
+      summary: 点赞视频
+      tags:
+      - 点赞模块
+  /like/list_liked:
+    post:
+      consumes:
+      - application/json
+      description: 分页列出指定用户点赞过的视频，使用 (cursor.last_vid, cursor.last_created_at) 复合游标翻页；软鉴权接口，可选携带
+        Authorization 头以返回当前用户的点赞状态
+      parameters:
+      - description: 查询参数，user_id 必填
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.ListLikedVideosRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 获取成功
+          schema:
+            allOf:
+            - $ref: '#/definitions/response.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/dto.VideoListResponse'
+              type: object
+        "400":
+          description: 请求参数错误或获取失败
+          schema:
+            $ref: '#/definitions/response.Response'
+      summary: 获取用户点赞过的视频
+      tags:
+      - 点赞模块
+  /like/unlike:
+    post:
+      consumes:
+      - application/json
+      description: 当前登录用户取消对指定视频的点赞，未点赞时按幂等处理
+      parameters:
+      - description: 取消点赞信息
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.LikeRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 取消点赞成功
+          schema:
+            allOf:
+            - $ref: '#/definitions/response.Response'
+            - properties:
+                data:
+                  type: string
+              type: object
+        "400":
+          description: 请求参数错误或取消点赞失败
+          schema:
+            $ref: '#/definitions/response.Response'
+        "401":
+          description: 未登录或登录已过期
+          schema:
+            $ref: '#/definitions/response.Response'
+      security:
+      - Bearer: []
+      summary: 取消点赞视频
+      tags:
+      - 点赞模块
+  /message/history:
+    get:
+      description: 按消息 ID 游标分页获取当前用户与目标用户的聊天记录，结果按时间从新到旧排列
+      parameters:
+      - description: 对方用户 ID
+        in: query
+        name: target_id
+        required: true
+        type: integer
+      - description: 游标，上一页最老一条消息的 ID（第一页传 0）
+        in: query
+        name: last_id
+        type: integer
+      - description: 每页条数，默认 20
+        in: query
+        name: page_size
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 获取成功
+          schema:
+            allOf:
+            - $ref: '#/definitions/response.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/dto.GetHistoryResponse'
+              type: object
+        "400":
+          description: 参数错误或获取聊天历史失败
+          schema:
+            $ref: '#/definitions/response.Response'
+        "401":
+          description: 未登录或登录已过期
+          schema:
+            $ref: '#/definitions/response.Response'
+      security:
+      - Bearer: []
+      summary: 获取聊天历史
+      tags:
+      - 私信模块
+  /message/send:
+    post:
+      consumes:
+      - application/json
+      description: 当前登录用户向指定用户发送一条私信，接收方在线时通过 SSE 实时推送
+      parameters:
+      - description: 消息内容
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.SendMessageRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 发送成功
+          schema:
+            allOf:
+            - $ref: '#/definitions/response.Response'
+            - properties:
+                data:
+                  type: string
+              type: object
+        "400":
+          description: 参数错误或发送消息失败
+          schema:
+            $ref: '#/definitions/response.Response'
+        "401":
+          description: 未登录或登录已过期
+          schema:
+            $ref: '#/definitions/response.Response'
+      security:
+      - Bearer: []
+      summary: 发送私信
+      tags:
+      - 私信模块
+  /message/sessions:
+    get:
+      description: 获取当前用户的私信会话列表，包含对方信息、最新一条消息内容与未读消息数
+      parameters:
+      - description: 拉取数量，默认 20
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 获取成功
+          schema:
+            allOf:
+            - $ref: '#/definitions/response.Response'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/dto.SessionDetail'
+                  type: array
+              type: object
+        "400":
+          description: 参数错误或获取会话列表失败
+          schema:
+            $ref: '#/definitions/response.Response'
+        "401":
+          description: 未登录或登录已过期
+          schema:
+            $ref: '#/definitions/response.Response'
+      security:
+      - Bearer: []
+      summary: 获取会话列表
+      tags:
+      - 私信模块
+  /notification/list:
+    get:
+      description: 按 (last_time, last_id) 游标分页获取当前用户的通知列表。data 为对象，其中 data.data 为
+        dto.ListNotificationsResponse（notifications 通知列表、next_last_time / next_last_id
+        下一页游标）
+      parameters:
+      - description: 每页数量
+        in: query
+        name: page_size
+        type: integer
+      - description: 上一页最后一条通知时间（RFC3339）
+        in: query
+        name: last_time
+        type: string
+      - description: 上一页最后一条通知 ID，与 last_time 成对使用
+        in: query
+        name: last_id
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 获取成功，data 包含 data（通知列表结构）
+          schema:
+            allOf:
+            - $ref: '#/definitions/response.Response'
+            - properties:
+                data:
+                  additionalProperties: true
+                  type: object
+              type: object
+        "400":
+          description: 请求参数错误或获取通知列表失败
+          schema:
+            $ref: '#/definitions/response.Response'
+        "401":
+          description: 未登录或登录已过期
+          schema:
+            $ref: '#/definitions/response.Response'
+      security:
+      - Bearer: []
+      summary: 获取通知列表
+      tags:
+      - 通知模块
+  /notification/read:
+    post:
+      consumes:
+      - application/json
+      description: 将当前用户的一条通知标记为已读
+      parameters:
+      - description: 标记已读信息
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.MarkAsReadRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 标记成功
+          schema:
+            allOf:
+            - $ref: '#/definitions/response.Response'
+            - properties:
+                data:
+                  type: string
+              type: object
+        "400":
+          description: 请求参数错误或标记失败
+          schema:
+            $ref: '#/definitions/response.Response'
+        "401":
+          description: 未登录或登录已过期
+          schema:
+            $ref: '#/definitions/response.Response'
+      security:
+      - Bearer: []
+      summary: 标记单条通知已读
+      tags:
+      - 通知模块
+  /notification/read_all:
+    post:
+      description: 将当前用户的所有未读通知标记为已读
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 标记成功
+          schema:
+            allOf:
+            - $ref: '#/definitions/response.Response'
+            - properties:
+                data:
+                  type: string
+              type: object
+        "400":
+          description: 标记全部通知为已读失败
+          schema:
+            $ref: '#/definitions/response.Response'
+        "401":
+          description: 未登录或登录已过期
+          schema:
+            $ref: '#/definitions/response.Response'
+      security:
+      - Bearer: []
+      summary: 标记全部通知已读
+      tags:
+      - 通知模块
+  /notification/unread_count:
+    get:
+      description: 获取当前用户的未读通知总数，data 包含 count 字段
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 获取成功，data 包含 count 字段
+          schema:
+            allOf:
+            - $ref: '#/definitions/response.Response'
+            - properties:
+                data:
+                  additionalProperties: true
+                  type: object
+              type: object
+        "400":
+          description: 获取未读通知总数失败
+          schema:
+            $ref: '#/definitions/response.Response'
+        "401":
+          description: 未登录或登录已过期
+          schema:
+            $ref: '#/definitions/response.Response'
+      security:
+      - Bearer: []
+      summary: 获取未读通知数量
+      tags:
+      - 通知模块
+  /social/bloggers:
+    get:
+      description: 分页获取指定用户关注的博主列表，使用 (cursor.last_uid, cursor.last_created_at) 复合游标翻页；软鉴权接口，可选携带
+        Authorization 头以返回关注关系
+      parameters:
+      - description: 目标用户 ID
+        in: query
+        name: uid
+        required: true
+        type: integer
+      - description: 每页数量，范围 10-50
+        in: query
+        name: page_size
+        required: true
+        type: integer
+      - description: 上一页最后一个用户 ID（游标）
+        in: query
+        name: cursor.last_uid
+        type: string
+      - description: 上一页最后一条关注记录创建时间（RFC3339，游标）
+        in: query
+        name: cursor.last_created_at
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 获取成功，data 包含 bloggers（用户列表）、total、next_cursor（有下一页时返回）
+          schema:
+            allOf:
+            - $ref: '#/definitions/response.Response'
+            - properties:
+                data:
+                  additionalProperties: true
+                  type: object
+              type: object
+        "400":
+          description: 请求参数错误或获取关注列表失败
+          schema:
+            $ref: '#/definitions/response.Response'
+      summary: 获取用户关注列表
+      tags:
+      - 社交模块
+  /social/count:
+    get:
+      description: 获取指定用户的关注数与粉丝数，data 包含 follow_count（关注数）与 fan_count（粉丝数）
+      parameters:
+      - description: 目标用户 ID
+        in: query
+        name: target_id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 获取成功，data 包含 follow_count、fan_count 字段
+          schema:
+            allOf:
+            - $ref: '#/definitions/response.Response'
+            - properties:
+                data:
+                  additionalProperties: true
+                  type: object
+              type: object
+        "400":
+          description: 请求参数错误或获取关注数量失败
+          schema:
+            $ref: '#/definitions/response.Response'
+      summary: 获取关注与粉丝数量
+      tags:
+      - 社交模块
+  /social/follow:
+    post:
+      consumes:
+      - application/json
+      description: 当前登录用户关注指定博主，重复关注按幂等处理
+      parameters:
+      - description: 关注信息
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.FollowRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 关注成功
+          schema:
+            allOf:
+            - $ref: '#/definitions/response.Response'
+            - properties:
+                data:
+                  type: string
+              type: object
+        "400":
+          description: 请求参数错误或关注失败
+          schema:
+            $ref: '#/definitions/response.Response'
+        "401":
+          description: 未登录或登录已过期
+          schema:
+            $ref: '#/definitions/response.Response'
+      security:
+      - Bearer: []
+      summary: 关注博主
+      tags:
+      - 社交模块
+  /social/followers:
+    get:
+      description: 分页获取指定用户的粉丝列表，使用 (cursor.last_uid, cursor.last_created_at) 复合游标翻页；软鉴权接口，可选携带
+        Authorization 头以返回关注关系
+      parameters:
+      - description: 目标用户 ID
+        in: query
+        name: uid
+        required: true
+        type: integer
+      - description: 每页数量，范围 10-50
+        in: query
+        name: page_size
+        required: true
+        type: integer
+      - description: 上一页最后一个用户 ID（游标）
+        in: query
+        name: cursor.last_uid
+        type: string
+      - description: 上一页最后一条关注记录创建时间（RFC3339，游标）
+        in: query
+        name: cursor.last_created_at
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 获取成功，data 包含 followers（用户列表）、total、next_cursor（有下一页时返回）
+          schema:
+            allOf:
+            - $ref: '#/definitions/response.Response'
+            - properties:
+                data:
+                  additionalProperties: true
+                  type: object
+              type: object
+        "400":
+          description: 请求参数错误或获取粉丝列表失败
+          schema:
+            $ref: '#/definitions/response.Response'
+      summary: 获取用户粉丝列表
+      tags:
+      - 社交模块
+  /social/is_follow:
+    get:
+      description: 查询当前登录用户与目标用户的关注关系，data 包含 is_follow（我是否关注对方）与 is_fan（对方是否是我的粉丝）
+      parameters:
+      - description: 目标用户 ID
+        in: query
+        name: target_id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 查询成功，data 包含 is_follow、is_fan 字段
+          schema:
+            allOf:
+            - $ref: '#/definitions/response.Response'
+            - properties:
+                data:
+                  additionalProperties: true
+                  type: object
+              type: object
+        "400":
+          description: 请求参数错误或获取关注关系失败
+          schema:
+            $ref: '#/definitions/response.Response'
+        "401":
+          description: 未登录或登录已过期
+          schema:
+            $ref: '#/definitions/response.Response'
+      security:
+      - Bearer: []
+      summary: 查询关注关系
+      tags:
+      - 社交模块
+  /social/unfollow:
+    post:
+      consumes:
+      - application/json
+      description: 当前登录用户取消关注指定博主，未关注时按幂等处理
+      parameters:
+      - description: 取消关注信息
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.UnfollowRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 取消关注成功
+          schema:
+            allOf:
+            - $ref: '#/definitions/response.Response'
+            - properties:
+                data:
+                  type: string
+              type: object
+        "400":
+          description: 请求参数错误或取消关注失败
+          schema:
+            $ref: '#/definitions/response.Response'
+        "401":
+          description: 未登录或登录已过期
+          schema:
+            $ref: '#/definitions/response.Response'
+      security:
+      - Bearer: []
+      summary: 取消关注博主
+      tags:
+      - 社交模块
+  /sse:
+    get:
+      description: 使用 POST /sse/ticket 获取的一次性 ticket 建立 SSE 长连接，持续接收实时私信。服务端返回 text/event-stream：event
+        为 message 时 data 为消息内容，event 为 heartbeat 时 data 为 ping（每 15 秒一次）；连接建立后不返回
+        JSON，客户端断开即结束。ticket 30 秒内有效且仅可使用一次
+      parameters:
+      - description: 一次性连接票据，由 POST /sse/ticket 获取
+        in: query
+        name: ticket
+        required: true
+        type: string
+      produces:
+      - text/event-stream
+      responses:
+        "200":
+          description: 'SSE 事件流（event: message / event: heartbeat）'
+          schema:
+            type: string
+        "400":
+          description: 缺少 ticket、ticket 无效或已过期
+          schema:
+            $ref: '#/definitions/response.Response'
+      summary: 建立 SSE 实时消息连接
+      tags:
+      - 私信模块
+  /sse/ticket:
+    post:
+      description: 为当前登录用户签发一次性 SSE 连接票据，data 包含 ticket 字段；ticket 30 秒内有效且仅可使用一次，用于浏览器
+        EventSource 无法携带 Authorization 头时的鉴权
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 获取成功，data 包含 ticket 字段
+          schema:
+            allOf:
+            - $ref: '#/definitions/response.Response'
+            - properties:
+                data:
+                  additionalProperties: true
+                  type: object
+              type: object
+        "401":
+          description: 未登录或登录已过期
+          schema:
+            $ref: '#/definitions/response.Response'
+        "500":
+          description: 服务器内部错误
+          schema:
+            $ref: '#/definitions/response.Response'
+      security:
+      - Bearer: []
+      summary: 获取 SSE 连接票据
+      tags:
+      - 私信模块
   /user/change_password:
     post:
       consumes:
@@ -108,7 +1422,7 @@ paths:
         name: request
         required: true
         schema:
-          $ref: '#/definitions/feedsystem_internal_dto.ChangePasswordRequest'
+          $ref: '#/definitions/dto.ChangePasswordRequest'
       produces:
       - application/json
       responses:
@@ -116,7 +1430,7 @@ paths:
           description: 修改成功
           schema:
             allOf:
-            - $ref: '#/definitions/feedsystem_internal_utils_response.Response'
+            - $ref: '#/definitions/response.Response'
             - properties:
                 data:
                   additionalProperties: true
@@ -125,15 +1439,15 @@ paths:
         "400":
           description: 参数错误、旧密码错误或新密码不符合要求
           schema:
-            $ref: '#/definitions/feedsystem_internal_utils_response.Response'
+            $ref: '#/definitions/response.Response'
         "401":
           description: 未登录或登录已过期
           schema:
-            $ref: '#/definitions/feedsystem_internal_utils_response.Response'
+            $ref: '#/definitions/response.Response'
         "500":
           description: 服务器内部错误
           schema:
-            $ref: '#/definitions/feedsystem_internal_utils_response.Response'
+            $ref: '#/definitions/response.Response'
       security:
       - Bearer: []
       summary: 修改用户密码
@@ -150,7 +1464,7 @@ paths:
         name: request
         required: true
         schema:
-          $ref: '#/definitions/feedsystem_internal_dto.FindByIDRequest'
+          $ref: '#/definitions/dto.FindByIDRequest'
       produces:
       - application/json
       responses:
@@ -158,15 +1472,15 @@ paths:
           description: 查询成功
           schema:
             allOf:
-            - $ref: '#/definitions/feedsystem_internal_utils_response.Response'
+            - $ref: '#/definitions/response.Response'
             - properties:
                 data:
-                  $ref: '#/definitions/feedsystem_internal_dto.ProfileResponse'
+                  $ref: '#/definitions/dto.ProfileResponse'
               type: object
         "400":
           description: 参数错误或用户不存在
           schema:
-            $ref: '#/definitions/feedsystem_internal_utils_response.Response'
+            $ref: '#/definitions/response.Response'
       summary: 根据ID查找用户
       tags:
       - 用户模块
@@ -181,7 +1495,7 @@ paths:
         name: request
         required: true
         schema:
-          $ref: '#/definitions/feedsystem_internal_dto.FindByUsernameRequest'
+          $ref: '#/definitions/dto.FindByUsernameRequest'
       produces:
       - application/json
       responses:
@@ -189,15 +1503,15 @@ paths:
           description: 查询成功
           schema:
             allOf:
-            - $ref: '#/definitions/feedsystem_internal_utils_response.Response'
+            - $ref: '#/definitions/response.Response'
             - properties:
                 data:
-                  $ref: '#/definitions/feedsystem_internal_dto.ProfileResponse'
+                  $ref: '#/definitions/dto.ProfileResponse'
               type: object
         "400":
           description: 参数错误或用户不存在
           schema:
-            $ref: '#/definitions/feedsystem_internal_utils_response.Response'
+            $ref: '#/definitions/response.Response'
       summary: 根据用户名查找用户
       tags:
       - 用户模块
@@ -212,7 +1526,7 @@ paths:
         name: request
         required: true
         schema:
-          $ref: '#/definitions/feedsystem_internal_dto.LoginRequest'
+          $ref: '#/definitions/dto.LoginRequest'
       produces:
       - application/json
       responses:
@@ -220,23 +1534,23 @@ paths:
           description: 登录成功
           schema:
             allOf:
-            - $ref: '#/definitions/feedsystem_internal_utils_response.Response'
+            - $ref: '#/definitions/response.Response'
             - properties:
                 data:
-                  $ref: '#/definitions/feedsystem_internal_dto.LoginResponse'
+                  $ref: '#/definitions/dto.LoginResponse'
               type: object
         "400":
           description: 参数错误
           schema:
-            $ref: '#/definitions/feedsystem_internal_utils_response.Response'
+            $ref: '#/definitions/response.Response'
         "401":
           description: 用户名或密码错误
           schema:
-            $ref: '#/definitions/feedsystem_internal_utils_response.Response'
+            $ref: '#/definitions/response.Response'
         "500":
           description: 服务器内部错误
           schema:
-            $ref: '#/definitions/feedsystem_internal_utils_response.Response'
+            $ref: '#/definitions/response.Response'
       summary: 用户登录
       tags:
       - 用户模块
@@ -252,7 +1566,7 @@ paths:
         name: request
         required: true
         schema:
-          $ref: '#/definitions/feedsystem_internal_dto.LogoutRequest'
+          $ref: '#/definitions/dto.LogoutRequest'
       produces:
       - application/json
       responses:
@@ -260,7 +1574,7 @@ paths:
           description: 登出成功
           schema:
             allOf:
-            - $ref: '#/definitions/feedsystem_internal_utils_response.Response'
+            - $ref: '#/definitions/response.Response'
             - properties:
                 data:
                   additionalProperties: true
@@ -269,15 +1583,15 @@ paths:
         "400":
           description: 参数错误
           schema:
-            $ref: '#/definitions/feedsystem_internal_utils_response.Response'
+            $ref: '#/definitions/response.Response'
         "401":
           description: 未登录或登录已过期
           schema:
-            $ref: '#/definitions/feedsystem_internal_utils_response.Response'
+            $ref: '#/definitions/response.Response'
         "500":
           description: 服务器内部错误
           schema:
-            $ref: '#/definitions/feedsystem_internal_utils_response.Response'
+            $ref: '#/definitions/response.Response'
       security:
       - Bearer: []
       summary: 用户登出
@@ -295,19 +1609,19 @@ paths:
           description: 获取成功
           schema:
             allOf:
-            - $ref: '#/definitions/feedsystem_internal_utils_response.Response'
+            - $ref: '#/definitions/response.Response'
             - properties:
                 data:
-                  $ref: '#/definitions/feedsystem_internal_dto.ProfileResponse'
+                  $ref: '#/definitions/dto.ProfileResponse'
               type: object
         "401":
           description: 未登录或登录已过期
           schema:
-            $ref: '#/definitions/feedsystem_internal_utils_response.Response'
+            $ref: '#/definitions/response.Response'
         "500":
           description: 服务器内部错误
           schema:
-            $ref: '#/definitions/feedsystem_internal_utils_response.Response'
+            $ref: '#/definitions/response.Response'
       security:
       - Bearer: []
       summary: 获取当前用户资料
@@ -323,7 +1637,7 @@ paths:
         name: request
         required: true
         schema:
-          $ref: '#/definitions/feedsystem_internal_dto.UpdateProfileRequest'
+          $ref: '#/definitions/dto.UpdateProfileRequest'
       produces:
       - application/json
       responses:
@@ -331,23 +1645,23 @@ paths:
           description: 更新成功
           schema:
             allOf:
-            - $ref: '#/definitions/feedsystem_internal_utils_response.Response'
+            - $ref: '#/definitions/response.Response'
             - properties:
                 data:
-                  $ref: '#/definitions/feedsystem_internal_dto.ProfileResponse'
+                  $ref: '#/definitions/dto.ProfileResponse'
               type: object
         "400":
           description: 参数错误或用户名已存在
           schema:
-            $ref: '#/definitions/feedsystem_internal_utils_response.Response'
+            $ref: '#/definitions/response.Response'
         "401":
           description: 未登录或登录已过期
           schema:
-            $ref: '#/definitions/feedsystem_internal_utils_response.Response'
+            $ref: '#/definitions/response.Response'
         "500":
           description: 服务器内部错误
           schema:
-            $ref: '#/definitions/feedsystem_internal_utils_response.Response'
+            $ref: '#/definitions/response.Response'
       security:
       - Bearer: []
       summary: 更新用户资料
@@ -365,7 +1679,7 @@ paths:
         name: request
         required: true
         schema:
-          $ref: '#/definitions/feedsystem_internal_dto.RefreshRequest'
+          $ref: '#/definitions/dto.RefreshRequest'
       produces:
       - application/json
       responses:
@@ -373,7 +1687,7 @@ paths:
           description: 刷新成功
           schema:
             allOf:
-            - $ref: '#/definitions/feedsystem_internal_utils_response.Response'
+            - $ref: '#/definitions/response.Response'
             - properties:
                 data:
                   additionalProperties: true
@@ -382,15 +1696,15 @@ paths:
         "400":
           description: 参数错误
           schema:
-            $ref: '#/definitions/feedsystem_internal_utils_response.Response'
+            $ref: '#/definitions/response.Response'
         "401":
           description: refresh token 无效或已过期
           schema:
-            $ref: '#/definitions/feedsystem_internal_utils_response.Response'
+            $ref: '#/definitions/response.Response'
         "500":
           description: 服务器内部错误
           schema:
-            $ref: '#/definitions/feedsystem_internal_utils_response.Response'
+            $ref: '#/definitions/response.Response'
       summary: 刷新令牌
       tags:
       - 用户模块
@@ -405,7 +1719,7 @@ paths:
         name: request
         required: true
         schema:
-          $ref: '#/definitions/feedsystem_internal_dto.RegisterRequest'
+          $ref: '#/definitions/dto.RegisterRequest'
       produces:
       - application/json
       responses:
@@ -413,7 +1727,7 @@ paths:
           description: 注册成功
           schema:
             allOf:
-            - $ref: '#/definitions/feedsystem_internal_utils_response.Response'
+            - $ref: '#/definitions/response.Response'
             - properties:
                 data:
                   additionalProperties: true
@@ -422,11 +1736,11 @@ paths:
         "400":
           description: 参数错误或用户名已存在
           schema:
-            $ref: '#/definitions/feedsystem_internal_utils_response.Response'
+            $ref: '#/definitions/response.Response'
         "500":
           description: 服务器内部错误
           schema:
-            $ref: '#/definitions/feedsystem_internal_utils_response.Response'
+            $ref: '#/definitions/response.Response'
       summary: 用户注册
       tags:
       - 用户模块
@@ -449,7 +1763,7 @@ paths:
           description: 上传成功
           schema:
             allOf:
-            - $ref: '#/definitions/feedsystem_internal_utils_response.Response'
+            - $ref: '#/definitions/response.Response'
             - properties:
                 data:
                   additionalProperties: true
@@ -458,20 +1772,430 @@ paths:
         "400":
           description: 文件参数错误、大小不符合要求或格式不支持
           schema:
-            $ref: '#/definitions/feedsystem_internal_utils_response.Response'
+            $ref: '#/definitions/response.Response'
         "401":
           description: 未登录或登录已过期
           schema:
-            $ref: '#/definitions/feedsystem_internal_utils_response.Response'
+            $ref: '#/definitions/response.Response'
         "500":
           description: 服务器内部错误
           schema:
-            $ref: '#/definitions/feedsystem_internal_utils_response.Response'
+            $ref: '#/definitions/response.Response'
       security:
       - Bearer: []
       summary: 上传用户头像
       tags:
       - 用户模块
+  /video/{id}:
+    get:
+      description: 根据视频 ID 获取详情；软鉴权接口，可选携带 Authorization 头，携带时返回当前用户的真实点赞状态，游客 is_liked
+        恒为 false
+      parameters:
+      - description: 视频 ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 获取成功
+          schema:
+            allOf:
+            - $ref: '#/definitions/response.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/dto.VideoDetailResponse'
+              type: object
+        "400":
+          description: 视频ID不合法或视频不存在
+          schema:
+            $ref: '#/definitions/response.Response'
+        "500":
+          description: 服务器内部错误
+          schema:
+            $ref: '#/definitions/response.Response'
+      summary: 获取视频详情
+      tags:
+      - 视频模块
+  /video/chunk/cancel:
+    post:
+      description: 取消上传并立即清理已上传分片目录与 Redis 会话，data 固定为 null
+      parameters:
+      - description: 分片上传会话 ID
+        in: query
+        name: upload_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 取消成功，data 为 null
+          schema:
+            $ref: '#/definitions/response.Response'
+        "400":
+          description: upload_id 为空或会话不存在/过期
+          schema:
+            $ref: '#/definitions/response.Response'
+        "401":
+          description: 未登录或登录已过期
+          schema:
+            $ref: '#/definitions/response.Response'
+        "500":
+          description: 服务器内部错误
+          schema:
+            $ref: '#/definitions/response.Response'
+      security:
+      - Bearer: []
+      summary: 取消分片上传
+      tags:
+      - 视频模块
+  /video/chunk/create:
+    post:
+      consumes:
+      - application/json
+      description: 根据文件名与文件大小创建（或恢复）分片上传会话，返回 upload_id、分片大小与总分片数，用于后续分片上传与断点续传
+      parameters:
+      - description: 创建会话参数
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/handler.CreateSessionReq'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 创建成功，data 包含 upload_id、chunk_size、total_chunks、expire_at 字段
+          schema:
+            allOf:
+            - $ref: '#/definitions/response.Response'
+            - properties:
+                data:
+                  additionalProperties: true
+                  type: object
+              type: object
+        "400":
+          description: 请求参数错误或上传参数不合法
+          schema:
+            $ref: '#/definitions/response.Response'
+        "401":
+          description: 未登录或登录已过期
+          schema:
+            $ref: '#/definitions/response.Response'
+        "500":
+          description: 服务器内部错误
+          schema:
+            $ref: '#/definitions/response.Response'
+      security:
+      - Bearer: []
+      summary: 创建分片上传会话
+      tags:
+      - 视频模块
+  /video/chunk/merge:
+    post:
+      description: 校验并合并全部分片生成成品视频，返回可直接用于发布接口的视频访问路径；分片未全部上传完成时返回 400
+      parameters:
+      - description: 分片上传会话 ID
+        in: query
+        name: upload_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 合并成功，data 包含 video_url 字段
+          schema:
+            allOf:
+            - $ref: '#/definitions/response.Response'
+            - properties:
+                data:
+                  additionalProperties: true
+                  type: object
+              type: object
+        "400":
+          description: upload_id 为空、会话不存在/过期、分片未传完或文件校验失败
+          schema:
+            $ref: '#/definitions/response.Response'
+        "401":
+          description: 未登录或登录已过期
+          schema:
+            $ref: '#/definitions/response.Response'
+        "500":
+          description: 服务器内部错误
+          schema:
+            $ref: '#/definitions/response.Response'
+      security:
+      - Bearer: []
+      summary: 合并分片
+      tags:
+      - 视频模块
+  /video/chunk/status:
+    get:
+      description: 查询会话已上传的分片列表，前端据此只补传缺失分片，实现断点续传
+      parameters:
+      - description: 分片上传会话 ID
+        in: query
+        name: upload_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 查询成功，data 包含 upload_id、total_chunks、chunk_size、uploaded、expire_at
+            字段
+          schema:
+            allOf:
+            - $ref: '#/definitions/response.Response'
+            - properties:
+                data:
+                  additionalProperties: true
+                  type: object
+              type: object
+        "400":
+          description: upload_id 为空或会话不存在/过期
+          schema:
+            $ref: '#/definitions/response.Response'
+        "401":
+          description: 未登录或登录已过期
+          schema:
+            $ref: '#/definitions/response.Response'
+        "500":
+          description: 服务器内部错误
+          schema:
+            $ref: '#/definitions/response.Response'
+      security:
+      - Bearer: []
+      summary: 查询分片上传状态
+      tags:
+      - 视频模块
+  /video/chunk/upload:
+    post:
+      consumes:
+      - application/octet-stream
+      description: 请求体直接为分片二进制内容（application/octet-stream），upload_id 与分片序号通过 query
+        传入；单个分片大小受服务端限制
+      parameters:
+      - description: 分片上传会话 ID
+        in: query
+        name: upload_id
+        required: true
+        type: string
+      - description: 分片序号，从 0 开始
+        in: query
+        name: index
+        required: true
+        type: integer
+      - description: 分片二进制内容
+        in: body
+        name: body
+        required: true
+        schema:
+          type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 上传成功，data 包含 uploaded（已上传分片序号列表）与 received（本次分片序号）
+          schema:
+            allOf:
+            - $ref: '#/definitions/response.Response'
+            - properties:
+                data:
+                  additionalProperties: true
+                  type: object
+              type: object
+        "400":
+          description: 分片参数不合法、会话不存在、分片缺失或校验失败
+          schema:
+            $ref: '#/definitions/response.Response'
+        "401":
+          description: 未登录或登录已过期
+          schema:
+            $ref: '#/definitions/response.Response'
+        "500":
+          description: 服务器内部错误
+          schema:
+            $ref: '#/definitions/response.Response'
+      security:
+      - Bearer: []
+      summary: 上传单个分片
+      tags:
+      - 视频模块
+  /video/list:
+    get:
+      description: 按作者 ID 分页获取视频列表，使用 (cursor.last_created_at, cursor.last_vid) 复合游标翻页；软鉴权接口，可选携带
+        Authorization 头以返回点赞状态
+      parameters:
+      - description: 作者用户 ID
+        in: query
+        name: author_id
+        required: true
+        type: integer
+      - description: 每页数量
+        in: query
+        name: page_size
+        type: integer
+      - description: 上一页最后一条视频 ID（游标）
+        in: query
+        name: cursor.last_vid
+        type: string
+      - description: 上一页最后一条视频创建时间（RFC3339，游标）
+        in: query
+        name: cursor.last_created_at
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 获取成功
+          schema:
+            allOf:
+            - $ref: '#/definitions/response.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/dto.VideoListResponse'
+              type: object
+        "400":
+          description: 请求参数错误
+          schema:
+            $ref: '#/definitions/response.Response'
+        "500":
+          description: 服务器内部错误
+          schema:
+            $ref: '#/definitions/response.Response'
+      summary: 获取指定作者的视频列表
+      tags:
+      - 视频模块
+  /video/publish:
+    post:
+      consumes:
+      - application/json
+      description: 使用已上传的视频地址与封面地址创建视频记录，可同时提交标签列表
+      parameters:
+      - description: 发布视频信息
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.PublishVideoRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 发布成功
+          schema:
+            allOf:
+            - $ref: '#/definitions/response.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/dto.PublishVideoResponse'
+              type: object
+        "400":
+          description: 请求参数错误
+          schema:
+            $ref: '#/definitions/response.Response'
+        "401":
+          description: 未登录或登录已过期
+          schema:
+            $ref: '#/definitions/response.Response'
+        "500":
+          description: 服务器内部错误
+          schema:
+            $ref: '#/definitions/response.Response'
+      security:
+      - Bearer: []
+      summary: 发布视频
+      tags:
+      - 视频模块
+  /video/upload_cover:
+    post:
+      consumes:
+      - multipart/form-data
+      description: 上传视频封面图片（multipart/form-data，字段名 file），成功后返回可直接用于发布接口的封面地址；仅支持
+        jpg/jpeg/png/webp
+      parameters:
+      - description: 封面图片（jpg/jpeg/png/webp）
+        in: formData
+        name: file
+        required: true
+        type: file
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 上传成功，data 包含 cover_url 字段
+          schema:
+            allOf:
+            - $ref: '#/definitions/response.Response'
+            - properties:
+                data:
+                  additionalProperties: true
+                  type: object
+              type: object
+        "400":
+          description: 文件参数错误、大小不符合要求或格式不合法
+          schema:
+            $ref: '#/definitions/response.Response'
+        "401":
+          description: 未登录或登录已过期
+          schema:
+            $ref: '#/definitions/response.Response'
+        "500":
+          description: 服务器内部错误
+          schema:
+            $ref: '#/definitions/response.Response'
+      security:
+      - Bearer: []
+      summary: 上传视频封面
+      tags:
+      - 视频模块
+  /video/upload_video:
+    post:
+      consumes:
+      - multipart/form-data
+      description: 上传视频原始文件（multipart/form-data，字段名 file），成功后返回可直接用于发布接口的访问地址；仅支持
+        mp4/avi/mov/mkv，单文件约 100MB 以内
+      parameters:
+      - description: 视频文件（mp4/avi/mov/mkv）
+        in: formData
+        name: file
+        required: true
+        type: file
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 上传成功，data 包含 video_url 字段
+          schema:
+            allOf:
+            - $ref: '#/definitions/response.Response'
+            - properties:
+                data:
+                  additionalProperties: true
+                  type: object
+              type: object
+        "400":
+          description: 文件参数错误、大小不符合要求或格式不合法
+          schema:
+            $ref: '#/definitions/response.Response'
+        "401":
+          description: 未登录或登录已过期
+          schema:
+            $ref: '#/definitions/response.Response'
+        "500":
+          description: 服务器内部错误
+          schema:
+            $ref: '#/definitions/response.Response'
+      security:
+      - Bearer: []
+      summary: 上传视频文件
+      tags:
+      - 视频模块
 securityDefinitions:
   Bearer:
     description: Type "Bearer" followed by a space and JWT token.

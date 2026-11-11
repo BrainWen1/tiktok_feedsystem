@@ -20,6 +20,19 @@ func NewCommentHandler(commentService *service.CommentService) *CommentHandler {
 	}
 }
 
+// PublishComment 发布评论
+// @Summary      发布评论
+// @Description  当前登录用户对指定视频发布评论，parent_id 非 0 时表示回复该条评论
+// @Tags         评论模块
+// @Accept       json
+// @Produce      json
+// @Security     Bearer
+// @Param        request body dto.PublishCommentRequest true "评论信息"
+// @Success      200 {object} response.Response{data=string} "评论发布成功"
+// @Failure      400 {object} response.Response "请求参数错误"
+// @Failure      401 {object} response.Response "未登录或登录已过期"
+// @Failure      500 {object} response.Response "服务器内部错误"
+// @Router       /comment/publish [post]
 func (h *CommentHandler) PublishComment(c *gin.Context) {
 	// 获取 userID
 	userID, username, err := getUserFromCtx(c)
@@ -48,6 +61,19 @@ func (h *CommentHandler) PublishComment(c *gin.Context) {
 	response.SuccessResponse(c, "Comment created successfully")
 }
 
+// DeleteComment 删除评论
+// @Summary      删除评论
+// @Description  当前登录用户删除自己发布的评论
+// @Tags         评论模块
+// @Accept       json
+// @Produce      json
+// @Security     Bearer
+// @Param        request body dto.DeleteCommentRequest true "删除评论信息"
+// @Success      200 {object} response.Response{data=string} "评论删除成功"
+// @Failure      400 {object} response.Response "请求参数错误"
+// @Failure      401 {object} response.Response "未登录或登录已过期"
+// @Failure      500 {object} response.Response "服务器内部错误"
+// @Router       /comment/delete [post]
 func (h *CommentHandler) DeleteComment(c *gin.Context) {
 	// 获取 userID
 	userID, _, err := getUserFromCtx(c)
@@ -77,6 +103,18 @@ func (h *CommentHandler) DeleteComment(c *gin.Context) {
 }
 
 // ListComments 获取视频评论列表，支持分页
+// @Summary      获取视频评论列表
+// @Description  按 (last_time, last_id) 游标分页获取指定视频的评论列表；软鉴权接口，可选携带 Authorization 头
+// @Tags         评论模块
+// @Produce      json
+// @Param        video_id  query int    true  "视频 ID"
+// @Param        last_time query int    false "上一页最后一条评论的 Unix 毫秒时间戳（第一页不传）"
+// @Param        last_id   query int    false "上一页最后一条评论 ID，与 last_time 成对使用"
+// @Param        page_size query int    false "每页数量，范围 5-50"
+// @Success      200 {object} response.Response{data=dto.ListCommentsResponse} "获取成功"
+// @Failure      400 {object} response.Response "请求参数错误"
+// @Failure      500 {object} response.Response "服务器内部错误"
+// @Router       /comment/list [get]
 func (h *CommentHandler) ListComments(c *gin.Context) {
 	// 获取请求参数
 	var req dto.ListCommentsRequest
