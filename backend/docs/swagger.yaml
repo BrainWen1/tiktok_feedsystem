@@ -1,0 +1,481 @@
+basePath: /
+definitions:
+  feedsystem_internal_dto.ChangePasswordRequest:
+    properties:
+      confirm_password:
+        description: 确认新密码
+        type: string
+      new_password:
+        type: string
+      old_password:
+        type: string
+    type: object
+  feedsystem_internal_dto.FindByIDRequest:
+    properties:
+      user_id:
+        type: integer
+    type: object
+  feedsystem_internal_dto.FindByUsernameRequest:
+    properties:
+      user_name:
+        type: string
+    type: object
+  feedsystem_internal_dto.LoginRequest:
+    properties:
+      password:
+        type: string
+      user_name:
+        type: string
+    type: object
+  feedsystem_internal_dto.LoginResponse:
+    properties:
+      refresh_token:
+        type: string
+      token:
+        type: string
+      user_id:
+        type: integer
+      user_name:
+        type: string
+    type: object
+  feedsystem_internal_dto.LogoutRequest:
+    properties:
+      refresh_token:
+        description: 为了适应前期的简单设计，登出时也需要传入refreshToken，方便在Redis中删除对应的refreshToken
+        type: string
+    type: object
+  feedsystem_internal_dto.ProfileResponse:
+    properties:
+      avatar_url:
+        type: string
+      bio:
+        type: string
+      id:
+        type: integer
+      user_name:
+        type: string
+    type: object
+  feedsystem_internal_dto.RefreshRequest:
+    properties:
+      old_access_token:
+        type: string
+      refresh_token:
+        type: string
+    type: object
+  feedsystem_internal_dto.RegisterRequest:
+    properties:
+      password:
+        type: string
+      user_name:
+        type: string
+    type: object
+  feedsystem_internal_dto.UpdateProfileRequest:
+    properties:
+      avatar_url:
+        type: string
+      bio:
+        type: string
+      user_name:
+        description: 使用指针类型，这样可以区分字段是未传入还是传入了空值
+        type: string
+    type: object
+  feedsystem_internal_utils_response.Response:
+    properties:
+      code:
+        description: 状态码
+        type: integer
+      data:
+        description: 数据
+      message:
+        description: 消息
+        type: string
+    type: object
+info:
+  contact: {}
+  description: 短视频 Feed 流系统后端接口文档
+  termsOfService: http://swagger.io/terms/
+  title: TikTok Feed System API
+  version: "1.0"
+paths:
+  /user/change_password:
+    post:
+      consumes:
+      - application/json
+      description: 校验旧密码后修改为新密码，并使当前 access token 失效；data 包含 status 字段
+      parameters:
+      - description: 修改密码信息
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/feedsystem_internal_dto.ChangePasswordRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 修改成功
+          schema:
+            allOf:
+            - $ref: '#/definitions/feedsystem_internal_utils_response.Response'
+            - properties:
+                data:
+                  additionalProperties: true
+                  type: object
+              type: object
+        "400":
+          description: 参数错误、旧密码错误或新密码不符合要求
+          schema:
+            $ref: '#/definitions/feedsystem_internal_utils_response.Response'
+        "401":
+          description: 未登录或登录已过期
+          schema:
+            $ref: '#/definitions/feedsystem_internal_utils_response.Response'
+        "500":
+          description: 服务器内部错误
+          schema:
+            $ref: '#/definitions/feedsystem_internal_utils_response.Response'
+      security:
+      - Bearer: []
+      summary: 修改用户密码
+      tags:
+      - 用户模块
+  /user/find_by_id:
+    post:
+      consumes:
+      - application/json
+      description: 通过用户 ID 查询用户公开资料
+      parameters:
+      - description: 用户ID
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/feedsystem_internal_dto.FindByIDRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 查询成功
+          schema:
+            allOf:
+            - $ref: '#/definitions/feedsystem_internal_utils_response.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/feedsystem_internal_dto.ProfileResponse'
+              type: object
+        "400":
+          description: 参数错误或用户不存在
+          schema:
+            $ref: '#/definitions/feedsystem_internal_utils_response.Response'
+      summary: 根据ID查找用户
+      tags:
+      - 用户模块
+  /user/find_by_username:
+    post:
+      consumes:
+      - application/json
+      description: 通过用户名查询用户公开资料
+      parameters:
+      - description: 用户名
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/feedsystem_internal_dto.FindByUsernameRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 查询成功
+          schema:
+            allOf:
+            - $ref: '#/definitions/feedsystem_internal_utils_response.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/feedsystem_internal_dto.ProfileResponse'
+              type: object
+        "400":
+          description: 参数错误或用户不存在
+          schema:
+            $ref: '#/definitions/feedsystem_internal_utils_response.Response'
+      summary: 根据用户名查找用户
+      tags:
+      - 用户模块
+  /user/login:
+    post:
+      consumes:
+      - application/json
+      description: 使用用户名和密码登录，成功后返回 access token 与 refresh token
+      parameters:
+      - description: 登录信息
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/feedsystem_internal_dto.LoginRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 登录成功
+          schema:
+            allOf:
+            - $ref: '#/definitions/feedsystem_internal_utils_response.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/feedsystem_internal_dto.LoginResponse'
+              type: object
+        "400":
+          description: 参数错误
+          schema:
+            $ref: '#/definitions/feedsystem_internal_utils_response.Response'
+        "401":
+          description: 用户名或密码错误
+          schema:
+            $ref: '#/definitions/feedsystem_internal_utils_response.Response'
+        "500":
+          description: 服务器内部错误
+          schema:
+            $ref: '#/definitions/feedsystem_internal_utils_response.Response'
+      summary: 用户登录
+      tags:
+      - 用户模块
+  /user/logout:
+    post:
+      consumes:
+      - application/json
+      description: 注销当前登录状态，并使 refresh token 与当前 access token 失效；data 包含 status、user_id、user_name
+        字段
+      parameters:
+      - description: 登出信息
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/feedsystem_internal_dto.LogoutRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 登出成功
+          schema:
+            allOf:
+            - $ref: '#/definitions/feedsystem_internal_utils_response.Response'
+            - properties:
+                data:
+                  additionalProperties: true
+                  type: object
+              type: object
+        "400":
+          description: 参数错误
+          schema:
+            $ref: '#/definitions/feedsystem_internal_utils_response.Response'
+        "401":
+          description: 未登录或登录已过期
+          schema:
+            $ref: '#/definitions/feedsystem_internal_utils_response.Response'
+        "500":
+          description: 服务器内部错误
+          schema:
+            $ref: '#/definitions/feedsystem_internal_utils_response.Response'
+      security:
+      - Bearer: []
+      summary: 用户登出
+      tags:
+      - 用户模块
+  /user/profile:
+    get:
+      consumes:
+      - application/json
+      description: 根据 JWT 中的用户身份返回当前登录用户的资料
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 获取成功
+          schema:
+            allOf:
+            - $ref: '#/definitions/feedsystem_internal_utils_response.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/feedsystem_internal_dto.ProfileResponse'
+              type: object
+        "401":
+          description: 未登录或登录已过期
+          schema:
+            $ref: '#/definitions/feedsystem_internal_utils_response.Response'
+        "500":
+          description: 服务器内部错误
+          schema:
+            $ref: '#/definitions/feedsystem_internal_utils_response.Response'
+      security:
+      - Bearer: []
+      summary: 获取当前用户资料
+      tags:
+      - 用户模块
+    patch:
+      consumes:
+      - application/json
+      description: 更新当前登录用户的昵称、头像地址或简介；请求字段均可选，仅更新传入的字段
+      parameters:
+      - description: 待更新的资料
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/feedsystem_internal_dto.UpdateProfileRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 更新成功
+          schema:
+            allOf:
+            - $ref: '#/definitions/feedsystem_internal_utils_response.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/feedsystem_internal_dto.ProfileResponse'
+              type: object
+        "400":
+          description: 参数错误或用户名已存在
+          schema:
+            $ref: '#/definitions/feedsystem_internal_utils_response.Response'
+        "401":
+          description: 未登录或登录已过期
+          schema:
+            $ref: '#/definitions/feedsystem_internal_utils_response.Response'
+        "500":
+          description: 服务器内部错误
+          schema:
+            $ref: '#/definitions/feedsystem_internal_utils_response.Response'
+      security:
+      - Bearer: []
+      summary: 更新用户资料
+      tags:
+      - 用户模块
+  /user/refresh:
+    post:
+      consumes:
+      - application/json
+      description: 使用 refresh token 换取新的 access token 和 refresh token；data 包含 access_token、refresh_token、user_id、username
+        字段
+      parameters:
+      - description: 刷新令牌信息
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/feedsystem_internal_dto.RefreshRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 刷新成功
+          schema:
+            allOf:
+            - $ref: '#/definitions/feedsystem_internal_utils_response.Response'
+            - properties:
+                data:
+                  additionalProperties: true
+                  type: object
+              type: object
+        "400":
+          description: 参数错误
+          schema:
+            $ref: '#/definitions/feedsystem_internal_utils_response.Response'
+        "401":
+          description: refresh token 无效或已过期
+          schema:
+            $ref: '#/definitions/feedsystem_internal_utils_response.Response'
+        "500":
+          description: 服务器内部错误
+          schema:
+            $ref: '#/definitions/feedsystem_internal_utils_response.Response'
+      summary: 刷新令牌
+      tags:
+      - 用户模块
+  /user/register:
+    post:
+      consumes:
+      - application/json
+      description: 使用用户名和密码注册新用户；data 包含 status、user_id、username 字段
+      parameters:
+      - description: 注册信息
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/feedsystem_internal_dto.RegisterRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 注册成功
+          schema:
+            allOf:
+            - $ref: '#/definitions/feedsystem_internal_utils_response.Response'
+            - properties:
+                data:
+                  additionalProperties: true
+                  type: object
+              type: object
+        "400":
+          description: 参数错误或用户名已存在
+          schema:
+            $ref: '#/definitions/feedsystem_internal_utils_response.Response'
+        "500":
+          description: 服务器内部错误
+          schema:
+            $ref: '#/definitions/feedsystem_internal_utils_response.Response'
+      summary: 用户注册
+      tags:
+      - 用户模块
+  /user/upload_avatar:
+    post:
+      consumes:
+      - multipart/form-data
+      description: 以 multipart/form-data 上传头像文件，仅支持 jpg/jpeg/png/webp；data 包含 avatar_url
+        字段
+      parameters:
+      - description: 头像文件（jpg/jpeg/png/webp）
+        in: formData
+        name: file
+        required: true
+        type: file
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 上传成功
+          schema:
+            allOf:
+            - $ref: '#/definitions/feedsystem_internal_utils_response.Response'
+            - properties:
+                data:
+                  additionalProperties: true
+                  type: object
+              type: object
+        "400":
+          description: 文件参数错误、大小不符合要求或格式不支持
+          schema:
+            $ref: '#/definitions/feedsystem_internal_utils_response.Response'
+        "401":
+          description: 未登录或登录已过期
+          schema:
+            $ref: '#/definitions/feedsystem_internal_utils_response.Response'
+        "500":
+          description: 服务器内部错误
+          schema:
+            $ref: '#/definitions/feedsystem_internal_utils_response.Response'
+      security:
+      - Bearer: []
+      summary: 上传用户头像
+      tags:
+      - 用户模块
+securityDefinitions:
+  Bearer:
+    description: Type "Bearer" followed by a space and JWT token.
+    in: header
+    name: Authorization
+    type: apiKey
+swagger: "2.0"

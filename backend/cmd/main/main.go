@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	_ "feedsystem/docs"
 	"feedsystem/internal/config"
 	"feedsystem/internal/handler/middleware"
 	"feedsystem/internal/infra/cache"
@@ -25,6 +26,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
+	swaggerFiles "github.com/swaggo/files"
+	ginSwagger "github.com/swaggo/gin-swagger"
 )
 
 const (
@@ -32,6 +35,15 @@ const (
 	shutdownTimeout = 10 * time.Second
 )
 
+// @title           TikTok Feed System API
+// @version         1.0
+// @description     短视频 Feed 流系统后端接口文档
+// @termsOfService  http://swagger.io/terms/
+// @BasePath        /
+// @securityDefinitions.apikey Bearer
+// @in              header
+// @name            Authorization
+// @description     Type "Bearer" followed by a space and JWT token.
 func main() {
 	// 先加载 .env（本地开发），让 APP_ENV/LOG_LEVEL 在初始化 logger 前可见
 	if err := godotenv.Load(); err != nil {
@@ -132,6 +144,10 @@ func main() {
 
 	// 设置路由
 	r := router.SetupRouter(db, redisCache, rmq, authMiddleware, hub)
+
+	// Swagger UI 路由：访问 /swagger/index.html
+	// 文档由 swag init 生成到 backend/docs，修改接口注释后需重新生成
+	r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
 
 	// 显式配置 http.Server 超时，避免慢连接耗尽连接资源
 	srv := &http.Server{

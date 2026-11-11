@@ -23,7 +23,17 @@ func NewUserHandler(userService *service.UserService) *UserHandler {
 	}
 }
 
-// Register 注册用户
+// Register 用户注册
+// @Summary      用户注册
+// @Description  使用用户名和密码注册新用户；data 包含 status、user_id、username 字段
+// @Tags         用户模块
+// @Accept       json
+// @Produce      json
+// @Param        request body dto.RegisterRequest true "注册信息"
+// @Success      200 {object} response.Response{data=map[string]interface{}} "注册成功"
+// @Failure      400 {object} response.Response "参数错误或用户名已存在"
+// @Failure      500 {object} response.Response "服务器内部错误"
+// @Router       /user/register [post]
 func (h *UserHandler) Register(c *gin.Context) {
 	// 解析请求参数
 	var req dto.RegisterRequest
@@ -72,6 +82,17 @@ func (h *UserHandler) Register(c *gin.Context) {
 }
 
 // Login 用户登录
+// @Summary      用户登录
+// @Description  使用用户名和密码登录，成功后返回 access token 与 refresh token
+// @Tags         用户模块
+// @Accept       json
+// @Produce      json
+// @Param        request body dto.LoginRequest true "登录信息"
+// @Success      200 {object} response.Response{data=dto.LoginResponse} "登录成功"
+// @Failure      400 {object} response.Response "参数错误"
+// @Failure      401 {object} response.Response "用户名或密码错误"
+// @Failure      500 {object} response.Response "服务器内部错误"
+// @Router       /user/login [post]
 func (h *UserHandler) Login(c *gin.Context) {
 	// 解析请求参数
 	var req dto.LoginRequest
@@ -104,6 +125,17 @@ func (h *UserHandler) Login(c *gin.Context) {
 }
 
 // RefreshToken 刷新令牌
+// @Summary      刷新令牌
+// @Description  使用 refresh token 换取新的 access token 和 refresh token；data 包含 access_token、refresh_token、user_id、username 字段
+// @Tags         用户模块
+// @Accept       json
+// @Produce      json
+// @Param        request body dto.RefreshRequest true "刷新令牌信息"
+// @Success      200 {object} response.Response{data=map[string]interface{}} "刷新成功"
+// @Failure      400 {object} response.Response "参数错误"
+// @Failure      401 {object} response.Response "refresh token 无效或已过期"
+// @Failure      500 {object} response.Response "服务器内部错误"
+// @Router       /user/refresh [post]
 func (h *UserHandler) RefreshToken(c *gin.Context) {
 	// 解析请求参数
 	var req dto.RefreshRequest
@@ -167,6 +199,18 @@ func getUserFromCtx(c *gin.Context) (uint, string, error) {
 }
 
 // Logout 用户登出
+// @Summary      用户登出
+// @Description  注销当前登录状态，并使 refresh token 与当前 access token 失效；data 包含 status、user_id、user_name 字段
+// @Tags         用户模块
+// @Accept       json
+// @Produce      json
+// @Security     Bearer
+// @Param        request body dto.LogoutRequest true "登出信息"
+// @Success      200 {object} response.Response{data=map[string]interface{}} "登出成功"
+// @Failure      400 {object} response.Response "参数错误"
+// @Failure      401 {object} response.Response "未登录或登录已过期"
+// @Failure      500 {object} response.Response "服务器内部错误"
+// @Router       /user/logout [post]
 func (h *UserHandler) Logout(c *gin.Context) {
 	// 解析请求参数
 	var req dto.LogoutRequest
@@ -219,6 +263,17 @@ func (h *UserHandler) Logout(c *gin.Context) {
 	})
 }
 
+// GetProfile 获取当前用户资料
+// @Summary      获取当前用户资料
+// @Description  根据 JWT 中的用户身份返回当前登录用户的资料
+// @Tags         用户模块
+// @Accept       json
+// @Produce      json
+// @Security     Bearer
+// @Success      200 {object} response.Response{data=dto.ProfileResponse} "获取成功"
+// @Failure      401 {object} response.Response "未登录或登录已过期"
+// @Failure      500 {object} response.Response "服务器内部错误"
+// @Router       /user/profile [get]
 func (h *UserHandler) GetProfile(c *gin.Context) {
 	// 从上下文中获取用户ID和用户名
 	userID, _, err := getUserFromCtx(c)
@@ -240,6 +295,19 @@ func (h *UserHandler) GetProfile(c *gin.Context) {
 	response.SuccessResponse(c, profile)
 }
 
+// UpdateProfile 更新用户资料
+// @Summary      更新用户资料
+// @Description  更新当前登录用户的昵称、头像地址或简介；请求字段均可选，仅更新传入的字段
+// @Tags         用户模块
+// @Accept       json
+// @Produce      json
+// @Security     Bearer
+// @Param        request body dto.UpdateProfileRequest true "待更新的资料"
+// @Success      200 {object} response.Response{data=dto.ProfileResponse} "更新成功"
+// @Failure      400 {object} response.Response "参数错误或用户名已存在"
+// @Failure      401 {object} response.Response "未登录或登录已过期"
+// @Failure      500 {object} response.Response "服务器内部错误"
+// @Router       /user/profile [patch]
 func (h *UserHandler) UpdateProfile(c *gin.Context) {
 	// 从上下文中获取用户ID和用户名
 	userID, _, err := getUserFromCtx(c)
@@ -281,6 +349,18 @@ func (h *UserHandler) UpdateProfile(c *gin.Context) {
 }
 
 // UploadAvatar 上传用户头像
+// @Summary      上传用户头像
+// @Description  以 multipart/form-data 上传头像文件，仅支持 jpg/jpeg/png/webp；data 包含 avatar_url 字段
+// @Tags         用户模块
+// @Accept       multipart/form-data
+// @Produce      json
+// @Security     Bearer
+// @Param        file formData file true "头像文件（jpg/jpeg/png/webp）"
+// @Success      200 {object} response.Response{data=map[string]interface{}} "上传成功"
+// @Failure      400 {object} response.Response "文件参数错误、大小不符合要求或格式不支持"
+// @Failure      401 {object} response.Response "未登录或登录已过期"
+// @Failure      500 {object} response.Response "服务器内部错误"
+// @Router       /user/upload_avatar [post]
 func (h *UserHandler) UploadAvatar(c *gin.Context) {
 	// 从上下文中获取用户ID
 	userID, _, err := getUserFromCtx(c)
@@ -320,6 +400,18 @@ func (h *UserHandler) UploadAvatar(c *gin.Context) {
 }
 
 // ChangePassword 修改用户密码
+// @Summary      修改用户密码
+// @Description  校验旧密码后修改为新密码，并使当前 access token 失效；data 包含 status 字段
+// @Tags         用户模块
+// @Accept       json
+// @Produce      json
+// @Security     Bearer
+// @Param        request body dto.ChangePasswordRequest true "修改密码信息"
+// @Success      200 {object} response.Response{data=map[string]interface{}} "修改成功"
+// @Failure      400 {object} response.Response "参数错误、旧密码错误或新密码不符合要求"
+// @Failure      401 {object} response.Response "未登录或登录已过期"
+// @Failure      500 {object} response.Response "服务器内部错误"
+// @Router       /user/change_password [post]
 func (h *UserHandler) ChangePassword(c *gin.Context) {
 	// 从上下文中获取用户ID
 	userID, _, err := getUserFromCtx(c)
@@ -400,6 +492,15 @@ func (h *UserHandler) ChangePassword(c *gin.Context) {
 }
 
 // FindByID 根据ID查找用户
+// @Summary      根据ID查找用户
+// @Description  通过用户 ID 查询用户公开资料
+// @Tags         用户模块
+// @Accept       json
+// @Produce      json
+// @Param        request body dto.FindByIDRequest true "用户ID"
+// @Success      200 {object} response.Response{data=dto.ProfileResponse} "查询成功"
+// @Failure      400 {object} response.Response "参数错误或用户不存在"
+// @Router       /user/find_by_id [post]
 func (h *UserHandler) FindByID(c *gin.Context) {
 	// 解析请求参数
 	var req dto.FindByIDRequest
@@ -421,6 +522,15 @@ func (h *UserHandler) FindByID(c *gin.Context) {
 }
 
 // FindByUsername 根据用户名查找用户
+// @Summary      根据用户名查找用户
+// @Description  通过用户名查询用户公开资料
+// @Tags         用户模块
+// @Accept       json
+// @Produce      json
+// @Param        request body dto.FindByUsernameRequest true "用户名"
+// @Success      200 {object} response.Response{data=dto.ProfileResponse} "查询成功"
+// @Failure      400 {object} response.Response "参数错误或用户不存在"
+// @Router       /user/find_by_username [post]
 func (h *UserHandler) FindByUsername(c *gin.Context) {
 	// 解析请求参数
 	var req dto.FindByUsernameRequest
