@@ -17,6 +17,7 @@ const messageStore = useMessageStore()
 const notificationStore = useNotificationStore()
 const sseStore = useSseStore()
 const { unreadCount } = storeToRefs(messageStore)
+const { unreadCount: notificationUnreadCount } = storeToRefs(notificationStore)
 const userName = localStorage.getItem('user_name') || '用户'
 const myUserId = Number(localStorage.getItem('user_id')) || 0
 // 导航栏头像需要单独拉一次自己的资料，失败时回退默认头像
@@ -126,6 +127,10 @@ function goMessage() {
   }
 }
 
+function goNotification() {
+  router.push('/notification')
+}
+
 function handleLogout() {
   sseStore.stop()
   messageStore.reset()
@@ -162,6 +167,14 @@ onMounted(() => {
           class="message-badge"
         >
           <el-button size="small" @click="goMessage">私信</el-button>
+        </el-badge>
+        <el-badge
+          :value="notificationUnreadCount"
+          :max="99"
+          :hidden="notificationUnreadCount === 0"
+          class="notification-badge"
+        >
+          <el-button size="small" @click="goNotification">通知</el-button>
         </el-badge>
         <el-button size="small" @click="handleLogout">退出登录</el-button>
       </div>

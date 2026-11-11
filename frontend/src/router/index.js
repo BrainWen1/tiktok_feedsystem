@@ -2,6 +2,7 @@ import { createRouter, createWebHistory } from 'vue-router'
 import Login from '../views/Login.vue'
 import Home from '../views/Home.vue'
 import Message from '../views/Message.vue'
+import Notification from '../views/Notification.vue'
 import VideoPlay from '../views/VideoPlay.vue'
 import Publish from '../views/Publish.vue'
 import UserProfile from '../views/UserProfile.vue'
@@ -27,6 +28,11 @@ const routes = [
     path: '/message',
     name: 'Message',
     component: Message
+  },
+  {
+    path: '/notification',
+    name: 'Notification',
+    component: Notification
   },
   {
     path: '/publish',

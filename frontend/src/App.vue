@@ -26,6 +26,8 @@ function syncConnection() {
     return
   }
   sseStore.start()
+  // SSE 只会推送后续的增量通知，导航栏红点需要通过接口初始化一次
+  notificationStore.refreshUnreadCount()
 }
 
 onMounted(syncConnection)
