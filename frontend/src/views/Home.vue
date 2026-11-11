@@ -7,11 +7,15 @@ import request from '../utils/request'
 import VideoCard from '../components/VideoCard.vue'
 import { normalizeFeedItem, resolveAvatar } from '../utils/video'
 import { useMessageStore } from '../store/message'
+import { useNotificationStore } from '../store/notification'
+import { useSseStore } from '../store/sse'
 
 const PAGE_SIZE = 10
 
 const router = useRouter()
 const messageStore = useMessageStore()
+const notificationStore = useNotificationStore()
+const sseStore = useSseStore()
 const { unreadCount } = storeToRefs(messageStore)
 const userName = localStorage.getItem('user_name') || '用户'
 const myUserId = Number(localStorage.getItem('user_id')) || 0
@@ -123,7 +127,9 @@ function goMessage() {
 }
 
 function handleLogout() {
+  sseStore.stop()
   messageStore.reset()
+  notificationStore.reset()
   localStorage.removeItem('token')
   localStorage.removeItem('refresh_token')
   localStorage.removeItem('user_id')

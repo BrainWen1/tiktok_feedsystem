@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
-import { ElNotification } from 'element-plus'
-import request from '../utils/request'
+import { useSseStore } from './sse'
+import { useNotificationStore } from './notification'
 
 // 后端 SSE 推送的 content 形如 "用户名: 正文"，与其他页面的展示保持一致
 function stripSenderPrefix(content, senderName) {
@@ -9,23 +9,21 @@ function stripSenderPrefix(content, senderName) {
   return content.startsWith(prefix) ? content.slice(prefix.length) : content
 }
 
+// 私信域：只处理 SSE 的 message 事件，维护未读数和最新消息。
+// 连接生命周期由 store/sse.js 统一管理，弹窗由 store/notification.js 统一渲染。
 export const useMessageStore = defineStore('message', () => {
   // ------------------------- 全局状态 -------------------------
   const unreadCount = ref(0)
   const latestMessage = ref(null)
-  // connecting | connected | disconnected
-  const sseStatus = ref('disconnected')
   // 私信页当前打开的是哪个用户；不在私信页时为 null
   const activeChatUserId = ref(null)
   const messagePageActive = ref(false)
 
-  // ------------------------- SSE 内部状态 -------------------------
-  let eventSource = null
-  let reconnectTimer = null
-  let connecting = false
-  let stopped = true
-  let generation = 0
   let messageSeq = 0
+
+  const sse = useSseStore()
+  const notificationStore = useNotificationStore()
+  sse.on('message', handleMessage)
 
   function getMyUserId() {
     return (
@@ -48,101 +46,16 @@ export const useMessageStore = defineStore('message', () => {
     }
   }
 
-  // ------------------------- 连接管理 -------------------------
-
-  // 登录后由 App.vue 调用；重复调用是安全的
-  function start() {
-    if (!stopped || connecting) return
-    stopped = false
-    connect()
-  }
-
-  function stop() {
-    stopped = true
-    connecting = false
-    // 让还在途中的 ticket 请求失效，避免 stop 后又建出一条连接
-    generation += 1
-    clearReconnectTimer()
-    closeEventSource()
-    sseStatus.value = 'disconnected'
-  }
-
   function reset() {
-    stop()
     unreadCount.value = 0
     latestMessage.value = null
     activeChatUserId.value = null
     messagePageActive.value = false
   }
 
-  async function connect() {
-    if (stopped || connecting) return
-    const currentGeneration = ++generation
-    connecting = true
-    sseStatus.value = 'connecting'
-
-    try {
-      // 自动重连期间不弹全局错误提示，连接状态由私信页的指示灯展示
-      const res = await request.post('/sse/ticket', null, { silent: true })
-      const ticket = res.data?.ticket
-      if (!ticket) throw new Error('未获取到 SSE ticket')
-      if (stopped || currentGeneration !== generation) return
-
-      eventSource = new EventSource(`/sse?ticket=${encodeURIComponent(ticket)}`)
-      eventSource.onopen = () => {
-        sseStatus.value = 'connected'
-      }
-      eventSource.onmessage = handleSseMessage
-      eventSource.onerror = () => {
-        if (stopped) return
-        // ticket 是一次性的，EventSource 自动重连会带旧 ticket 失败，这里主动重建
-        sseStatus.value = 'disconnected'
-        closeEventSource()
-        scheduleReconnect()
-      }
-    } catch {
-      if (stopped || currentGeneration !== generation) return
-      sseStatus.value = 'disconnected'
-      scheduleReconnect()
-    } finally {
-      // 旧连接收尾时不要清掉新连接的 connecting 标记
-      if (currentGeneration === generation) connecting = false
-    }
-  }
-
-  function scheduleReconnect() {
-    if (stopped || reconnectTimer) return
-    reconnectTimer = setTimeout(() => {
-      reconnectTimer = null
-      connect()
-    }, 3000)
-  }
-
-  function clearReconnectTimer() {
-    if (reconnectTimer) {
-      clearTimeout(reconnectTimer)
-      reconnectTimer = null
-    }
-  }
-
-  function closeEventSource() {
-    if (eventSource) {
-      eventSource.close()
-      eventSource = null
-    }
-  }
-
   // ------------------------- 消息处理 -------------------------
 
-  function handleSseMessage(event) {
-    let data
-    try {
-      data = JSON.parse(event.data)
-    } catch {
-      return
-    }
-    if (data.type !== 'message') return
-
+  function handleMessage(data) {
     const senderId = Number(data.sender_id)
     const senderName = data.sender_name || `用户${senderId}`
     const content = stripSenderPrefix(data.content || '', senderName)
@@ -168,12 +81,10 @@ export const useMessageStore = defineStore('message', () => {
     if (viewingThisChat) return
 
     unreadCount.value += 1
-    ElNotification({
+    notificationStore.notify({
       title: '收到新私信',
       message: `${senderName}：${content}`,
-      type: 'info',
-      position: 'top-right',
-      duration: 4000
+      type: 'info'
     })
   }
 
@@ -201,11 +112,8 @@ export const useMessageStore = defineStore('message', () => {
   return {
     unreadCount,
     latestMessage,
-    sseStatus,
     activeChatUserId,
     messagePageActive,
-    start,
-    stop,
     reset,
     clearUnread,
     reduceUnread,

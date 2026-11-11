@@ -5,12 +5,15 @@ import { useRoute, useRouter } from 'vue-router'
 import request from '../utils/request'
 import { resolveAvatar } from '../utils/video'
 import { useMessageStore } from '../store/message'
+import { useSseStore } from '../store/sse'
 
 const route = useRoute()
 const router = useRouter()
 const messageStore = useMessageStore()
-// SSE 连接由 App.vue 全局维护，这里只消费全局状态
-const { latestMessage, sseStatus } = storeToRefs(messageStore)
+// SSE 连接由 store/sse.js 全局维护，这里只消费连接状态和私信消息
+const sseStore = useSseStore()
+const { latestMessage } = storeToRefs(messageStore)
+const { status: sseStatus } = storeToRefs(sseStore)
 
 const myName = localStorage.getItem('user_name') || '我'
 // 当前登录用户 ID：登录成功后由 Login.vue 写入 localStorage。
