@@ -276,13 +276,6 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="profile-page">
-    <header class="navbar">
-      <div class="nav-left">
-        <el-button link @click="router.push('/')">← 返回主页</el-button>
-        <span class="brand">个人主页</span>
-      </div>
-    </header>
-
     <main v-loading="loading" class="content">
       <el-alert
         v-if="errorMsg"
@@ -380,30 +373,6 @@ onBeforeUnmount(() => {
   min-height: 100%;
   display: flex;
   flex-direction: column;
-}
-
-.navbar {
-  position: sticky;
-  top: 0;
-  z-index: 10;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  height: 56px;
-  padding: 0 24px;
-  background: #fff;
-  border-bottom: 1px solid #e4e7ed;
-}
-
-.nav-left {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-}
-
-.brand {
-  font-size: 18px;
-  font-weight: 600;
 }
 
 .content {

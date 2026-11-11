@@ -11,14 +11,15 @@ type FeedListReq struct {
 
 // FeedItemResp feed对外输出VO，聚合完成后的视频条目
 type FeedItemResp struct {
-	Vid          string `json:"vid"`
-	Title        string `json:"title"`
-	Desc         string `json:"desc"`
-	VideoURL     string `json:"video_url"`
-	CoverURL     string `json:"cover_url"`
-	AuthorUserID uint   `json:"author_uid"`
-	AuthorName   string `json:"author_name"`
-	AvatarURL    string `json:"avatar_url"`
+	Vid          string   `json:"vid"`
+	Title        string   `json:"title"`
+	Desc         string   `json:"desc"`
+	Tags         []string `json:"tags"` // 视频标签，用于沉浸式播放页展示 #标签
+	VideoURL     string   `json:"video_url"`
+	CoverURL     string   `json:"cover_url"`
+	AuthorUserID uint     `json:"author_uid"`
+	AuthorName   string   `json:"author_name"`
+	AvatarURL    string   `json:"avatar_url"`
 
 	LikesCnt    int64 `json:"likes_cnt"`    // 点赞总数，优先取缓存中的实时展示值
 	CommentsCnt int64 `json:"comments_cnt"` // 评论总数

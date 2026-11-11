@@ -5,7 +5,6 @@ import { ElMessage } from 'element-plus'
 import request from '../utils/request'
 
 const router = useRouter()
-const userName = localStorage.getItem('user_name') || '用户'
 
 // 与后端 UploadSpec / 分片上传限制保持一致
 const ALLOWED_VIDEO_EXTS = ['.mp4', '.avi', '.mov', '.mkv']
@@ -359,14 +358,6 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="publish-page">
-    <header class="navbar">
-      <div class="nav-left">
-        <el-button link @click="router.push('/')">← 返回主页</el-button>
-        <span class="brand">发布视频</span>
-      </div>
-      <span class="user">{{ userName }}</span>
-    </header>
-
     <main class="content">
       <el-card shadow="never" class="publish-card">
         <el-form label-width="90px" @submit.prevent>
@@ -476,35 +467,6 @@ onBeforeUnmount(() => {
   min-height: 100%;
   display: flex;
   flex-direction: column;
-}
-
-.navbar {
-  position: sticky;
-  top: 0;
-  z-index: 10;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  height: 56px;
-  padding: 0 24px;
-  background: #fff;
-  border-bottom: 1px solid #e4e7ed;
-}
-
-.nav-left {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-}
-
-.brand {
-  font-size: 18px;
-  font-weight: 600;
-}
-
-.user {
-  color: #606266;
-  font-size: 14px;
 }
 
 .content {

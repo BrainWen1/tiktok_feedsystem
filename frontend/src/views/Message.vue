@@ -137,10 +137,6 @@ async function scrollToBottom(smooth = true) {
   }
 }
 
-function backHome() {
-  router.push('/')
-}
-
 // ------------------------- 会话 & 聊天 -------------------------
 
 // 从路由 query 中取目标用户 ID（主页点击“私信”时携带）
@@ -337,20 +333,16 @@ onUnmounted(() => {
 
 <template>
   <el-container class="message-page">
-    <el-header height="56px" class="topbar">
-      <span class="brand">私信</span>
-      <div class="topbar-right">
-        <span class="sse-dot" :class="sseStatus" />
-        <span class="sse-text">
-          {{ sseStatus === 'connected' ? '实时连接已建立' : sseStatus === 'connecting' ? '连接中…' : '连接已断开' }}
-        </span>
-        <el-button size="small" @click="backHome">返回主页</el-button>
-      </div>
-    </el-header>
-
     <el-container class="body">
       <el-aside width="300px" class="session-aside">
-        <div class="aside-title">会话列表</div>
+        <div class="aside-title">
+          <span>会话列表</span>
+          <span
+            class="sse-dot"
+            :class="sseStatus"
+            :title="sseStatus === 'connected' ? '实时连接已建立' : sseStatus === 'connecting' ? '连接中…' : '连接已断开'"
+          />
+        </div>
 
         <div v-loading="sessionsLoading" class="session-list">
           <el-empty
@@ -462,27 +454,8 @@ onUnmounted(() => {
 
 <style scoped>
 .message-page {
-  height: 100%;
+  height: calc(100vh - 56px);
   background: #f5f5f5;
-}
-
-.topbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  background: #fff;
-  border-bottom: 1px solid #e4e7ed;
-}
-
-.brand {
-  font-size: 18px;
-  font-weight: 600;
-}
-
-.topbar-right {
-  display: flex;
-  align-items: center;
-  gap: 10px;
 }
 
 .sse-dot {
@@ -500,12 +473,9 @@ onUnmounted(() => {
   background: #f56c6c;
 }
 
-.sse-text {
-  color: #909399;
-  font-size: 12px;
-}
-
 .body {
+  flex: 1;
+  min-height: 0;
   overflow: hidden;
 }
 
@@ -517,7 +487,10 @@ onUnmounted(() => {
 }
 
 .aside-title {
-  padding: 12px 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px;
   color: #303133;
   font-size: 14px;
   font-weight: 600;

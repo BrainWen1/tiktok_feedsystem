@@ -1,7 +1,6 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import { storeToRefs } from 'pinia'
-import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import request from '../utils/request'
 import { useNotificationStore } from '../store/notification'
@@ -24,7 +23,6 @@ const TYPE_META = {
   follow: { label: '关注', tag: 'warning' }
 }
 
-const router = useRouter()
 const notificationStore = useNotificationStore()
 const { unreadCount } = storeToRefs(notificationStore)
 
@@ -163,10 +161,6 @@ async function markAllRead() {
   }
 }
 
-function backHome() {
-  router.push('/')
-}
-
 onMounted(() => {
   loadFirstPage()
   syncUnreadCount()
@@ -175,15 +169,12 @@ onMounted(() => {
 
 <template>
   <el-container class="notification-page">
-    <el-header height="56px" class="topbar">
-      <span class="brand">通知中心</span>
-      <div class="topbar-right">
-        <span v-if="unreadCount > 0" class="unread-hint">未读 {{ unreadCount }} 条</span>
-        <el-button size="small" @click="backHome">返回主页</el-button>
-      </div>
-    </el-header>
-
     <main class="content">
+      <div class="page-head">
+        <h1>通知中心</h1>
+        <span v-if="unreadCount > 0" class="unread-hint">未读 {{ unreadCount }} 条</span>
+      </div>
+
       <div class="panel">
         <el-tabs v-model="activeFilter" class="filter-tabs">
           <el-tab-pane
@@ -269,26 +260,17 @@ onMounted(() => {
   flex-direction: column;
 }
 
-.topbar {
-  position: sticky;
-  top: 0;
-  z-index: 10;
+.page-head {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  background: #fff;
-  border-bottom: 1px solid #e4e7ed;
-}
-
-.brand {
-  font-size: 18px;
-  font-weight: 600;
-}
-
-.topbar-right {
-  display: flex;
-  align-items: center;
+  align-items: baseline;
   gap: 12px;
+  margin-bottom: 16px;
+}
+
+.page-head h1 {
+  margin: 0;
+  color: #303133;
+  font-size: 22px;
 }
 
 .unread-hint {
