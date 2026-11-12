@@ -7,13 +7,16 @@ import {
   ChatDotRound,
   Compass,
   HomeFilled,
+  Moon,
   Plus,
   Search,
   Star,
+  Sunny,
   User
 } from '@element-plus/icons-vue'
 import request from '../utils/request'
 import { resolveAvatar } from '../utils/video'
+import { isDark, toggleTheme } from '../utils/theme'
 import { useMessageStore } from '../store/message'
 import { useNotificationStore } from '../store/notification'
 import { useSseStore } from '../store/sse'
@@ -133,7 +136,7 @@ onMounted(loadMyProfile)
 
 <template>
   <div class="layout" :class="{ 'layout--immersive': isImmersive }">
-    <header class="topbar" :class="{ 'topbar--dark': isImmersive }">
+    <header class="topbar" :class="{ 'topbar--immersive': isImmersive }">
       <router-link to="/" class="home-btn" title="返回推荐流">
         <el-icon :size="22"><HomeFilled /></el-icon>
       </router-link>
@@ -172,6 +175,19 @@ onMounted(loadMyProfile)
           </button>
         </el-badge>
 
+        <button
+          class="nav-action theme-toggle"
+          type="button"
+          :title="isDark ? '切换到浅色模式' : '切换到深色模式'"
+          :aria-label="isDark ? '切换到浅色模式' : '切换到深色模式'"
+          @click="toggleTheme"
+        >
+          <el-icon :size="20">
+            <Sunny v-if="isDark" />
+            <Moon v-else />
+          </el-icon>
+        </button>
+
         <el-dropdown trigger="click" @command="onUserCommand">
           <button class="avatar-btn" type="button" title="账号菜单">
             <el-avatar :size="34" :src="myAvatarSrc">{{ initial }}</el-avatar>
@@ -187,7 +203,7 @@ onMounted(loadMyProfile)
       </div>
     </header>
 
-    <aside class="sidebar" :class="{ 'sidebar--dark': isImmersive }">
+    <aside class="sidebar" :class="{ 'sidebar--immersive': isImmersive }">
       <nav class="side-nav">
         <router-link
           v-for="item in menuItems"
@@ -216,7 +232,9 @@ onMounted(loadMyProfile)
 <style scoped>
 .layout {
   min-height: 100vh;
-  background: #f5f5f5;
+  color: var(--app-text);
+  background: var(--app-bg);
+  transition: background-color 0.25s ease, color 0.25s ease;
 }
 
 /* ---------- 顶部导航 ---------- */
@@ -231,14 +249,15 @@ onMounted(loadMyProfile)
   gap: 16px;
   height: 56px;
   padding: 0 20px;
-  background: #fff;
-  border-bottom: 1px solid #e4e7ed;
-  transition: background 0.2s, border-color 0.2s;
+  background: var(--app-chrome-bg);
+  border-bottom: 1px solid var(--app-chrome-border);
+  transition: background-color 0.25s ease, border-color 0.25s ease, color 0.25s ease;
 }
 
-.topbar--dark {
-  background: rgba(16, 16, 20, 0.72);
-  border-bottom-color: rgba(255, 255, 255, 0.08);
+/* 沉浸式页面：导航悬浮在视频上，背景使用主题相关的玻璃效果 */
+.topbar--immersive {
+  background: var(--app-immersive-chrome-bg);
+  border-bottom-color: var(--app-immersive-chrome-border);
   backdrop-filter: blur(10px);
 }
 
@@ -249,24 +268,24 @@ onMounted(loadMyProfile)
   justify-content: center;
   width: 40px;
   height: 40px;
-  color: #303133;
+  color: var(--app-text);
   text-decoration: none;
-  background: #f2f3f5;
+  background: var(--app-surface-input);
   border-radius: 50%;
-  transition: background 0.15s, color 0.15s;
+  transition: background-color 0.2s ease, color 0.2s ease;
 }
 
 .home-btn:hover {
-  background: #e6e8eb;
+  background: var(--app-surface-input-hover);
 }
 
-.topbar--dark .home-btn {
-  color: #fff;
-  background: rgba(255, 255, 255, 0.12);
+.topbar--immersive .home-btn {
+  color: var(--app-immersive-text);
+  background: var(--app-immersive-input-bg);
 }
 
-.topbar--dark .home-btn:hover {
-  background: rgba(255, 255, 255, 0.2);
+.topbar--immersive .home-btn:hover {
+  background: var(--app-immersive-hover-bg);
 }
 
 .search-wrap {
@@ -282,36 +301,36 @@ onMounted(loadMyProfile)
   width: min(460px, 100%);
   height: 38px;
   padding: 0 4px 0 14px;
-  background: #f2f3f5;
+  background: var(--app-surface-input);
   border: 1px solid transparent;
   border-radius: 19px;
-  transition: background 0.15s, border-color 0.15s;
+  transition: background-color 0.2s ease, border-color 0.2s ease;
 }
 
 .search-box:focus-within {
-  background: #fff;
-  border-color: #fe2c55;
+  background: var(--app-surface);
+  border-color: var(--app-primary);
 }
 
-.topbar--dark .search-box {
-  background: rgba(255, 255, 255, 0.1);
+.topbar--immersive .search-box {
+  background: var(--app-immersive-input-bg);
 }
 
-.topbar--dark .search-box:focus-within {
-  background: rgba(0, 0, 0, 0.45);
-  border-color: rgba(254, 44, 85, 0.8);
+.topbar--immersive .search-box:focus-within {
+  background: var(--app-immersive-input-focus-bg);
+  border-color: var(--app-primary);
 }
 
 .search-icon {
   flex: none;
-  color: #909399;
+  color: var(--app-text-muted);
 }
 
 .search-input {
   flex: 1;
   min-width: 0;
   padding: 0 10px;
-  color: #303133;
+  color: var(--app-text);
   font-size: 14px;
   background: transparent;
   border: none;
@@ -319,11 +338,16 @@ onMounted(loadMyProfile)
 }
 
 .search-input::placeholder {
-  color: #a8abb2;
+  color: var(--app-text-placeholder);
 }
 
-.topbar--dark .search-input {
-  color: #fff;
+.topbar--immersive .search-input {
+  color: var(--app-immersive-input-text);
+}
+
+.topbar--immersive .search-input::placeholder {
+  color: var(--app-immersive-text);
+  opacity: 0.55;
 }
 
 .search-btn {
@@ -332,14 +356,15 @@ onMounted(loadMyProfile)
   padding: 0 16px;
   color: #fff;
   font-size: 13px;
-  background: #fe2c55;
+  background: var(--app-primary);
   border: none;
   border-radius: 15px;
   cursor: pointer;
+  transition: background-color 0.2s ease;
 }
 
 .search-btn:hover {
-  background: #e6254b;
+  background: var(--app-primary-hover);
 }
 
 .topbar-actions {
@@ -354,23 +379,49 @@ onMounted(loadMyProfile)
   align-items: center;
   gap: 5px;
   padding: 6px 4px;
-  color: #4b4f56;
+  color: var(--app-text-secondary);
   font-size: 13px;
   background: none;
   border: none;
   cursor: pointer;
+  transition: background-color 0.2s ease, color 0.2s ease;
 }
 
 .nav-action:hover {
-  color: #fe2c55;
+  color: var(--app-primary);
 }
 
-.topbar--dark .nav-action {
-  color: rgba(255, 255, 255, 0.88);
+.topbar--immersive .nav-action {
+  color: var(--app-immersive-text);
 }
 
-.topbar--dark .nav-action:hover {
-  color: #fff;
+.topbar--immersive .nav-action:hover {
+  color: var(--app-immersive-text-hover);
+}
+
+/* 明暗主题切换按钮，与通知/私信一起放在头像左侧 */
+.theme-toggle {
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border-radius: 50%;
+}
+
+.theme-toggle:hover {
+  background: var(--app-surface-input);
+}
+
+.topbar--immersive .theme-toggle:hover {
+  background: var(--app-immersive-hover-bg);
+}
+
+.theme-toggle .el-icon {
+  transition: transform 0.3s ease;
+}
+
+.theme-toggle:hover .el-icon {
+  transform: rotate(22deg);
 }
 
 .avatar-btn {
@@ -383,7 +434,7 @@ onMounted(loadMyProfile)
 }
 
 .avatar-btn:hover {
-  border-color: #fe2c55;
+  border-color: var(--app-primary);
 }
 
 /* ---------- 左侧边栏 ---------- */
@@ -397,14 +448,14 @@ onMounted(loadMyProfile)
   flex-direction: column;
   width: 220px;
   padding: 18px 14px;
-  background: #fff;
-  border-right: 1px solid #e4e7ed;
-  transition: background 0.2s, border-color 0.2s;
+  background: var(--app-chrome-bg);
+  border-right: 1px solid var(--app-chrome-border);
+  transition: background-color 0.25s ease, border-color 0.25s ease, color 0.25s ease;
 }
 
-.sidebar--dark {
-  background: rgba(16, 16, 20, 0.62);
-  border-right-color: rgba(255, 255, 255, 0.08);
+.sidebar--immersive {
+  background: var(--app-immersive-chrome-bg);
+  border-right-color: var(--app-immersive-chrome-border);
   backdrop-filter: blur(10px);
 }
 
@@ -420,34 +471,36 @@ onMounted(loadMyProfile)
   gap: 12px;
   height: 46px;
   padding: 0 14px;
-  color: #4b4f56;
+  color: var(--app-text-secondary);
   font-size: 15px;
   text-decoration: none;
   border-radius: 10px;
-  transition: background 0.15s, color 0.15s;
+  transition: background-color 0.2s ease, color 0.2s ease;
 }
 
 .side-item:hover {
-  background: #f2f3f5;
+  color: var(--app-text);
+  background: var(--app-surface-hover);
 }
 
 .side-item.active {
-  color: #fe2c55;
+  color: var(--app-primary);
   font-weight: 600;
-  background: #fff0f3;
+  background: var(--app-primary-soft);
 }
 
-.sidebar--dark .side-item {
-  color: rgba(255, 255, 255, 0.82);
+.sidebar--immersive .side-item {
+  color: var(--app-immersive-text);
 }
 
-.sidebar--dark .side-item:hover {
-  background: rgba(255, 255, 255, 0.1);
+.sidebar--immersive .side-item:hover {
+  color: var(--app-immersive-text-hover);
+  background: var(--app-immersive-hover-bg);
 }
 
-.sidebar--dark .side-item.active {
-  color: #fff;
-  background: rgba(254, 44, 85, 0.5);
+.sidebar--immersive .side-item.active {
+  color: var(--app-immersive-active-text);
+  background: var(--app-immersive-active-bg);
 }
 
 .publish-entry {
@@ -461,13 +514,14 @@ onMounted(loadMyProfile)
   font-size: 14px;
   font-weight: 600;
   text-decoration: none;
-  background: #fe2c55;
+  background: var(--app-primary);
   border-radius: 10px;
   box-shadow: 0 6px 16px rgba(254, 44, 85, 0.28);
+  transition: background-color 0.2s ease;
 }
 
 .publish-entry:hover {
-  background: #e6254b;
+  background: var(--app-primary-hover);
 }
 
 /* ---------- 主内容区 ---------- */

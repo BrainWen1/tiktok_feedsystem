@@ -484,13 +484,13 @@ onBeforeUnmount(() => {
 .file-input {
   display: block;
   max-width: 100%;
-  color: #606266;
+  color: var(--app-text-secondary);
   font-size: 14px;
 }
 
 .file-hint {
   margin-top: 8px;
-  color: #303133;
+  color: var(--app-text);
   font-size: 13px;
   line-height: 1.6;
   word-break: break-all;
@@ -498,7 +498,7 @@ onBeforeUnmount(() => {
 
 .hint {
   margin-top: 6px;
-  color: #909399;
+  color: var(--app-text-muted);
   font-size: 12px;
   line-height: 1.6;
 }
@@ -518,9 +518,10 @@ onBeforeUnmount(() => {
   width: 220px;
   min-height: 124px;
   overflow: hidden;
-  background: #f0f2f5;
-  border: 1px solid #e4e7ed;
+  background: var(--app-surface-input);
+  border: 1px solid var(--app-border);
   border-radius: 6px;
+  transition: background-color 0.25s ease, border-color 0.25s ease;
 }
 
 .cover-preview img {
@@ -530,7 +531,7 @@ onBeforeUnmount(() => {
 }
 
 .cover-empty {
-  color: #909399;
+  color: var(--app-text-muted);
   font-size: 13px;
 }
 

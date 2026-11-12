@@ -279,7 +279,7 @@ watch(
   bottom: 0;
   left: 0;
   z-index: 280;
-  background: rgba(0, 0, 0, 0.35);
+  background: var(--app-mask);
 }
 
 .comment-panel {
@@ -291,8 +291,9 @@ watch(
   display: flex;
   flex-direction: column;
   width: 420px;
-  background: #fff;
-  box-shadow: -2px 0 16px rgba(0, 0, 0, 0.25);
+  background: var(--app-surface);
+  box-shadow: -2px 0 16px var(--app-shadow);
+  transition: background-color 0.25s ease;
 }
 
 .comment-header {
@@ -302,11 +303,11 @@ watch(
   justify-content: space-between;
   height: 56px;
   padding: 0 16px;
-  border-bottom: 1px solid #e4e7ed;
+  border-bottom: 1px solid var(--app-border);
 }
 
 .comment-title {
-  color: #303133;
+  color: var(--app-text);
   font-size: 15px;
   font-weight: 600;
 }
@@ -317,15 +318,16 @@ watch(
   justify-content: center;
   width: 32px;
   height: 32px;
-  color: #606266;
-  background: #f5f7fa;
+  color: var(--app-text-secondary);
+  background: var(--app-surface-alt);
   border: none;
   border-radius: 50%;
   cursor: pointer;
+  transition: background-color 0.2s ease, color 0.2s ease;
 }
 
 .close-btn:hover {
-  background: #e9ecf0;
+  background: var(--app-surface-hover);
 }
 
 .comment-scroll {
@@ -344,7 +346,7 @@ watch(
 .comment-avatar {
   flex: none;
   color: #fff;
-  background: #409eff;
+  background: var(--app-info);
   cursor: pointer;
 }
 
@@ -355,7 +357,7 @@ watch(
 
 .comment-name {
   margin-bottom: 4px;
-  color: #909399;
+  color: var(--app-text-muted);
   font-size: 13px;
   font-weight: 500;
 }
@@ -366,11 +368,11 @@ watch(
 
 .comment-name.clickable:hover,
 .reply-name.clickable:hover {
-  color: #409eff;
+  color: var(--app-link);
 }
 
 .comment-text {
-  color: #303133;
+  color: var(--app-text);
   font-size: 14px;
   line-height: 1.5;
   white-space: pre-wrap;
@@ -382,35 +384,35 @@ watch(
   align-items: center;
   gap: 10px;
   margin-top: 4px;
-  color: #c0c4cc;
+  color: var(--app-text-faint);
   font-size: 12px;
 }
 
 .comment-meta .el-button {
-  color: #909399;
+  color: var(--app-text-muted);
 }
 
 .reply-list {
   margin-top: 10px;
   padding: 8px 10px;
-  background: #f7f8fa;
+  background: var(--app-surface-alt);
   border-radius: 6px;
 }
 
 .reply-item + .reply-item {
   margin-top: 8px;
   padding-top: 8px;
-  border-top: 1px solid #eef0f3;
+  border-top: 1px solid var(--app-border-light);
 }
 
 .reply-name {
-  color: #606266;
+  color: var(--app-text-secondary);
   font-size: 13px;
   font-weight: 500;
 }
 
 .reply-text {
-  color: #303133;
+  color: var(--app-text);
   font-size: 13px;
   line-height: 1.5;
   white-space: pre-wrap;
@@ -420,8 +422,9 @@ watch(
 .comment-footer {
   flex: none;
   padding: 10px 16px 14px;
-  background: #fff;
-  border-top: 1px solid #e4e7ed;
+  background: var(--app-surface);
+  border-top: 1px solid var(--app-border);
+  transition: background-color 0.25s ease, border-color 0.25s ease;
 }
 
 .reply-hint {
@@ -429,7 +432,7 @@ watch(
   align-items: center;
   justify-content: space-between;
   margin-bottom: 6px;
-  color: #909399;
+  color: var(--app-text-muted);
   font-size: 12px;
 }
 

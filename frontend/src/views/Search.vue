@@ -183,13 +183,13 @@ watch(keyword, runSearch, { immediate: true })
 
 .page-head h1 {
   margin: 0;
-  color: #303133;
+  color: var(--app-text);
   font-size: 22px;
 }
 
 .query-text {
   margin: 0;
-  color: #909399;
+  color: var(--app-text-muted);
   font-size: 14px;
 }
 
@@ -210,12 +210,12 @@ watch(keyword, runSearch, { immediate: true })
   align-items: center;
   gap: 8px;
   margin: 0 0 14px;
-  color: #303133;
+  color: var(--app-text);
   font-size: 16px;
 }
 
 .count {
-  color: #909399;
+  color: var(--app-text-muted);
   font-size: 13px;
   font-weight: 400;
 }
@@ -225,16 +225,16 @@ watch(keyword, runSearch, { immediate: true })
   align-items: center;
   gap: 14px;
   padding: 16px 20px;
-  background: #fff;
-  border: 1px solid #e4e7ed;
+  background: var(--app-surface);
+  border: 1px solid var(--app-border);
   border-radius: 10px;
   cursor: pointer;
-  transition: border-color 0.15s, box-shadow 0.15s;
+  transition: background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
 }
 
 .user-card:hover {
-  border-color: #fe2c55;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.06);
+  border-color: var(--app-primary);
+  box-shadow: 0 4px 16px var(--app-shadow);
 }
 
 .user-info {
@@ -243,7 +243,7 @@ watch(keyword, runSearch, { immediate: true })
 }
 
 .user-name {
-  color: #303133;
+  color: var(--app-text);
   font-size: 16px;
   font-weight: 600;
 }
@@ -251,7 +251,7 @@ watch(keyword, runSearch, { immediate: true })
 .user-bio {
   margin-top: 4px;
   overflow: hidden;
-  color: #909399;
+  color: var(--app-text-muted);
   font-size: 13px;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -259,7 +259,7 @@ watch(keyword, runSearch, { immediate: true })
 
 .user-arrow {
   flex: none;
-  color: #fe2c55;
+  color: var(--app-primary);
   font-size: 13px;
 }
 

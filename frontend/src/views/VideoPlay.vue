@@ -255,7 +255,7 @@ onMounted(() => {
 }
 
 .author-item.clickable:hover .rail-author-name {
-  color: #409eff;
+  color: var(--app-link);
 }
 
 .rail-author-name {
@@ -286,7 +286,7 @@ onMounted(() => {
 }
 
 .like-action.liked {
-  color: #fe2c55;
+  color: var(--app-primary);
 }
 
 .rail-count {

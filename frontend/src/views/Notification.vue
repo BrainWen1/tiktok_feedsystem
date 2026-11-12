@@ -255,9 +255,10 @@ onMounted(() => {
 <style scoped>
 .notification-page {
   min-height: 100%;
-  background: #f5f5f5;
+  background: var(--app-bg);
   display: flex;
   flex-direction: column;
+  transition: background-color 0.25s ease;
 }
 
 .page-head {
@@ -269,12 +270,12 @@ onMounted(() => {
 
 .page-head h1 {
   margin: 0;
-  color: #303133;
+  color: var(--app-text);
   font-size: 22px;
 }
 
 .unread-hint {
-  color: #f56c6c;
+  color: var(--app-danger);
   font-size: 13px;
 }
 
@@ -287,10 +288,11 @@ onMounted(() => {
 }
 
 .panel {
-  background: #fff;
-  border: 1px solid #e4e7ed;
+  background: var(--app-surface);
+  border: 1px solid var(--app-border);
   border-radius: 8px;
   overflow: hidden;
+  transition: background-color 0.25s ease, border-color 0.25s ease;
 }
 
 .filter-tabs {
@@ -318,7 +320,8 @@ onMounted(() => {
   align-items: center;
   gap: 16px;
   padding: 16px;
-  border-bottom: 1px solid #f0f0f0;
+  border-bottom: 1px solid var(--app-border-light);
+  transition: background-color 0.2s ease;
 }
 
 .notification-item:last-child {
@@ -326,16 +329,16 @@ onMounted(() => {
 }
 
 .notification-item.unread {
-  background: #fef8f8;
+  background: var(--app-unread-bg);
 }
 
 /* 已取消的互动只作为历史展示，弱化视觉 */
 .notification-item.cancelled {
-  background: #fff;
+  background: var(--app-surface);
 }
 
 .notification-item.cancelled .item-content {
-  color: #c0c4cc;
+  color: var(--app-text-faint);
 }
 
 .item-main {
@@ -352,12 +355,12 @@ onMounted(() => {
 
 .item-time {
   margin-left: auto;
-  color: #c0c4cc;
+  color: var(--app-text-faint);
   font-size: 12px;
 }
 
 .item-content {
-  color: #303133;
+  color: var(--app-text);
   font-size: 14px;
   line-height: 1.5;
   word-break: break-word;
@@ -378,7 +381,7 @@ onMounted(() => {
 
 .no-more {
   padding: 16px 0;
-  color: #c0c4cc;
+  color: var(--app-text-faint);
   font-size: 12px;
   text-align: center;
 }

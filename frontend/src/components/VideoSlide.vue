@@ -388,7 +388,7 @@ onMounted(() => nextTick(syncPlayback))
 }
 
 .avatar-btn:hover {
-  border-color: #fe2c55;
+  border-color: var(--app-primary);
 }
 
 .rail-action {
@@ -397,7 +397,7 @@ onMounted(() => nextTick(syncPlayback))
   align-items: center;
   gap: 4px;
   padding: 0;
-  color: #fff;
+  color: var(--app-video-text);
   background: none;
   border: none;
   cursor: pointer;
@@ -414,11 +414,11 @@ onMounted(() => nextTick(syncPlayback))
 }
 
 .rail-action.liked {
-  color: #fe2c55;
+  color: var(--app-primary);
 }
 
 .rail-count {
-  color: #fff;
+  color: var(--app-video-text);
   font-size: 13px;
   font-weight: 500;
   text-shadow: 0 1px 3px rgba(0, 0, 0, 0.6);
@@ -431,8 +431,9 @@ onMounted(() => nextTick(syncPlayback))
   left: 24px;
   z-index: 3;
   max-width: min(620px, calc(100% - 150px));
-  color: #fff;
+  color: var(--app-video-text);
   text-shadow: 0 1px 3px rgba(0, 0, 0, 0.55);
+  transition: color 0.25s ease;
 }
 
 .author-line {
@@ -444,7 +445,7 @@ onMounted(() => nextTick(syncPlayback))
 
 .author-name {
   padding: 0;
-  color: #fff;
+  color: var(--app-video-text);
   font-size: 17px;
   font-weight: 700;
   background: none;
@@ -457,7 +458,7 @@ onMounted(() => nextTick(syncPlayback))
 }
 
 .publish-time {
-  color: rgba(255, 255, 255, 0.72);
+  color: var(--app-video-text-muted);
   font-size: 13px;
 }
 
@@ -473,7 +474,7 @@ onMounted(() => nextTick(syncPlayback))
   display: -webkit-box;
   margin: 0 0 6px;
   overflow: hidden;
-  color: rgba(255, 255, 255, 0.88);
+  color: var(--app-video-text-secondary);
   font-size: 14px;
   line-height: 1.5;
   word-break: break-word;
@@ -488,7 +489,7 @@ onMounted(() => nextTick(syncPlayback))
 }
 
 .tag {
-  color: #8ecdfc;
+  color: var(--app-video-tag);
   font-size: 13px;
   font-weight: 500;
 }
@@ -505,9 +506,10 @@ onMounted(() => nextTick(syncPlayback))
   gap: 12px;
   height: 44px;
   padding: 0 14px;
-  background: rgba(0, 0, 0, 0.35);
+  background: var(--app-video-control-bg);
   border-radius: 22px;
   backdrop-filter: blur(6px);
+  transition: background-color 0.25s ease;
 }
 
 .round-control,
@@ -516,11 +518,12 @@ onMounted(() => nextTick(syncPlayback))
   flex: none;
   align-items: center;
   justify-content: center;
-  color: #fff;
-  background: rgba(0, 0, 0, 0.4);
+  color: var(--app-video-text);
+  background: var(--app-video-button-bg);
   border: none;
   border-radius: 50%;
   cursor: pointer;
+  transition: background-color 0.2s ease;
 }
 
 .round-control {
@@ -535,7 +538,7 @@ onMounted(() => nextTick(syncPlayback))
 
 .round-control:hover,
 .volume-btn:hover {
-  background: rgba(0, 0, 0, 0.65);
+  background: var(--app-video-button-hover);
 }
 
 /* 取消静音按钮固定在视频右下角，圆形独立按钮 */
@@ -567,7 +570,7 @@ onMounted(() => nextTick(syncPlayback))
   right: 0;
   left: 0;
   height: 3px;
-  background: rgba(255, 255, 255, 0.28);
+  background: var(--app-video-track);
   border-radius: 2px;
   content: '';
 }
@@ -577,7 +580,7 @@ onMounted(() => nextTick(syncPlayback))
   top: 7px;
   left: 0;
   height: 3px;
-  background: #fe2c55;
+  background: var(--app-primary);
   border-radius: 2px;
 }
 
@@ -587,14 +590,14 @@ onMounted(() => nextTick(syncPlayback))
   right: -5px;
   width: 10px;
   height: 10px;
-  background: #fff;
+  background: var(--app-video-text);
   border-radius: 50%;
   transform: translateY(-50%);
 }
 
 .time-text {
   flex: none;
-  color: rgba(255, 255, 255, 0.82);
+  color: var(--app-video-text-secondary);
   font-size: 12px;
   font-variant-numeric: tabular-nums;
 }

@@ -455,22 +455,23 @@ onUnmounted(() => {
 <style scoped>
 .message-page {
   height: calc(100vh - 56px);
-  background: #f5f5f5;
+  background: var(--app-bg);
+  transition: background-color 0.25s ease;
 }
 
 .sse-dot {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: #c0c4cc;
+  background: var(--app-text-faint);
 }
 
 .sse-dot.connected {
-  background: #67c23a;
+  background: var(--app-success);
 }
 
 .sse-dot.disconnected {
-  background: #f56c6c;
+  background: var(--app-danger);
 }
 
 .body {
@@ -482,8 +483,9 @@ onUnmounted(() => {
 .session-aside {
   display: flex;
   flex-direction: column;
-  background: #fff;
-  border-right: 1px solid #e4e7ed;
+  background: var(--app-surface);
+  border-right: 1px solid var(--app-border);
+  transition: background-color 0.25s ease, border-color 0.25s ease;
 }
 
 .aside-title {
@@ -491,10 +493,10 @@ onUnmounted(() => {
   align-items: center;
   justify-content: space-between;
   padding: 14px 16px;
-  color: #303133;
+  color: var(--app-text);
   font-size: 14px;
   font-weight: 600;
-  border-bottom: 1px solid #f0f0f0;
+  border-bottom: 1px solid var(--app-border-light);
 }
 
 .session-list {
@@ -505,16 +507,17 @@ onUnmounted(() => {
 
 .session-item {
   padding: 12px 16px;
-  border-bottom: 1px solid #f5f5f5;
+  border-bottom: 1px solid var(--app-border-light);
   cursor: pointer;
+  transition: background-color 0.2s ease;
 }
 
 .session-item:hover {
-  background: #f5f7fa;
+  background: var(--app-surface-hover);
 }
 
 .session-item.active {
-  background: #ecf5ff;
+  background: var(--app-surface-active);
 }
 
 .session-line {
@@ -530,7 +533,7 @@ onUnmounted(() => {
 .session-name {
   flex: 1;
   overflow: hidden;
-  color: #303133;
+  color: var(--app-text);
   font-size: 14px;
   font-weight: 500;
   text-overflow: ellipsis;
@@ -539,14 +542,14 @@ onUnmounted(() => {
 
 .session-time {
   flex: none;
-  color: #c0c4cc;
+  color: var(--app-text-faint);
   font-size: 12px;
 }
 
 .session-content {
   flex: 1;
   overflow: hidden;
-  color: #909399;
+  color: var(--app-text-muted);
   font-size: 13px;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -573,18 +576,19 @@ onUnmounted(() => {
   align-items: baseline;
   gap: 10px;
   padding: 16px 20px;
-  background: #fff;
-  border-bottom: 1px solid #e4e7ed;
+  background: var(--app-surface);
+  border-bottom: 1px solid var(--app-border);
+  transition: background-color 0.25s ease, border-color 0.25s ease;
 }
 
 .chat-name {
-  color: #303133;
+  color: var(--app-text);
   font-size: 16px;
   font-weight: 600;
 }
 
 .chat-sub {
-  color: #c0c4cc;
+  color: var(--app-text-faint);
   font-size: 12px;
 }
 
@@ -597,7 +601,7 @@ onUnmounted(() => {
 
 .chat-empty {
   padding-top: 40px;
-  color: #c0c4cc;
+  color: var(--app-text-faint);
   font-size: 13px;
   text-align: center;
 }
@@ -619,7 +623,7 @@ onUnmounted(() => {
 .message-avatar {
   flex: none;
   color: #fff;
-  background: #409eff;
+  background: var(--app-info);
   cursor: pointer;
 }
 
@@ -635,7 +639,7 @@ onUnmounted(() => {
   display: flex;
   gap: 8px;
   margin-bottom: 4px;
-  color: #909399;
+  color: var(--app-text-muted);
   font-size: 12px;
 }
 
@@ -645,23 +649,24 @@ onUnmounted(() => {
 }
 
 .sender-name {
-  color: #606266;
+  color: var(--app-text-secondary);
   font-weight: 500;
 }
 
 .bubble {
   padding: 8px 12px;
   border-radius: 8px;
-  background: #fff;
-  color: #303133;
+  background: var(--app-surface);
+  color: var(--app-text);
   font-size: 14px;
   line-height: 1.5;
   white-space: pre-wrap;
   word-break: break-word;
+  transition: background-color 0.25s ease, color 0.25s ease;
 }
 
 .message-row.mine .bubble {
-  background: #409eff;
+  background: var(--app-info);
   color: #fff;
 }
 
@@ -670,8 +675,9 @@ onUnmounted(() => {
   display: flex;
   gap: 12px;
   padding: 12px 20px;
-  background: #fff;
-  border-top: 1px solid #e4e7ed;
+  background: var(--app-surface);
+  border-top: 1px solid var(--app-border);
+  transition: background-color 0.25s ease, border-color 0.25s ease;
 }
 
 .chat-footer .el-input {

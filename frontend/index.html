@@ -3,7 +3,25 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
     <title>TikTok Feed 演示</title>
+    <script>
+      // 在样式加载前同步主题，避免深色用户刷新时出现白屏闪烁
+      ;(function () {
+        try {
+          var stored = localStorage.getItem('tiktok_theme')
+          var dark =
+            stored === 'dark' ||
+            (stored !== 'light' &&
+              window.matchMedia &&
+              window.matchMedia('(prefers-color-scheme: dark)').matches)
+          if (dark) document.documentElement.classList.add('dark')
+          document.documentElement.style.colorScheme = dark ? 'dark' : 'light'
+        } catch (error) {
+          // localStorage 不可用时保持默认浅色
+        }
+      })()
+    </script>
   </head>
   <body>
     <div id="app"></div>

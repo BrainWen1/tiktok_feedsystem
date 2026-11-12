@@ -2,6 +2,125 @@
   box-sizing: border-box;
 }
 
+/* ---------- 主题变量：浅色 ---------- */
+:root {
+  color-scheme: light;
+
+  --app-bg: #f5f5f5;
+  --app-surface: #ffffff;
+  --app-surface-alt: #f7f8fa;
+  --app-surface-hover: #f5f7fa;
+  --app-surface-active: #ecf5ff;
+  --app-surface-input: #f2f3f5;
+  --app-surface-input-hover: #e6e8eb;
+
+  --app-text: #303133;
+  --app-text-strong: #1f2329;
+  --app-text-secondary: #606266;
+  --app-text-muted: #909399;
+  --app-text-faint: #c0c4cc;
+  --app-text-placeholder: #a8abb2;
+
+  --app-border: #e4e7ed;
+  --app-border-light: #f0f0f0;
+  --app-border-faint: #eef0f3;
+
+  --app-primary: #fe2c55;
+  --app-primary-hover: #e6254b;
+  --app-primary-soft: #fff0f3;
+  --app-link: #409eff;
+  --app-info: #409eff;
+  --app-success: #67c23a;
+  --app-danger: #f56c6c;
+  --app-warning: #e6a23c;
+
+  --app-unread-bg: #fef8f8;
+  --app-shadow: rgba(0, 0, 0, 0.08);
+  --app-mask: rgba(0, 0, 0, 0.35);
+
+  /* 顶部导航 / 侧边栏 */
+  --app-chrome-bg: #ffffff;
+  --app-chrome-border: #e4e7ed;
+
+  /* 沉浸式视频流上悬浮的导航（浅色主题下使用浅色玻璃效果） */
+  --app-immersive-chrome-bg: rgba(255, 255, 255, 0.86);
+  --app-immersive-chrome-border: rgba(0, 0, 0, 0.06);
+  --app-immersive-text: #303133;
+  --app-immersive-text-hover: #fe2c55;
+  --app-immersive-hover-bg: rgba(0, 0, 0, 0.06);
+  --app-immersive-input-bg: rgba(0, 0, 0, 0.06);
+  --app-immersive-input-focus-bg: #ffffff;
+  --app-immersive-input-text: #303133;
+  --app-immersive-active-bg: rgba(254, 44, 85, 0.12);
+  --app-immersive-active-text: #fe2c55;
+
+  /* 视频覆盖层：视频始终为黑色，文字保持白色以保证可读性 */
+  --app-video-text: #ffffff;
+  --app-video-text-secondary: rgba(255, 255, 255, 0.88);
+  --app-video-text-muted: rgba(255, 255, 255, 0.72);
+  --app-video-tag: #8ecdfc;
+  --app-video-control-bg: rgba(255, 255, 255, 0.14);
+  --app-video-button-bg: rgba(255, 255, 255, 0.2);
+  --app-video-button-hover: rgba(255, 255, 255, 0.32);
+  --app-video-track: rgba(255, 255, 255, 0.32);
+}
+
+/* ---------- 主题变量：深色 ---------- */
+html.dark {
+  color-scheme: dark;
+
+  --app-bg: #0f0f11;
+  --app-surface: #1a1a1d;
+  --app-surface-alt: #202024;
+  --app-surface-hover: #242428;
+  --app-surface-active: rgba(64, 158, 255, 0.16);
+  --app-surface-input: #242428;
+  --app-surface-input-hover: #2e2e33;
+
+  --app-text: #e6e6e8;
+  --app-text-strong: #ffffff;
+  --app-text-secondary: #b5b5ba;
+  --app-text-muted: #8d8d93;
+  --app-text-faint: #5f5f66;
+  --app-text-placeholder: #6f6f76;
+
+  --app-border: #2e2e33;
+  --app-border-light: #26262a;
+  --app-border-faint: #232328;
+
+  --app-primary: #fe2c55;
+  --app-primary-hover: #ff4d70;
+  --app-primary-soft: rgba(254, 44, 85, 0.16);
+  --app-link: #66b1ff;
+  --app-info: #66b1ff;
+  --app-success: #85ce61;
+  --app-danger: #f78989;
+  --app-warning: #e6a23c;
+
+  --app-unread-bg: rgba(254, 44, 85, 0.08);
+  --app-shadow: rgba(0, 0, 0, 0.5);
+  --app-mask: rgba(0, 0, 0, 0.6);
+
+  --app-chrome-bg: #1a1a1d;
+  --app-chrome-border: #2e2e33;
+
+  --app-immersive-chrome-bg: rgba(16, 16, 20, 0.72);
+  --app-immersive-chrome-border: rgba(255, 255, 255, 0.08);
+  --app-immersive-text: rgba(255, 255, 255, 0.88);
+  --app-immersive-text-hover: #ffffff;
+  --app-immersive-hover-bg: rgba(255, 255, 255, 0.1);
+  --app-immersive-input-bg: rgba(255, 255, 255, 0.1);
+  --app-immersive-input-focus-bg: rgba(0, 0, 0, 0.45);
+  --app-immersive-input-text: #ffffff;
+  --app-immersive-active-bg: rgba(254, 44, 85, 0.5);
+  --app-immersive-active-text: #ffffff;
+
+  --app-video-control-bg: rgba(0, 0, 0, 0.35);
+  --app-video-button-bg: rgba(0, 0, 0, 0.4);
+  --app-video-button-hover: rgba(0, 0, 0, 0.65);
+  --app-video-track: rgba(255, 255, 255, 0.28);
+}
+
 html,
 body,
 #app {
@@ -9,8 +128,21 @@ body,
   margin: 0;
 }
 
+html {
+  background-color: var(--app-bg);
+}
+
 body {
+  color: var(--app-text);
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial,
     'PingFang SC', 'Microsoft YaHei', sans-serif;
-  background-color: #f5f5f5;
+  background-color: var(--app-bg);
+  transition: background-color 0.25s ease, color 0.25s ease;
+}
+
+/* Element Plus 弹层挂载在 body 下，统一跟随主题切换节奏 */
+.el-card,
+.el-input__wrapper,
+.el-textarea__inner {
+  transition: background-color 0.25s ease, border-color 0.25s ease, color 0.25s ease;
 }
