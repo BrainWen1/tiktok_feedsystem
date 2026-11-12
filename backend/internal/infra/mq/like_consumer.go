@@ -216,10 +216,10 @@ func handleLikeMessage(parent context.Context, ch *amqp.Channel, msg amqp.Delive
 	// 点赞数已变化，删除详情缓存，避免详情接口在 10 分钟 TTL 内继续返回旧计数
 	invalidateVideoDetailCache(ctx, redisCache, event.VideoID)
 
-	// 在这里触发异步通知逻辑
-	if event.Action == "like" {
-		// 建议用 go 开个协程异步去发通知
-		// 不要因为通知逻辑报错影响原本的 ACK
+	// 在这里触发异步通知逻辑：
+	// like 创建通知，unlike 把对应通知置为 cancelled（保留历史，不推送 SSE）。
+	// 不要因为通知逻辑报错影响原本的 ACK。
+	if event.Action == "like" || event.Action == "unlike" {
 		go func() {
 			// 这里使用 WithoutCancel 保证通知逻辑不会被即将关闭的消费上下文中断，避免通知逻辑被取消。
 			nctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)

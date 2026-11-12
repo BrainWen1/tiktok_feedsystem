@@ -478,6 +478,33 @@ func TestFeedListByLikesCountPagination(t *testing.T) {
 	})
 }
 
+// TestFeedListLatestIncludesTags 标签属于 feed 附属信息，必须一次性批量补齐并按发布顺序返回。
+func TestFeedListLatestIncludesTags(t *testing.T) {
+	svc, db, _, _ := setupFeedService(t)
+	ctx := context.Background()
+	author := feedTestUser(t, db, "tag_author")
+	video := feedTestVideo(t, db, author.ID, "with-tags", time.Now(), 0, 0)
+
+	for _, tag := range []string{"美食", "旅行"} {
+		if err := db.Create(&model.VideoTag{VideoID: video.ID, Tag: tag}).Error; err != nil {
+			t.Fatalf("create video tag %q: %v", tag, err)
+		}
+	}
+
+	resp, err := svc.ListLatest(ctx, 0, dto.FeedCursor{}, 10)
+	if err != nil {
+		t.Fatalf("list latest: %v", err)
+	}
+	if len(resp.List) != 1 {
+		t.Fatalf("want 1 feed item, got %d", len(resp.List))
+	}
+
+	got := resp.List[0].Tags
+	if len(got) != 2 || got[0] != "美食" || got[1] != "旅行" {
+		t.Fatalf("want tags [美食 旅行], got %v", got)
+	}
+}
+
 // TestFeedListRejectsInvalidCursor 非法游标必须返回错误，不能静默当作首页。
 func TestFeedListRejectsInvalidCursor(t *testing.T) {
 	svc, _, _, _ := setupFeedService(t)

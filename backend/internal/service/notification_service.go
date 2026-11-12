@@ -11,7 +11,6 @@ import (
 	"feedsystem/internal/utils/logger"
 	"fmt"
 	"strconv"
-	"strings"
 	"time"
 )
 
@@ -19,6 +18,18 @@ const (
 	TypeLike    = "like"
 	TypeComment = "comment"
 	TypeFollow  = "follow"
+
+	// TypeUnlike / TypeUnfollow 只用于取消通知，不会落库为新通知。
+	TypeUnlike   = "unlike"
+	TypeUnfollow = "unfollow"
+)
+
+const (
+	// 通知业务键分布式锁：TTL 需覆盖一次“查最新记录 + 插入/更新”，
+	// 锁只用于减少并发竞争，正确性由 notifications.uk_active 唯一索引兜底。
+	notificationLockTTL      = 5 * time.Second
+	notificationLockWait     = 50 * time.Millisecond
+	notificationLockAttempts = 3
 )
 
 type NotificationService struct {
@@ -26,62 +37,269 @@ type NotificationService struct {
 	notificationRepo *repo.NotificationRepo
 	videoRepo        *repo.VideoRepo
 	commentRepo      *repo.CommentRepo
+	// likeRepo / socialRepo 用于落通知前复核互动是否仍然有效，
+	// 避免“点赞→取消”两条异步消息乱序时给已取消的互动发通知。
+	likeRepo   *repo.LikeRepo
+	socialRepo *repo.SocialRepo
 }
 
-func NewNotificationService(redisCache *cache.RedisCache, notificationRepo *repo.NotificationRepo, videoRepo *repo.VideoRepo, commentRepo *repo.CommentRepo) *NotificationService {
+func NewNotificationService(redisCache *cache.RedisCache, notificationRepo *repo.NotificationRepo, videoRepo *repo.VideoRepo, commentRepo *repo.CommentRepo, likeRepo *repo.LikeRepo, socialRepo *repo.SocialRepo) *NotificationService {
 	return &NotificationService{
 		redisCache:       redisCache,
 		notificationRepo: notificationRepo,
 		videoRepo:        videoRepo,
 		commentRepo:      commentRepo,
+		likeRepo:         likeRepo,
+		socialRepo:       socialRepo,
 	}
 }
 
 // ProcessNotification 返回 error，方便外部调用方（如 worker 和 降级逻辑）统一处理
 // 后续如果在函数内部加入重试机制，则需要使用 eventID 做幂等，目前这个字段没作用；全链路追踪已经使用注入到 context 中的 requestID 来做了
 func (s *NotificationService) ProcessNotification(ctx context.Context, event mq.NotificationEvent) error {
-	var notif *model.Notification
-	var err error
-	// 根据 action 分发组装通知任务
 	switch event.Action {
-	case TypeLike:
-		notif, err = s.buildLikeNotification(ctx, event)
-	case TypeComment:
-		notif, err = s.buildCommentNotification(ctx, event)
-	case TypeFollow:
-		notif, err = s.buildFollowNotification(ctx, event)
+	// 产生通知：点赞 / 评论 / 关注
+	case TypeLike, TypeComment, TypeFollow:
+		return s.createNotification(ctx, event)
+	// 取消通知：只把已有记录置为 cancelled，不推 SSE
+	case TypeUnlike:
+		return s.cancelLikeNotification(ctx, event)
+	case TypeUnfollow:
+		return s.cancelNotification(ctx, event.ActorID, event.BloggerID, TypeFollow, event.BloggerID)
 	default:
 		logger.Ctx(ctx).Warn("unknown notification action", logger.String("action", event.Action))
 		return nil // 未知类型直接结束
 	}
+}
 
-	// 错误处理
+// createNotification 处理“新增通知”的完整流程：
+//  1. 组装通知（自己给自己的互动直接过滤）；
+//  2. 按业务键加分布式锁；
+//  3. 锁内复核互动关系是否仍然有效，规避点赞/取消乱序；
+//  4. 查该业务键最新一条记录，active 则说明重复（MQ 重投/并发），直接返回；
+//  5. 插入新的 active 记录，uk_active 唯一索引兜底并发；
+//  6. 锁外更新未读数并推送 SSE。
+func (s *NotificationService) createNotification(ctx context.Context, event mq.NotificationEvent) error {
+	notif, err := s.buildNotification(ctx, event)
 	if err != nil {
 		logger.Ctx(ctx).Error("build notification failed", logger.Err(err))
 		return err
 	}
 	if notif == nil {
-		// 说明是自己给自己点赞的情况，已经在 buildLikeNotification 里过滤掉了
+		// 自己给自己点赞等情况，已在 build 阶段过滤
 		return nil
 	}
 
-	// 落库
-	if err := s.notificationRepo.CreateNotification(ctx, notif); err != nil {
-		// 如果是唯一键冲突，说明通知已经存在了（MQ 重复消费），直接返回即可
-		errStr := err.Error()
-		if strings.Contains(errStr, "Duplicate entry") ||
-			strings.Contains(errStr, "duplicate key") ||
-			strings.Contains(errStr, "UNIQUE") {
-			logger.Ctx(ctx).Debug("notification already exists, skip", logger.Err(err))
-			return nil // 直接返回，不用再 Increase 未读数和推 SSE 了
-		}
-
-		// 其他真正的数据库错误
-		logger.Ctx(ctx).Error("create notification failed", logger.Err(err))
+	lockKey := cache.NotificationLockKey(notif.ActorID, notif.ReceiverID, notif.Type, notif.TargetID)
+	token, locked := s.acquireNotificationLock(ctx, lockKey)
+	// 落库和未读数更新都在锁内完成，避免与取消路径的缓存清理交错导致计数漂移；
+	// 推送 SSE 放到锁外，避免网络耗时拉长锁占用时间。
+	inserted, unreadCount, err := s.insertActiveNotification(ctx, notif)
+	if locked {
+		s.releaseNotificationLock(ctx, lockKey, token)
+	}
+	if err != nil {
 		return err
 	}
+	if !inserted {
+		return nil
+	}
 
-	// 更新 Redis 未读数
+	s.pushSSEViaRedis(ctx, notif, unreadCount)
+	return nil
+}
+
+// insertActiveNotification 在分布式锁内完成“复核互动关系 → 查最新记录 → 插入 active 通知 → 更新未读数”。
+// 返回 inserted=false 表示本次没有新增通知（重复、通知已存在或互动已取消）。
+func (s *NotificationService) insertActiveNotification(ctx context.Context, notif *model.Notification) (bool, int64, error) {
+	// 复核互动是否仍然有效：点赞和取消是两条独立的异步消息，可能乱序到达，
+	// 不加这一步会给已经取消的点赞补发一条 active 通知。
+	active, err := s.interactionStillActive(ctx, notif)
+	if err != nil {
+		return false, 0, err
+	}
+	if !active {
+		logger.Ctx(ctx).Debug("interaction no longer active, skip notification",
+			logger.Uint("actor_id", notif.ActorID),
+			logger.Uint("receiver_id", notif.ReceiverID),
+			logger.String("type", notif.Type),
+			logger.Uint("target_id", notif.TargetID))
+		return false, 0, nil
+	}
+
+	latest, err := s.notificationRepo.FindLatestByTuple(ctx, notif.ActorID, notif.ReceiverID, notif.Type, notif.TargetID)
+	if err != nil {
+		logger.Ctx(ctx).Error("find latest notification failed", logger.Err(err))
+		return false, 0, err
+	}
+	// 最新一条仍是 active：说明这条互动已经通知过，直接返回，
+	// 不再增加未读数、不再推 SSE（MQ 重复投递/并发重复触发）。
+	if latest != nil && latest.Status == model.NotificationStatusActive {
+		logger.Ctx(ctx).Debug("notification already active, skip",
+			logger.Uint("actor_id", notif.ActorID),
+			logger.Uint("receiver_id", notif.ReceiverID),
+			logger.String("type", notif.Type),
+			logger.Uint("target_id", notif.TargetID))
+		return false, 0, nil
+	}
+	// latest 为 nil（首次通知）或 status=cancelled（取消后重新互动），都插入一条全新的 active 记录。
+
+	activeKey := model.ActiveKeyFor(notif.ActorID, notif.ReceiverID, notif.Type, notif.TargetID)
+	notif.Status = model.NotificationStatusActive
+	notif.ActiveKey = &activeKey
+
+	if err := s.notificationRepo.CreateNotification(ctx, notif); err != nil {
+		// uk_active 唯一索引兜底：并发重复或锁失效时说明已经有一条 active 通知。
+		if repo.IsDuplicateKey(err) {
+			logger.Ctx(ctx).Debug("notification already active, skip duplicate insert", logger.Err(err))
+			return false, 0, nil
+		}
+		logger.Ctx(ctx).Error("create notification failed", logger.Err(err))
+		return false, 0, err
+	}
+
+	return true, s.increaseUnread(ctx, notif), nil
+}
+
+// buildNotification 根据 action 组装通知任务。
+func (s *NotificationService) buildNotification(ctx context.Context, event mq.NotificationEvent) (*model.Notification, error) {
+	switch event.Action {
+	case TypeLike:
+		return s.buildLikeNotification(ctx, event)
+	case TypeComment:
+		return s.buildCommentNotification(ctx, event)
+	case TypeFollow:
+		return s.buildFollowNotification(ctx, event)
+	default:
+		return nil, fmt.Errorf("unknown notification action: %s", event.Action)
+	}
+}
+
+// interactionStillActive 复核通知对应的互动关系是否仍然存在。
+// 评论没有取消语义，直接返回 true；点赞/关注以数据库关系表为准。
+func (s *NotificationService) interactionStillActive(ctx context.Context, notif *model.Notification) (bool, error) {
+	switch notif.Type {
+	case TypeLike:
+		if s.likeRepo == nil {
+			return true, nil
+		}
+		liked, err := s.likeRepo.IsLiked(ctx, notif.ActorID, notif.TargetID)
+		if err != nil {
+			logger.Ctx(ctx).Error("check like relation failed", logger.Uint("actor_id", notif.ActorID), logger.Uint("video_id", notif.TargetID), logger.Err(err))
+			return false, fmt.Errorf("check like relation for user %d video %d: %w", notif.ActorID, notif.TargetID, err)
+		}
+		return liked, nil
+	case TypeFollow:
+		if s.socialRepo == nil {
+			return true, nil
+		}
+		following, err := s.socialRepo.IsFollowing(ctx, notif.ActorID, notif.TargetID)
+		if err != nil {
+			logger.Ctx(ctx).Error("check follow relation failed", logger.Uint("actor_id", notif.ActorID), logger.Uint("blogger_id", notif.TargetID), logger.Err(err))
+			return false, fmt.Errorf("check follow relation for user %d blogger %d: %w", notif.ActorID, notif.TargetID, err)
+		}
+		return following, nil
+	default:
+		return true, nil
+	}
+}
+
+// cancelLikeNotification 取消点赞通知：接收者是视频作者，需要先查视频。
+func (s *NotificationService) cancelLikeNotification(ctx context.Context, event mq.NotificationEvent) error {
+	video, err := s.videoRepo.FindByID(ctx, event.VideoID)
+	if err != nil {
+		logger.Ctx(ctx).Error("find video by ID failed", logger.Err(err))
+		return err
+	}
+	if video == nil {
+		// 视频已被删除，没有可取消的通知，按幂等处理
+		logger.Ctx(ctx).Debug("video not found when cancelling like notification", logger.Uint("video_id", event.VideoID))
+		return nil
+	}
+	// 自己给自己点赞本来就不产生通知
+	if video.AuthorID == event.ActorID {
+		return nil
+	}
+	return s.cancelNotification(ctx, event.ActorID, video.AuthorID, TypeLike, event.VideoID)
+}
+
+// cancelNotification 取消通知：把该业务键下最新的 active 记录置为 cancelled，
+// 保留历史记录供通知中心展示；同时清理未读数缓存，保证红点数字准确。
+// 取消动作本身不推送 SSE。
+func (s *NotificationService) cancelNotification(ctx context.Context, actorID, receiverID uint, typ string, targetID uint) error {
+	if actorID == 0 || receiverID == 0 {
+		return nil
+	}
+
+	lockKey := cache.NotificationLockKey(actorID, receiverID, typ, targetID)
+	token, locked := s.acquireNotificationLock(ctx, lockKey)
+	if locked {
+		defer s.releaseNotificationLock(ctx, lockKey, token)
+	}
+
+	cancelled, err := s.notificationRepo.CancelActiveByTuple(ctx, actorID, receiverID, typ, targetID)
+	if err != nil {
+		logger.Ctx(ctx).Error("cancel notification failed", logger.Uint("actor_id", actorID), logger.Uint("receiver_id", receiverID), logger.String("type", typ), logger.Uint("target_id", targetID), logger.Err(err))
+		return err
+	}
+	if cancelled == nil {
+		// 没有 active 记录：重复取消，或点赞通知还没来得及创建，按幂等处理
+		logger.Ctx(ctx).Debug("no active notification to cancel", logger.Uint("actor_id", actorID), logger.Uint("receiver_id", receiverID), logger.String("type", typ), logger.Uint("target_id", targetID))
+		return nil
+	}
+
+	// 未读数以数据库为准：直接删除缓存，下次查询自动回源并按 status=active 重算。
+	unreadKey := cache.UnreadCountKey(receiverID)
+	if err := s.redisCache.Delete(ctx, unreadKey); err != nil {
+		logger.Ctx(ctx).Error("delete unread count cache failed", logger.Uint("receiver_id", receiverID), logger.Err(err))
+	}
+	return nil
+}
+
+// acquireNotificationLock 按业务键尝试获取分布式锁。
+// 返回 locked=false 表示锁不可用或竞争激烈，此时调用方继续执行，
+// 由 uk_active 唯一索引保证不会产生重复的 active 通知。
+func (s *NotificationService) acquireNotificationLock(ctx context.Context, key string) (string, bool) {
+	if s.redisCache == nil || !s.redisCache.IsEnabled() {
+		return "", false
+	}
+	for attempt := 1; attempt <= notificationLockAttempts; attempt++ {
+		token, ok, err := s.redisCache.Lock(ctx, key, notificationLockTTL)
+		if err != nil {
+			logger.Ctx(ctx).Error("acquire notification lock failed", logger.String("key", key), logger.Err(err))
+			return "", false
+		}
+		if ok {
+			return token, true
+		}
+		if attempt == notificationLockAttempts {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			return "", false
+		case <-time.After(notificationLockWait):
+		}
+	}
+	logger.Ctx(ctx).Warn("notification lock busy, fallback to unique index", logger.String("key", key))
+	return "", false
+}
+
+// releaseNotificationLock 释放分布式锁。释放动作不受上层请求取消影响。
+func (s *NotificationService) releaseNotificationLock(ctx context.Context, key, token string) {
+	if token == "" || s.redisCache == nil {
+		return
+	}
+	unlockCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Second)
+	defer cancel()
+	if err := s.redisCache.Unlock(unlockCtx, key, token); err != nil {
+		logger.Ctx(ctx).Error("release notification lock failed", logger.String("key", key), logger.Err(err))
+	}
+}
+
+// increaseUnread 通知成功落库后更新 Redis 未读数，返回最新未读数。
+// 在分布式锁内调用，避免与取消路径删除缓存的动作交错产生计数漂移。
+func (s *NotificationService) increaseUnread(ctx context.Context, notif *model.Notification) int64 {
 	unreadKey := cache.UnreadCountKey(notif.ReceiverID)
 	newUnreadCount, err := s.redisCache.Increase(ctx, unreadKey, 1, cache.UnreadCountTTL)
 	if err != nil {
@@ -101,11 +319,7 @@ func (s *NotificationService) ProcessNotification(ctx context.Context, event mq.
 			}
 		}
 	}
-
-	// 触发 SSE 推送
-	s.pushSSEViaRedis(ctx, notif, newUnreadCount)
-
-	return nil
+	return newUnreadCount
 }
 
 // NotifSSEMessage 是一个结构体，用于封装 SSE 推送的消息内容

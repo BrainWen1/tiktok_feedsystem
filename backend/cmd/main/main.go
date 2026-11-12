@@ -98,6 +98,8 @@ func main() {
 		&model.Notification{},
 		&model.Message{},
 	) // 自动迁移数据库表结构
+	// AutoMigrate 不会回填数据、也不会删除模型中已移除的旧索引，这里补通知表状态机迁移
+	database.MigrateNotificationState(db)
 
 	defer database.CloseDB() // 注册关闭数据库连接的延迟调用
 

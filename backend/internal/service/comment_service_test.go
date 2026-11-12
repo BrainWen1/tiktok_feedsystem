@@ -58,7 +58,7 @@ func setupCommentService(t *testing.T) (*CommentService, *gorm.DB, *cache.RedisC
 	commentRepo := repo.NewCommentRepo(db)
 	videoRepo := repo.NewVideoRepo(db)
 	userService := NewUserService(repo.NewUserRepo(db), redisCache)
-	notificationService := NewNotificationService(redisCache, repo.NewNotificationRepo(db), videoRepo, commentRepo)
+	notificationService := NewNotificationService(redisCache, repo.NewNotificationRepo(db), videoRepo, commentRepo, repo.NewLikeRepo(db), repo.NewSocialRepo(db))
 
 	// NewLikeMQ(nil) / NewCommentMQ(nil) 返回 ErrMQDisabled 与已禁用的合法实例。
 	likeMQ, _ := mq.NewLikeMQ(nil)

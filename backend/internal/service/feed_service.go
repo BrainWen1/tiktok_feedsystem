@@ -117,10 +117,12 @@ func (s *FeedService) assembleFeedItems(ctx context.Context, loginUserID uint, r
 	}
 
 	var vidList []string
+	var videoIDs []uint
 	authorUserIDSet := make(map[uint]struct{})
 
 	for _, v := range rawVideos {
 		vidList = append(vidList, fmt.Sprintf("%d", v.ID))
+		videoIDs = append(videoIDs, v.ID)
 		authorUserIDSet[v.AuthorID] = struct{}{}
 	}
 
@@ -171,6 +173,13 @@ func (s *FeedService) assembleFeedItems(ctx context.Context, loginUserID uint, r
 		commentCntMap = make(map[string]int64, len(vidList))
 	}
 
+	// 标签同属附属信息，失败时降级为空，不影响 feed 主流程
+	tagMap, tagErr := s.feedRepo.ListTagsByVideoIDs(ctx, videoIDs)
+	if tagErr != nil {
+		logger.Ctx(ctx).Warn("batch get video tags failed, degrade to empty", logger.Err(tagErr))
+		tagMap = make(map[uint][]string, len(videoIDs))
+	}
+
 	// 组装VO
 	var respList []dto.FeedItemResp
 	for _, v := range rawVideos {
@@ -185,6 +194,7 @@ func (s *FeedService) assembleFeedItems(ctx context.Context, loginUserID uint, r
 			Vid:            vidKey,
 			Title:          v.Title,
 			Desc:           v.Description,
+			Tags:           tagMap[v.ID],
 			VideoURL:       v.VideoURL,
 			CoverURL:       v.CoverURL,
 			AuthorUserID:   v.AuthorID,

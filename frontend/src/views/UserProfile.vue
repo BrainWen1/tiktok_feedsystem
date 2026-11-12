@@ -276,13 +276,6 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="profile-page">
-    <header class="navbar">
-      <div class="nav-left">
-        <el-button link @click="router.push('/')">← 返回主页</el-button>
-        <span class="brand">个人主页</span>
-      </div>
-    </header>
-
     <main v-loading="loading" class="content">
       <el-alert
         v-if="errorMsg"
@@ -382,30 +375,6 @@ onBeforeUnmount(() => {
   flex-direction: column;
 }
 
-.navbar {
-  position: sticky;
-  top: 0;
-  z-index: 10;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  height: 56px;
-  padding: 0 24px;
-  background: #fff;
-  border-bottom: 1px solid #e4e7ed;
-}
-
-.nav-left {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-}
-
-.brand {
-  font-size: 18px;
-  font-weight: 600;
-}
-
 .content {
   flex: 1;
   width: 100%;
@@ -423,14 +392,15 @@ onBeforeUnmount(() => {
   align-items: flex-start;
   gap: 24px;
   padding: 24px;
-  background: #fff;
+  background: var(--app-surface);
   border-radius: 8px;
+  transition: background-color 0.25s ease;
 }
 
 .avatar {
   flex: none;
   color: #fff;
-  background: #409eff;
+  background: var(--app-info);
 }
 
 .profile-info {
@@ -452,14 +422,14 @@ onBeforeUnmount(() => {
 
 .profile-name {
   margin: 0;
-  color: #303133;
+  color: var(--app-text);
   font-size: 22px;
   line-height: 1.2;
 }
 
 .bio {
   margin: 8px 0 0;
-  color: #909399;
+  color: var(--app-text-muted);
   font-size: 13px;
   line-height: 1.6;
   white-space: pre-wrap;
@@ -470,21 +440,22 @@ onBeforeUnmount(() => {
   display: flex;
   gap: 20px;
   margin-top: 12px;
-  color: #606266;
+  color: var(--app-text-secondary);
   font-size: 14px;
 }
 
 .stat strong {
   margin-right: 2px;
-  color: #303133;
+  color: var(--app-text);
   font-size: 16px;
 }
 
 .profile-tabs {
   margin-top: 20px;
   padding: 0 16px;
-  background: #fff;
+  background: var(--app-surface);
   border-radius: 8px;
+  transition: background-color 0.25s ease;
 }
 
 .tab-panel {
@@ -504,7 +475,7 @@ onBeforeUnmount(() => {
 }
 
 .no-more {
-  color: #c0c4cc;
+  color: var(--app-text-faint);
   font-size: 13px;
 }
 </style>

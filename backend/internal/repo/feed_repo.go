@@ -85,6 +85,28 @@ func (r *FeedRepo) ListByLikesCount(ctx context.Context, lastLikeCount int64, la
 	return videos, err
 }
 
+// ListTagsByVideoIDs 批量查询视频标签，供 feed 组装时一次性补齐，避免逐条视频 N+1 查询。
+// 返回 map[videoID][]tag；没有标签的视频不会出现在 map 中。
+func (r *FeedRepo) ListTagsByVideoIDs(ctx context.Context, videoIDs []uint) (map[uint][]string, error) {
+	result := make(map[uint][]string, len(videoIDs))
+	if len(videoIDs) == 0 {
+		return result, nil
+	}
+
+	var rows []model.VideoTag
+	if err := r.db.WithContext(ctx).
+		Where("video_id IN ?", videoIDs).
+		Order("id ASC").
+		Find(&rows).Error; err != nil {
+		return nil, err
+	}
+
+	for _, row := range rows {
+		result[row.VideoID] = append(result[row.VideoID], row.Tag)
+	}
+	return result, nil
+}
+
 // ListByTag 根据标签筛选视频。
 // 通过 video_tag 关联表查询，tag 命中联合索引 (tag, video_id)，避免 FIND_IN_SET 全表扫描。
 func (r *FeedRepo) ListByTag(ctx context.Context, tag string, lastCreatedAt time.Time, lastVid uint, limit int) ([]model.Video, error) {

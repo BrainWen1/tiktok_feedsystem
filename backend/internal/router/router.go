@@ -174,7 +174,7 @@ func SetupRouter(sqlDB *gorm.DB, cache *cache.RedisCache, rmq *mq.RabbitMQ, auth
 	// ==========================================
 	// 基础 Service (无其他 Service 依赖)
 	userService := service.NewUserService(userRepo, cache)
-	notificationService := service.NewNotificationService(cache, notificationRepo, videoRepo, commentRepo)
+	notificationService := service.NewNotificationService(cache, notificationRepo, videoRepo, commentRepo, likeRepo, socialRepo)
 
 	// 业务 Service (依赖基础 Service)
 	likeService := service.NewLikeService(likeRepo, likeMQ, userService, notificationService, cache)

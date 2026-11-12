@@ -180,6 +180,8 @@ async function handleSubmit() {
   justify-content: center;
   min-height: 100%;
   padding-top: 10vh;
+  background: var(--app-bg);
+  transition: background-color 0.25s ease;
 }
 
 .login-card {
@@ -189,7 +191,7 @@ async function handleSubmit() {
 .title {
   margin: 0 0 16px;
   text-align: center;
-  color: #333;
+  color: var(--app-text);
 }
 
 .submit-btn {

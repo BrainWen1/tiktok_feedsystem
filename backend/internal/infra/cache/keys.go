@@ -33,6 +33,8 @@ const (
 	commentEventIDPrefix = "mq_comment_event_id:"
 	// unreadCountPrefix 未读通知计数前缀，Redis 数据结构为 String 计数器。
 	unreadCountPrefix = "unread:"
+	// notificationLockPrefix 通知业务键分布式锁前缀，Redis 数据结构为 String（SETNX + token）。
+	notificationLockPrefix = "notif:lock:"
 	// sseTicketPrefix SSE 临时 ticket 前缀，Redis 数据结构为 String，value 为 userID。
 	sseTicketPrefix = "sse:ticket:"
 	// ssePushChannel SSE 公共频道，Redis 数据结构为 Pub/Sub。
@@ -135,6 +137,12 @@ func CommentEventIDKey(eventID string) string {
 // UnreadCountKey 返回未读通知计数缓存的 Redis key。
 func UnreadCountKey(userID uint) string {
 	return fmt.Sprintf("%s%d", unreadCountPrefix, userID)
+}
+
+// NotificationLockKey 返回通知业务键的分布式锁 key。
+// 同一 (actor, receiver, type, target) 的创建/取消必须串行，避免并发插入重复通知。
+func NotificationLockKey(actorID, receiverID uint, typ string, targetID uint) string {
+	return fmt.Sprintf("%s%d:%d:%s:%d", notificationLockPrefix, actorID, receiverID, typ, targetID)
 }
 
 // SSETicketKey 返回 SSE 临时 ticket 的 Redis key。

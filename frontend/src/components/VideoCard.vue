@@ -128,7 +128,7 @@ async function toggleLike() {
   width: 100%;
   aspect-ratio: 16 / 9;
   border-radius: 6px;
-  background: #f0f2f5;
+  background: var(--app-surface-input);
 }
 
 .cover-fallback {
@@ -137,15 +137,15 @@ async function toggleLike() {
   justify-content: center;
   width: 100%;
   height: 100%;
-  color: #909399;
+  color: var(--app-text-muted);
   font-size: 13px;
-  background: #f0f2f5;
+  background: var(--app-surface-input);
 }
 
 .card-title {
   margin-top: 10px;
   overflow: hidden;
-  color: #303133;
+  color: var(--app-text);
   font-size: 14px;
   font-weight: 500;
   line-height: 1.4;
@@ -166,17 +166,17 @@ async function toggleLike() {
   align-items: center;
   gap: 6px;
   min-width: 0;
-  color: #606266;
+  color: var(--app-text-secondary);
   font-size: 13px;
 }
 
 .author.clickable:hover .author-name {
-  color: #409eff;
+  color: var(--app-link);
 }
 
 .author-avatar {
   flex: none;
-  background: #409eff;
+  background: var(--app-info);
 }
 
 .author-name {
@@ -191,7 +191,7 @@ async function toggleLike() {
   align-items: center;
   gap: 4px;
   padding: 0;
-  color: #909399;
+  color: var(--app-text-muted);
   font-size: 13px;
   background: none;
   border: none;
@@ -203,7 +203,7 @@ async function toggleLike() {
 }
 
 .like-btn.liked {
-  color: #fe2c55;
+  color: var(--app-primary);
 }
 
 .heart {
